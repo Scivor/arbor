@@ -1,0 +1,6 @@
+{
+  "prompt": "直接调用 backtest，参数 strategy_name=Static65Hedge, data_code=KC=F, start_date=2024-01-01, end_date=2024-06-30",
+  "context": {
+    "session_id": ""
+  }
+}

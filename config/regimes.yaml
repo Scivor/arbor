@@ -1,0 +1,665 @@
+# config/regimes.yaml
+# 咖啡套保市场 Regime 配置 — Sherlock data.json 的 coffee 版本
+#
+# 支持的配置类型:
+#   threshold:  指标突破阈值检测  (等价 Sherlock 的 status_code 检测)
+#   pattern:    字符串/正则匹配检测 (等价 Sherlock 的 errorMsg 检测)
+#   cross:      技术指标交叉检测  (等价 Sherlock 的 response_url 检测)
+#
+# 加载: RegimeConfigLoader("config/regimes.yaml")
+# 远程: RegimeConfigLoader("https://raw.githubusercontent.com/.../regimes.yaml")
+#
+# Sherlock 等价类比:
+#   site_data          →  regimes
+#   SiteInformation    →  RegimeInformation
+#   errorType          →  detect_type (threshold | pattern | cross)
+#   errorMsg           →  patterns
+#   regexCheck         →  regex
+#   urlProbe           →  source_field
+#   --site 过滤        →  --regime 过滤
+#   --nsfw             →  --crisis-only
+
+regimes:
+
+  # ============================================================
+  # SUPPLY DOMAIN — 供给域
+  # ============================================================
+
+  - name: FROST_WARNING
+    domain: SUPPLY
+    detect_type: threshold
+    source: weather_alerts
+    # Sherlock 等价: urlProbe / url_username_format 中的 {}
+    # 这里 {} 被当前温度值替换
+    field: temperature_celsius
+    # Sherlock 等价: errorType == "status_code"
+    # threshold: above  → 温度跌破阈值 → 霜冻风险上升
+    threshold: 5.0
+    condition: below
+    severity:
+      default: 3
+      extreme: 5   # 当 < 0°C 时
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "霜冻预警: 产区温度 {value}°C，低于 {threshold}°C 阈值"
+    enabled: true
+
+  - name: DROUGHT_ONI
+    domain: SUPPLY
+    detect_type: threshold
+    source: oni_index
+    field: oni_value
+    threshold: 1.0
+    condition: above
+    severity:
+      default: 3
+      extreme: 4   # ONI > 1.5 (强 El Niño)
+    hedge_action: MONITOR
+    narrative_template: "干旱预警: ONI 指数 {value}，高于 {threshold} 阈值 (El Niño)"
+    enabled: true
+
+  - name: EL_NINO_CONFIRMED
+    domain: SUPPLY
+    detect_type: threshold
+    source: oni_index
+    field: oni_value
+    threshold: 1.5
+    condition: above
+    severity: 4
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "El Niño 确认: ONI {value} > {threshold}"
+    enabled: true
+
+  - name: LA_NINA_CONFIRMED
+    domain: SUPPLY
+    detect_type: threshold
+    source: oni_index
+    field: oni_value
+    threshold: -0.5
+    condition: below
+    severity: 4
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "La Niña 确认: ONI {value} < {threshold}"
+    enabled: true
+
+  - name: ICE_INVENTORY_CRITICAL
+    domain: SUPPLY
+    detect_type: threshold
+    source: ice_inventory
+    field: arabica库存_bags_60kg
+    threshold: 2000000   # 200万袋
+    condition: below
+    severity:
+      default: 4
+      extreme: 5   # < 100万袋
+    hedge_action: FULL_HEDGE
+    narrative_template: "ICE 库存告急: {value:,} 袋，低于 {threshold:,} 袋临界线"
+    enabled: true
+
+  - name: COT_SPECULATIVE_TOP
+    domain: SUPPLY
+    detect_type: threshold
+    source: cot_report
+    field: spec_net_position
+    threshold: 80000
+    condition: above
+    severity: 4
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "COT 投机多头见顶: 净多头 {value:,} 手，超过 {threshold:,} 阈值"
+    enabled: true
+
+  - name: COT_SPECULATIVE_BOTTOM
+    domain: SUPPLY
+    detect_type: threshold
+    source: cot_report
+    field: spec_net_position
+    threshold: -60000
+    condition: below
+    severity: 4
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "COT 投机空头见底: 净多头 {value:,} 手，低于 {threshold:,} 阈值"
+    enabled: true
+
+  - name: COT_COMMERCIAL_BOTTOM
+    domain: SUPPLY
+    detect_type: threshold
+    source: cot_report
+    field: commercial_net_position
+    threshold: 60000
+    condition: above
+    severity: 3
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "COT 商业多头抄底: 商业净多头 {value:,} 手，超过 {threshold:,}"
+    enabled: true
+
+  - name: COLOMBIA_WEATHER_ALERT
+    domain: SUPPLY
+    detect_type: pattern
+    source: weather_alerts
+    field: alert_text
+    patterns:
+      - "torrential rain"
+      - "flash flood"
+      - "landslide"
+      - "heavy snowfall"
+    severity:
+      default: 3
+      extreme: 4
+
+  - name: HEAT_WAVE
+    domain: SUPPLY
+    detect_type: threshold
+    source: openweathermap
+    field: temp_celsius
+    threshold: 35.0
+    condition: above
+    severity:
+      default: 3
+      extreme: 4   # 当 > 38°C 时
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "高温预警: 产区温度 {value}°C，超过 {threshold}°C 阈值"
+    enabled: true
+
+  - name: BRAZIL_CROP_ALERT
+    domain: SUPPLY
+    detect_type: pattern
+    source: weather_alerts
+    field: alert_text
+    patterns:
+      - "Frost Advisory"
+      - "Hard Freeze Warning"
+      - "freeze warning"
+      - "geada"
+    severity:
+      default: 4
+      critical: 5   # "Hard Freeze Warning"
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "巴西产区发布 {matched}: {value}"
+    enabled: true
+
+  - name: SEASONAL_WINDOW_OPEN
+    domain: SUPPLY
+    detect_type: cross
+    source: calendar
+    field: month
+    # Sherlock 等价: response_url — 特定时间窗口触发
+    # 10-12月为巴西咖啡收获季，供应压力最大
+    window: [10, 11, 12]
+    condition: in_window
+    severity: 2
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "季节性窗口开启: {value}月，进入收获季"
+    enabled: true
+
+  # ============================================================
+  # FINANCE DOMAIN — 金融域
+  # ============================================================
+
+  - name: PRICE_SHOCK_UP
+    domain: FINANCE
+    detect_type: threshold
+    source: kc_price
+    field: change_1d_pct
+    threshold: 0.05
+    condition: above
+    severity:
+      default: 3
+      extreme: 5   # > 10%
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "KC=F 价格暴涨: 日涨幅 {value:.1%}，超过 {threshold:.1%} 阈值"
+    enabled: true
+
+  - name: PRICE_SHOCK_DOWN
+    domain: FINANCE
+    detect_type: threshold
+    source: kc_price
+    field: change_1d_pct
+    threshold: -0.05
+    condition: below
+    severity:
+      default: 3
+      extreme: 5   # < -10%
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "KC=F 价格暴跌: 日跌幅 {value:.1%}，跌破 {threshold:.1%} 阈值"
+    enabled: true
+
+  - name: PRICE_30D_EXTREME_UP
+    domain: FINANCE
+    detect_type: threshold
+    source: kc_price
+    field: change_30d_pct
+    threshold: 0.20
+    condition: above
+    severity: 4
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "KC=F 月涨幅超20%: {value:.1%}，30日极端行情"
+    enabled: true
+
+  - name: PRICE_30D_EXTREME_DOWN
+    domain: FINANCE
+    detect_type: threshold
+    source: kc_price
+    field: change_30d_pct
+    threshold: -0.20
+    condition: below
+    severity: 4
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "KC=F 月跌幅超20%: {value:.1%}，30日极端行情"
+    enabled: true
+
+  - name: FX_USD_CNY_SHOCK
+    domain: FINANCE
+    detect_type: threshold
+    source: fx_rate
+    field: change_pct
+    threshold: 0.02
+    condition: above
+    severity:
+      default: 3
+      extreme: 5   # > 5%
+    hedge_action: MONITOR
+    narrative_template: "USD/CNY 汇率冲击: 变动 {value:.1%}，超过 {threshold:.1%}"
+    enabled: true
+
+  - name: BASIS_SPIKE
+    domain: FINANCE
+    detect_type: threshold
+    source: basisSpread
+    field: spread_pct
+    # KC=F 与现货升贴水扩大通常预示供应紧张
+    threshold: 0.10
+    condition: above
+    severity: 3
+    hedge_action: INCREASE_HEDGE
+    narrative_template: "升贴水飙升: {value:.1%}，超过 {threshold:.1%} 临界"
+    enabled: true
+
+  - name: WTI_OIL_SHOCK
+    domain: FINANCE
+    detect_type: threshold
+    source: wti_price
+    field: change_pct
+    threshold: 0.05
+    condition: above
+    severity: 3
+    hedge_action: MONITOR
+    narrative_template: "WTI 油价冲击: {value:.1%}，影响海运费"
+    enabled: true
+
+  # ============================================================
+  # POLICY DOMAIN — 政策域
+  # ============================================================
+
+  - name: CHINA_TARIFF_CHANGE
+    domain: POLICY
+    detect_type: pattern
+    source: tariff_news
+    field: headline
+    patterns:
+      - "tariff"
+      - "import duty"
+      - "附加关税"
+      - "惩罚性关税"
+    severity:
+      default: 4
+      critical: 5   # 新增/大幅调整
+    hedge_action: ADJUST_TARIFF_HEDGE
+    narrative_template: "关税政策变动: {matched} — {value}"
+    enabled: true
+
+  - name: TRADE_WAR_ESCALATE
+    domain: POLICY
+    detect_type: pattern
+    source: tradewar_news
+    field: headline
+    patterns:
+      - "trade war"
+      - "trade conflict"
+      - "贸易战"
+      - "acceleration"
+      - "escalat"
+    severity:
+      default: 3
+      critical: 5
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "贸易战升级: {matched} — {value}"
+    enabled: true
+
+  - name: LDC_STATUS_LOST
+    domain: POLICY
+    detect_type: threshold
+    source: ldc_status
+    field: days_remaining
+    threshold: 0
+    condition: at_or_below
+    severity: 4
+    hedge_action: ADJUST_LDC_HEDGE
+    narrative_template: "LDC 地位丧失: 剩余 {value} 天"
+    enabled: true
+
+  - name: EXPORT_BAN
+    domain: POLICY
+    detect_type: pattern
+    source: export_news
+    field: headline
+    patterns:
+      - "export ban"
+      - "export restriction"
+      - "出口禁令"
+      - "embargo"
+      - "暂停出口"
+    severity: 5
+    hedge_action: FULL_HEDGE
+    narrative_template: "出口禁令: {matched} — {value}"
+    enabled: true
+
+  # ============================================================
+  # POLYMARKET SIGNALS — 预测市场信号
+  # (Sherlock 无直接等价物，这是 coffee_v3 的创新)
+  # ============================================================
+
+  - name: POLY_CLIMATE_HOT
+    domain: FINANCE
+    detect_type: threshold
+    source: polymarket
+    field: prob
+    threshold: 0.70
+    condition: above
+    severity: 2
+    hedge_action: MONITOR
+    narrative_template: "Polymarket 气候炎热概率: {value:.0%} > {threshold:.0%}"
+    enabled: true
+
+  - name: POLY_TRADE_WAR_ESCALATE
+    domain: FINANCE
+    detect_type: threshold
+    source: polymarket
+    field: prob
+    threshold: 0.60
+    condition: above
+    severity: 3
+    hedge_action: REDUCE_HEDGE
+    narrative_template: "Polymarket 贸易战升级概率: {value:.0%} > {threshold:.0%}"
+    enabled: true
+
+  - name: POLY_HORMUZ_NORMAL
+    domain: FINANCE
+    detect_type: threshold
+    source: polymarket
+    field: prob_inverted
+    threshold: 0.70
+    condition: above
+    severity: 2
+    hedge_action: MONITOR
+    narrative_template: "Polymarket 霍尔木兹正常化: {value:.0%}"
+    enabled: true
+
+  # ============================================================
+  # GLOBAL SETTINGS
+  # ============================================================
+
+# ============================================================
+# HEDGE ADJUSTMENT RULES
+# Sherlock QueryStatus/errorCode → hedge ratio adjustment 映射
+# 等价于 DecisionEngine._EVENT_CONFIG，但完全外部化到 YAML
+#
+# 每个 EventType → 对应的调整参数:
+#   adjustment:  触发后的套保比率调整量 (正=增套保，负=减套保)
+#   min_severity: 生效的最低 severity 阈值
+#   cooldown_seconds: 同事件重复触发的冷却时间 (秒)
+#   multiplier_sev4+: severity >= 4 时的额外乘数
+# ============================================================
+
+adjustment_rules:
+
+  # === SUPPLY DOMAIN ===
+  FROST_WARNING:
+    adjustment: 0.20
+    min_severity: 3
+    cooldown_seconds: 600
+    multiplier_sev4: 1.5
+
+  FROST_CONFIRMED:
+    adjustment: 0.30
+    min_severity: 3
+    cooldown_seconds: 600
+    multiplier_sev4: 1.5
+
+  EL_NINO_CONFIRMED:
+    adjustment: 0.20
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  LA_NINA_CONFIRMED:
+    adjustment: 0.10
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  ONI_THRESHOLD_CROSS:
+    adjustment: 0.15
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  DROUGHT_ONI:
+    adjustment: 0.10
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  ICE_INVENTORY_CRITICAL:
+    adjustment: 0.25
+    min_severity: 3
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.5
+
+  ICE_INVENTORY_DROP:
+    adjustment: 0.10
+    min_severity: 2
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  ICE_INVENTORY_SPIKE:
+    adjustment: -0.10
+    min_severity: 2
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  COT_SPECULATIVE_TOP:
+    adjustment: 0.15
+    min_severity: 3
+    cooldown_seconds: 604800
+    multiplier_sev4: 1.0
+
+  COT_SPECULATIVE_BOTTOM:
+    adjustment: -0.15
+    min_severity: 3
+    cooldown_seconds: 604800
+    multiplier_sev4: 1.0
+
+  COT_COMMERCIAL_BOTTOM:
+    adjustment: -0.10
+    min_severity: 2
+    cooldown_seconds: 604800
+    multiplier_sev4: 1.0
+
+  BRAZIL_CROP_ALERT:
+    adjustment: 0.25
+    min_severity: 4
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  COLOMBIA_WEATHER_ALERT:
+    adjustment: 0.15
+    min_severity: 3
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  SEASONAL_WINDOW_OPEN:
+    adjustment: 0.10
+    min_severity: 2
+    cooldown_seconds: 2592000
+    multiplier_sev4: 1.0
+
+  HEAT_WAVE:
+    adjustment: 0.15
+    min_severity: 3
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  # === FINANCE DOMAIN ===
+  FX_USD_CNY_SHOCK:
+    adjustment: 0.15
+    min_severity: 3
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  FX_USD_CNY_THRESHOLD:
+    adjustment: 0.05
+    min_severity: 2
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  PRICE_SHOCK_UP:
+    adjustment: 0.10
+    min_severity: 3
+    cooldown_seconds: 300
+    multiplier_sev4: 1.5
+
+  PRICE_SHOCK_DOWN:
+    adjustment: -0.05
+    min_severity: 3
+    cooldown_seconds: 300
+    multiplier_sev4: 1.0
+
+  PRICE_30D_EXTREME_UP:
+    adjustment: 0.20
+    min_severity: 3
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  PRICE_30D_EXTREME_DOWN:
+    adjustment: -0.20
+    min_severity: 3
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  BASIS_SPIKE:
+    adjustment: 0.10
+    min_severity: 3
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  WTI_OIL_SHOCK:
+    adjustment: 0.05
+    min_severity: 3
+    cooldown_seconds: 3600
+    multiplier_sev4: 1.0
+
+  # === POLYMARKET SIGNALS ===
+  POLY_CLIMATE_HOT:
+    adjustment: 0.10
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  POLY_CLIMATE_COLD:
+    adjustment: 0.05
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  POLY_TRADE_WAR_ESCALATE:
+    adjustment: 0.15
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  POLY_TRADE_WAR_DEESCALATE:
+    adjustment: -0.10
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  POLY_HORMUZ_NORMAL:
+    adjustment: -0.05
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  POLY_TRUMP_VISIT_CHINA:
+    adjustment: 0.05
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  POLY_FX_VOLATILE:
+    adjustment: 0.05
+    min_severity: 2
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  # === POLICY DOMAIN ===
+  CHINA_TARIFF_CHANGE:
+    adjustment: 0.25
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  TRADE_WAR_NEW_ROUND:
+    adjustment: 0.30
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.5
+
+  TRADE_WAR_DEESCALATION:
+    adjustment: -0.10
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  LDC_STATUS_GAINED:
+    adjustment: -0.05
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  LDC_STATUS_LOST:
+    adjustment: 0.10
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+  PESTICIDE_STANDARD_CHANGE:
+    adjustment: 0.15
+    min_severity: 1
+    cooldown_seconds: 86400
+    multiplier_sev4: 1.0
+
+
+# ============================================================
+# GLOBAL SETTINGS
+# ============================================================
+
+settings:
+  # Sherlock 等价: --nsfw / --site 过滤
+  # 默认启用所有 regime；运行时可用 --disable-regime 排除
+  enabled_by_default: true
+
+  # Sherlock 等价: --local 标志
+  # true = 只用本地文件，不检查远程
+  local_only: false
+
+  # Sherlock 等价: --timeout
+  remote_fetch_timeout: 10  # 秒
+
+  # Sherlock 等价: --proxy (未实现)
+  # proxy_url: "socks5://127.0.0.1:1080"
+
+  # 全局扫描间隔 (秒)
+  scan_interval_default: 300
+
+  # Sherlock 无等价物: 调试模式
+  # 启用时打印每个 regime 的检测详情
+  debug: false

@@ -1,0 +1,6 @@
+{
+  "prompt": "用backtest工具测试Static65Hedge策略，数据用KC=F，2024年",
+  "context": {
+    "session_id": ""
+  }
+}

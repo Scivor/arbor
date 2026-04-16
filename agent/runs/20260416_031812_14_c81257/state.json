@@ -1,0 +1,4 @@
+{
+  "status": "failed",
+  "reason": "'ChatOpenAI' object has no attribute 'stream_chat'"
+}

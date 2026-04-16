@@ -1,0 +1,6 @@
+{
+  "prompt": "--agent-horizon 今天咖啡期货价格稳定，巴西降水正常，推荐合适对冲比例 --max-iter 2",
+  "context": {
+    "session_id": ""
+  }
+}

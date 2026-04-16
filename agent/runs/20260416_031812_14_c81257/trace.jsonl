@@ -1,0 +1,2 @@
+{"type": "start", "prompt": "--agent-horizon 1h", "ts": 1776280692.1415622}
+{"type": "end", "status": "error", "reason": "'ChatOpenAI' object has no attribute 'stream_chat'", "iterations": 1, "ts": 1776280692.1418371}

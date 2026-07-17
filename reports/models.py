@@ -9,7 +9,10 @@ import json
 import textwrap
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.cost.landed_cost import LandedCostBreakdown  # noqa: F401
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +137,7 @@ class ChinaImportSnapshot:
     """中国进口商视角快照 — 汇率 / 到库成本 / 政策事件"""
     fx_rate: Optional[float] = None      # USD/CNY 即期汇率
     fx_source: str = ""
-    landed: Optional[object] = None      # LandedCostBreakdown（保持本文件无项目内 import）
+    landed: Optional["LandedCostBreakdown"] = None  # 到库成本明细（运行时保持本文件零项目内 import，类型经 TYPE_CHECKING 标注）
     policy_events: list[dict] = field(default_factory=list)  # {event_type, severity, narrative, source, timestamp}
 
 
@@ -372,6 +375,10 @@ class PredictionReport:
 
     def to_dict(self) -> dict:
         """输出字典格式（不含日期序列化问题）"""
+        # landed 含 datetime timestamp，转 isoformat 保持 JSON 可序列化
+        landed_d = asdict(self.china_import.landed) if (self.china_import and self.china_import.landed) else None
+        if landed_d and landed_d.get("timestamp") is not None:
+            landed_d["timestamp"] = landed_d["timestamp"].isoformat()
         return {
             "meta": {
                 "ticker": self.ticker,
@@ -396,7 +403,7 @@ class PredictionReport:
             "china_import": {
                 "fx_rate": self.china_import.fx_rate,
                 "fx_source": self.china_import.fx_source,
-                "landed": asdict(self.china_import.landed) if self.china_import.landed else None,
+                "landed": landed_d,
                 "policy_events": self.china_import.policy_events,
             } if self.china_import else None,
             "outlook": self.outlook,

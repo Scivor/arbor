@@ -14,6 +14,7 @@ Design tokens (from kami.tw93.fun):
 
 from __future__ import annotations
 import base64
+import html as _html
 import io
 import os
 import subprocess
@@ -625,7 +626,7 @@ def _build_china_import_html(report, lang: str) -> str:
     # ── USD/CNY 汇率 ──
     fx_html = ""
     if ci.fx_rate is not None:
-        fx_src = f" · {ci.fx_source}" if ci.fx_source else ""
+        fx_src = f" · {_html.escape(str(ci.fx_source))}" if ci.fx_source else ""
         fx_html = f"""
           <div class="ci-fx">USD/CNY <strong>{ci.fx_rate:.4f}</strong><span class="ci-fx-src">{fx_src}</span></div>"""
 
@@ -635,8 +636,9 @@ def _build_china_import_html(report, lang: str) -> str:
         for ev in ci.policy_events[:5]:
             sev = int(ev.get("severity", 1) or 1)
             color = "#1B365D" if sev >= 4 else "#504e49"
+            narrative = _html.escape(str(ev.get("narrative", "")))
             items += (f"<li><span class='ci-sev' style='color:{color};border-color:{color};'>S{sev}</span>"
-                      f"{ev.get('narrative', '')}</li>")
+                      f"{narrative}</li>")
         events_html = f"""
           <div class="ci-events-title">{_t("policy_events", lang)}</div>
           <ul class="ci-events">{items}</ul>"""

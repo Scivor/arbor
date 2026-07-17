@@ -14,7 +14,7 @@ import argparse
 import sys
 from datetime import datetime
 from reports.pipeline import run, PipelineConfig
-from reports.exporters import export_text, export_json
+from reports.exporters import export_text, export_json, export_report, list_exporters
 
 try:
     from reports.exporters.html_to_pdf import build_report_html
@@ -30,7 +30,7 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--format", "-f",
-        choices=["text", "json", "html", "pdf"],
+        choices=list_exporters(),
         default="text",
         help="Output format (default: text)",
     )
@@ -97,6 +97,12 @@ def main(argv=None) -> int:
         from reports.exporters.html_to_pdf import export_pdf
         pdf_path = export_pdf(report, dest=dest, lang=args.lang)
         print(f"PDF written to {pdf_path}")
+
+    else:
+        # markdown 及未来注册的导出器统一走 registry 分发
+        export_report(report, format=args.format, dest=args.output)
+        if args.output:
+            print(f"{args.format} written to {args.output}")
 
     return 0
 

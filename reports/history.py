@@ -251,6 +251,15 @@ def compute_track_record() -> dict:
     weeks: list[dict] = []
     hits = dirs = hedges = 0
     for cur, nxt in zip(summaries, summaries[1:]):
+        # 仅相邻周配对（≤8 天）；跨期样本（如缺一周）不计入周度复盘统计
+        try:
+            gap = (date.fromisoformat(nxt.report_date) - date.fromisoformat(cur.report_date)).days
+        except ValueError:
+            logger.warning("Skip pair with bad dates: %s -> %s", cur.report_date, nxt.report_date)
+            continue
+        if gap > 8:
+            logger.info("Skip cross-gap pair: %s -> %s (%d days)", cur.report_date, nxt.report_date, gap)
+            continue
         try:
             review = compute_prediction_review(cur, nxt.current_price)
         except Exception as e:

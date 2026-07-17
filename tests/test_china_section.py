@@ -87,3 +87,26 @@ def test_china_import_none_hidden():
     assert report.china_import is None
     assert "[ CHINA IMPORT ]" not in report.to_text()
     assert "进口成本与政策" not in build_report_html(report, lang="zh")
+
+
+def test_html_escapes_malicious_policy_narrative():
+    """回归测试：政策事件 narrative 中的 HTML/JS 必须被转义（存储型 XSS 防护）"""
+    evil_events = [
+        {
+            "event_type": "policy_news",
+            "severity": 4,
+            "narrative": "<script>alert('xss')</script>",
+            "source": "PolicyNews",
+            "timestamp": "2026-07-17T00:00:00",
+        },
+    ]
+    html = build_report_html(_report_with_china(evil_events), lang="zh")
+    assert "<script>alert('xss')</script>" not in html
+    assert "&lt;script&gt;" in html
+
+
+def test_to_dict_is_json_serializable():
+    """回归：to_dict() 不得带出原始 datetime（json.dumps 必须可序列化）"""
+    import json
+    d = _report_with_china(FAKE_EVENTS).to_dict()
+    json.dumps(d)  # landed.timestamp 已转 isoformat，不抛 TypeError

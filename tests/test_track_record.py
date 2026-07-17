@@ -143,3 +143,27 @@ def test_track_record_page_render_empty(tmp_path, monkeypatch):
 
     html = build_track_record_html(compute_track_record())
     assert "暂无历史复盘数据" in html
+
+
+def test_reports_cli_markdown_format(tmp_path):
+    """reports CLI --format markdown 可用（registry 与 CLI choices 契约一致）"""
+    from reports.cli import main
+    dest = tmp_path / "report.md"
+    rc = main(["--demo", "--format", "markdown", "--output", str(dest)])
+    assert rc == 0
+    assert dest.read_text(encoding="utf-8").startswith("# ")
+
+
+def test_track_record_skips_cross_gap_pairs(tmp_path, monkeypatch):
+    """缺一周时跨期配对（>8 天）不计入统计"""
+    _write_summary(tmp_path, "2026-07-01", 300.0, "横盘", 290.0, 310.0, 0.65)
+    _write_summary(tmp_path, "2026-07-08", 305.0, "上涨", 320.0, 340.0, 0.45)
+    _write_summary(tmp_path, "2026-07-22", 300.0, "横盘", 290.0, 310.0, 0.65)
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+
+    rec = compute_track_record()
+
+    assert rec["total"] == 1           # 07-08 → 07-22 跨 14 天被跳过
+    assert len(rec["weeks"]) == 1
+    assert rec["weeks"][0]["report_date"] == "2026-07-01"
+    assert rec["pending"] == "2026-07-22"

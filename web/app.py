@@ -39,6 +39,8 @@ WEB_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = WEB_DIR / "static" / "reports"
 TEMPLATES_DIR = WEB_DIR / "templates"
 
+from web.track_record import build_track_record_html
+
 app = FastAPI(title="Arbor", version="3.0")
 
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
@@ -240,6 +242,15 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
     recent_meta = [_read_report_meta(d) for d in recent]
     past_index_html = _build_past_index_html(report_date, recent_meta, lang=lang)
 
+    # 首页入口: 指向预测战绩页
+    if is_latest:
+        tr_text = "Track Record →" if lang == "en" else "预测战绩 →"
+        past_index_html = past_index_html.replace(
+            '<a class="past-index-all"',
+            f'<a class="past-index-all" style="margin-right:14px;" href="/track-record/">{tr_text}</a><a class="past-index-all"',
+            1,
+        )
+
     # Find </body> and insert before it
     body_end = html_content.rfind("</body>")
     if body_end != -1:
@@ -271,8 +282,7 @@ def _error_response(status_code: int, detail: str | None = None, lang: str = "zh
     class _DummyReq:
         url = type("URL", (), {"path": "/", "query_params": {}})()
         query_params = {}
-    html = templates.TemplateResponse("error.html", {
-        "request": _DummyReq(),
+    html = templates.TemplateResponse(_DummyReq(), "error.html", {
         "status_code": status_code,
         "title": title,
         "description": desc,
@@ -298,9 +308,21 @@ async def latest_report(request: Request):
     """Root path shows the latest report directly — no nav bar."""
     latest = _latest_report_date()
     if not latest:
-        return templates.TemplateResponse("empty.html", {"request": request, "lang": lang})
+        return templates.TemplateResponse(request, "empty.html", {"lang": lang})
     lang = request.query_params.get("lang", "zh")
     return _serve_report_page(latest, is_latest=True, lang=lang)
+
+
+@app.get("/track-record/", response_class=HTMLResponse)
+async def track_record():
+    """预测战绩页 — 历史周报相邻期配对复盘聚合，纯本地数据。"""
+    from reports.history import compute_track_record
+    try:
+        record = compute_track_record()
+    except Exception:
+        record = {"total": 0, "hit_rate": 0.0, "direction_rate": 0.0,
+                  "hedge_rate": 0.0, "weeks": [], "pending": None}
+    return HTMLResponse(content=build_track_record_html(record))
 
 
 @app.get("/reports/", response_class=HTMLResponse)
@@ -313,8 +335,7 @@ async def archive(request: Request):
     for year, entries in groupby(all_meta, key=lambda x: x["date"][:4]):
         year_groups.append({"year": year, "entries": list(entries)})
     lang = request.query_params.get("lang", "zh")
-    return templates.TemplateResponse("archive.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "archive.html", {
         "year_groups": year_groups,
         "count": len(all_meta),
         "lang": lang,

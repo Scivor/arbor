@@ -30,6 +30,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from reports.pipeline import run, PipelineConfig
 from reports.exporters.html_to_pdf import build_report_html, html_to_pdf
+from reports.exporters.markdown_exporter import export_markdown
 from reports.history import save_report_summary
 
 logger = logging.getLogger("report_scheduler")
@@ -73,6 +74,11 @@ def generate_and_publish(
         html_en = build_report_html(report, lang="en")
         html_en_path.write_text(html_en, encoding="utf-8")
         logger.info("HTML saved: %s (zh) + %s (en)", html_path, html_en_path)
+
+        # ── Generate Markdown (公众号友好) ──
+        md_path = report_dir / "report.md"
+        md_path.write_text(export_markdown(report), encoding="utf-8")
+        logger.info("Markdown saved: %s", md_path)
 
     # ── Generate PDF ──
     if output_format in ("pdf", "both"):

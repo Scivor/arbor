@@ -222,3 +222,59 @@ def compute_prediction_review(
         review_text="；".join(parts),
         review_badge=badge,
     )
+
+
+def compute_track_record() -> dict:
+    """
+    聚合历史周报战绩（track record）。
+
+    相邻配对: 第 i 期预测对照第 i+1 期的 current_price 做复盘；
+    最后一期没有下一期，记为"待复盘"（pending）不计入统计。
+    纯本地文件读取，不联网。
+
+    Returns:
+        {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending"}
+    """
+    hist_dir = _history_dir()
+    summaries: list[ReportSummary] = []
+    for c in sorted(hist_dir.glob("weekly_summary_*.json")):
+        try:
+            data = json.loads(c.read_text(encoding="utf-8"))
+            summaries.append(ReportSummary(**data))
+        except Exception as e:
+            logger.warning("Failed to parse history file %s: %s", c, e)
+            continue
+
+    # 按 report_date 升序（文件名与内容不一致时以内容为准）
+    summaries.sort(key=lambda s: s.report_date)
+
+    weeks: list[dict] = []
+    hits = dirs = hedges = 0
+    for cur, nxt in zip(summaries, summaries[1:]):
+        try:
+            review = compute_prediction_review(cur, nxt.current_price)
+        except Exception as e:
+            logger.warning("Failed to review %s: %s", cur.report_date, e)
+            continue
+        hits += review.prediction_hit
+        dirs += review.direction_correct
+        hedges += review.hedge_advice_correct
+        weeks.append({
+            "report_date": cur.report_date,
+            "badge": review.review_badge,
+            "direction": cur.dominant_scenario_direction,
+            "predicted_min": cur.dominant_scenario_min,
+            "predicted_max": cur.dominant_scenario_max,
+            "actual_price": nxt.current_price,
+            "price_change_pct": round(review.price_change_pct, 2),
+        })
+
+    total = len(weeks)
+    return {
+        "total": total,
+        "hit_rate": hits / total if total else 0.0,
+        "direction_rate": dirs / total if total else 0.0,
+        "hedge_rate": hedges / total if total else 0.0,
+        "weeks": weeks,
+        "pending": summaries[-1].report_date if summaries else None,
+    }

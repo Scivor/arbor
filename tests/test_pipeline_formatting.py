@@ -163,3 +163,14 @@ def test_build_report_html_formats_export_values_consistently():
     assert "1.2x" in html
     assert "0.1234" in html
     assert "267.70¢/lb" in html
+
+
+@pytest.mark.unit
+def test_empty_drivers_render_translated_fallback():
+    """回归：驱动因子为空时渲染翻译后的空态文案，而非 {_t(...)} 字面量"""
+    html = build_report_html(PredictionReport(), lang="zh")
+    assert "暂无明确利多因素" in html
+    assert "暂无明确利空因素" in html
+    assert "{_t(" not in html
+    html_en = build_report_html(PredictionReport(), lang="en")
+    assert "No clear bullish factors" in html_en

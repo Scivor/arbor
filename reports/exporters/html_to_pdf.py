@@ -1524,11 +1524,11 @@ def build_report_html(report, lang: str = "zh") -> str:
   <div class="drivers">
     <div class="drv-card bull">
       <div class="drv-hdr bull">{_t("bullish_factors", lang)}</div>
-      <div class="drv-body"><ul>{bull_rows or '<li>{_t("no_bullish", lang)}</li>'}</ul></div>
+      <div class="drv-body"><ul>{bull_rows or f'<li>{_t("no_bullish", lang)}</li>'}</ul></div>
     </div>
     <div class="drv-card bear">
       <div class="drv-hdr bear">{_t("bearish_factors", lang)}</div>
-      <div class="drv-body"><ul>{bear_rows or '<li>{_t("no_bearish", lang)}</li>'}</ul></div>
+      <div class="drv-body"><ul>{bear_rows or f'<li>{_t("no_bearish", lang)}</li>'}</ul></div>
     </div>
   </div>
 </div>

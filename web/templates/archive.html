@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block title %}{% if lang == 'en' %}Archive ({{ count }}) · Arbor{% else %}历史归档 ({{ count }}) · Arbor{% endif %}{% endblock %}
+
+{% block extra_head %}
+<style>
+  .archive-hero {
+    background: var(--ivory);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 28px;
+    margin-bottom: 28px;
+  }
+  .archive-hero h1 {
+    font-family: var(--serif);
+    font-size: 22px;
+    font-weight: 600;
+    color: var(--near-black);
+    margin-bottom: 6px;
+  }
+  .archive-hero p {
+    font-size: 14px;
+    color: var(--olive);
+  }
+  .year-group {
+    margin-bottom: 28px;
+  }
+  .year-label {
+    font-family: var(--serif);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--stone);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .year-items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .arch-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--ivory);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 14px 18px;
+    text-decoration: none;
+    color: inherit;
+    transition: box-shadow 0.15s, border-color 0.15s;
+  }
+  .arch-item:hover {
+    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
+    border-color: var(--border-soft);
+  }
+  .arch-item-left {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }
+  .arch-item-date {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--near-black);
+    min-width: 100px;
+  }
+  .arch-item-tags {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .arch-item-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .arch-item-actions span {
+    font-size: 12px;
+    color: var(--olive);
+  }
+  .arch-item-actions a {
+    font-size: 11px;
+    color: var(--stone);
+    text-decoration: none;
+    padding: 4px 10px;
+    border-radius: 4px;
+    transition: background 0.15s, color 0.15s;
+  }
+  .arch-item-actions a:hover {
+    background: var(--warm-sand);
+    color: var(--brand);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+
+<div class="archive-hero">
+  <h1>{% if lang == 'en' %}Historical Report Archive{% else %}历史报告归档{% endif %}</h1>
+  <p>{% if lang == 'en' %}{{ count }} reports · Auto-updated every Saturday · Click date to read{% else %}共 {{ count }} 期报告 · 每周六自动更新 · 点击日期阅读完整报告{% endif %}</p>
+</div>
+
+{% for group in year_groups %}
+<div class="year-group">
+  <div class="year-label">{{ group.year }}</div>
+  <div class="year-items">
+    {% for r in group.entries %}
+    <a href="/reports/{{ r.date }}/{% if lang == 'en' %}?lang=en{% endif %}" class="arch-item">
+      <div class="arch-item-left">
+        <div class="arch-item-date">{{ r.date }}</div>
+        <div class="arch-item-tags">
+          <span class="tag tag-brand">{{ r.signal }}</span>
+          <span class="tag tag-olive">{{ r.price }} ¢/lb</span>
+          <span class="tag tag-stone">{{ r.change }}</span>
+        </div>
+      </div>
+      <div class="arch-item-actions">
+        <span>{% if lang == 'en' %}Read →{% else %}阅读 →{% endif %}</span>
+        {% if r.has_pdf %}
+        <a href="/reports/{{ r.date }}.pdf" download onclick="event.stopPropagation()">PDF ↓</a>
+        {% endif %}
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endfor %}
+
+{% if not year_groups %}
+<div class="empty-state">
+  <h2>{% if lang == 'en' %}No reports yet{% else %}暂无归档{% endif %}</h2>
+  <p>{% if lang == 'en' %}Reports are auto-generated every Saturday.{% else %}报告将在每周六凌晨自动生成。{% endif %}</p>
+</div>
+{% endif %}
+
+{% endblock %}

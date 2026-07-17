@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block title %}Arbor{% endblock %}
+
+{% block content %}
+<div class="empty-state">
+  <h2>{% if lang == 'en' %}No reports yet{% else %}暂无报告{% endif %}</h2>
+  <p>{% if lang == 'en' %}Reports are auto-generated every Saturday. Please check back later.{% else %}报告将在每周六凌晨自动生成。请稍后再来。{% endif %}</p>
+</div>
+{% endblock %}

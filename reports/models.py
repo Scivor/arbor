@@ -126,6 +126,19 @@ class MLSnapshot:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# China Import Snapshot
+# ─────────────────────────────────────────────────────────────────────────────
+
+@dataclass
+class ChinaImportSnapshot:
+    """中国进口商视角快照 — 汇率 / 到库成本 / 政策事件"""
+    fx_rate: Optional[float] = None      # USD/CNY 即期汇率
+    fx_source: str = ""
+    landed: Optional[object] = None      # LandedCostBreakdown（保持本文件无项目内 import）
+    policy_events: list[dict] = field(default_factory=list)  # {event_type, severity, narrative, source, timestamp}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Prediction Report
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -168,6 +181,9 @@ class PredictionReport:
 
     # ML 预测
     ml_snapshot: Optional[MLSnapshot] = None
+
+    # 中国进口商视角（汇率 + 到库成本 + 政策事件）
+    china_import: Optional[ChinaImportSnapshot] = None
 
     # 核心观点
     outlook: str = ""        # 一句话总结
@@ -306,6 +322,26 @@ class PredictionReport:
                 lines.append(f"  ↑ Break {h.trigger_above:.0f} → reduce hedge to 50%")
             lines.append("")
 
+        # ─── 中国进口视角 ───────────────────────────────────────────
+        if self.china_import:
+            ci = self.china_import
+            lines.append(f"  {'[ CHINA IMPORT ]':─^74}")
+            if ci.fx_rate is not None:
+                fx_src = f"  ({ci.fx_source})" if ci.fx_source else ""
+                lines.append(f"  {'USD/CNY':>12}: {ci.fx_rate:>8.4f}{fx_src}")
+            if ci.landed:
+                b = ci.landed
+                lines.append(f"  {'到库成本':>12}: {b.total_cost_cny_jin:>8.4f} CNY/斤  ({b.total_cost_usd_mt:.2f} USD/MT)")
+                lines.append(f"  {'CYP 占比':>12}: {b.cyp_fraction_pct:>8.1%}  当前套保比率: {b.hedge_ratio_pct:.0%}")
+            if ci.policy_events:
+                lines.append(f"  {'政策事件':>12}:")
+                for ev in ci.policy_events[:5]:
+                    sev = "!" * int(ev.get("severity", 0))
+                    lines.append(f"    {sev:>5} {ev.get('narrative', '')}")
+            else:
+                lines.append(f"  {'政策事件':>12}: 近 7 日无显著政策事件")
+            lines.append("")
+
         # ─── 核心观点 ───────────────────────────────────────────────
         lines.append(f"  {'[ OUTLOOK ]':─^74}")
         if self.outlook:
@@ -332,7 +368,7 @@ class PredictionReport:
         d["forecast_week_start"] = self.forecast_week_start.isoformat()
         d["forecast_week_end"] = self.forecast_week_end.isoformat()
         d["generated_at"] = self.generated_at.isoformat()
-        return json.dumps(d, indent=2, ensure_ascii=False)
+        return json.dumps(d, indent=2, ensure_ascii=False, default=str)
 
     def to_dict(self) -> dict:
         """输出字典格式（不含日期序列化问题）"""
@@ -357,6 +393,12 @@ class PredictionReport:
             },
             "hedge_advice": asdict(self.hedge_advice) if self.hedge_advice else None,
             "ml_prediction": asdict(self.ml_snapshot) if self.ml_snapshot else None,
+            "china_import": {
+                "fx_rate": self.china_import.fx_rate,
+                "fx_source": self.china_import.fx_source,
+                "landed": asdict(self.china_import.landed) if self.china_import.landed else None,
+                "policy_events": self.china_import.policy_events,
+            } if self.china_import else None,
             "outlook": self.outlook,
             "risk_warnings": self.risk_warnings,
         }

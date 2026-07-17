@@ -54,12 +54,39 @@ class CoffeeSystem:
         # 政策域扫描器
         self.policy_scanner = PolicyDomainScanner(self.bus)
 
+        # 事件持久化: 总线上的每个事件写入 DecisionDB（激活 events 表）
+        self._db = None
+        try:
+            from core.persistence import DecisionDB
+            self._db = DecisionDB()  # 默认 ~/.arbor/decisions.db
+            for domain in Domain:
+                self.bus.subscribe_domain(domain, self._persist_event)
+        except Exception as e:
+            print(f"[CoffeeSystem] 事件持久化初始化失败: {e}")
+
         # 扫描配置
         self.scan_interval = scan_interval or self.DEFAULT_SCAN_INTERVAL
 
         # 后台线程
         self._running = False
         self._thread: Optional[threading.Thread] = None
+
+    def _persist_event(self, event):
+        """EventBus subscriber: 事件落盘。异常不影响发布流程。"""
+        if self._db is None:
+            return
+        try:
+            et = event.event_type.value if hasattr(event.event_type, "value") else str(event.event_type)
+            ts = event.timestamp.isoformat() if hasattr(event.timestamp, "isoformat") else None
+            self._db.save_event(
+                event_type=et,
+                severity=event.severity,
+                narrative=event.narrative,
+                source=event.source,
+                timestamp=ts,
+            )
+        except Exception as e:
+            print(f"[CoffeeSystem] 事件持久化失败: {e}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # 生命周期

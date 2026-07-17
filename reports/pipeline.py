@@ -32,6 +32,7 @@ from reports.models import (
     ResistParam,
     HedgeAdvice,
     MLSnapshot,
+    ChinaImportSnapshot,
     build_report,
 )
 from reports.demo_data import demo_report
@@ -228,10 +229,72 @@ def fetch_related_markets() -> dict:
         return {}
 
 
+def fetch_china_import_snapshot(
+    market: Optional[MarketSnapshot],
+    hedge: Optional[HedgeAdvice],
+) -> Optional[ChinaImportSnapshot]:
+    """
+    组装中国进口商视角快照：USD/CNY 汇率 + 到库成本 + 政策事件扫描。
+    各环节独立降级；仅当三者全部失败时返回 None，否则尽量返回部分数据。
+    """
+    # ── 汇率 (USD/CNY) ────────────────────────────────────────────
+    fx_rate: Optional[float] = None
+    fx_source = ""
+    try:
+        from sources.fx.yfinance import FXSource
+        fx_data = FXSource().fetch()
+        if fx_data is not None:
+            fx_rate = fx_data.rate
+            fx_source = "Yahoo Finance"
+    except Exception as e:
+        logger.warning(f"fetch_china_import_snapshot FX failed: {e}")
+
+    # ── 到库成本 ──────────────────────────────────────────────────
+    landed = None
+    if fx_rate is not None and market is not None:
+        try:
+            from core.cost.landed_cost import LandedCostCalculator
+            landed = LandedCostCalculator().calculate(
+                cyp_price_usd_lb=market.current,
+                fx_rate_usd_cny=fx_rate,
+                hedge_ratio=hedge.ratio if hedge else 0.0,
+            )
+        except Exception as e:
+            logger.warning(f"fetch_china_import_snapshot landed cost failed: {e}")
+
+    # ── 政策事件扫描（独立 EventBus，避免污染全局总线）─────────────
+    policy_events: list[dict] = []
+    try:
+        from core.events import EventBus
+        from domains.policy.scanner import PolicyDomainScanner
+        events = PolicyDomainScanner(EventBus()).scan_all()
+        events.sort(key=lambda e: e.severity, reverse=True)
+        for e in events[:10]:
+            policy_events.append({
+                "event_type": e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type),
+                "severity": e.severity,
+                "narrative": e.narrative,
+                "source": e.source,
+                "timestamp": e.timestamp.isoformat() if hasattr(e.timestamp, "isoformat") else str(e.timestamp),
+            })
+    except Exception as e:
+        logger.warning(f"fetch_china_import_snapshot policy scan failed: {e}")
+
+    # 仅当汇率、到库成本、政策事件三者全部失败才放弃整个板块
+    if fx_rate is None and landed is None and not policy_events:
+        return None
+
+    return ChinaImportSnapshot(
+        fx_rate=fx_rate,
+        fx_source=fx_source,
+        landed=landed,
+        policy_events=policy_events,
+    )
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Analysis Engines
 # ─────────────────────────────────────────────────────────────────────────────
-
 def compute_levels_and_scenarios(
     market: Optional[MarketSnapshot],
     ml: Optional[MLSnapshot] = None,
@@ -773,6 +836,9 @@ def run(config: PipelineConfig) -> PredictionReport:
     hedge = compute_hedge_advice(market, scenarios)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
+    # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
+    china_import = fetch_china_import_snapshot(market, hedge)
+
     # ── Step 3: Compute forecast week ────────────────────────────
     today = date.today()
     days_ahead = (7 - today.weekday()) % 7
@@ -850,6 +916,12 @@ def run(config: PipelineConfig) -> PredictionReport:
                  latency="实时", reliability="C",
                  notes="基于RSI+情景概率+ML信号的规则引擎，非投资建议")
 
+    if china_import and china_import.fx_rate is not None:
+        prov.add("usd_cny", f"{china_import.fx_rate:.4f}",
+                 "Yahoo Finance", "https://finance.yahoo.com/quote/USDCNY=X",
+                 latency="~15 min", reliability="B",
+                 notes="USD/CNY 即期汇率，用于到库成本换算")
+
     # COT data (if available)
     try:
         from sources.cot.cftc_cot import COTSource
@@ -905,6 +977,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         bearish_params=bearish,
         hedge_advice=hedge,
         ml_snapshot=ml,
+        china_import=china_import,
         outlook=outlook,
         risk_warnings=risk_warnings,
         weather_snapshots=weather_snaps,

@@ -116,6 +116,14 @@ _TRANSLATIONS = {
     # Hedge
     "hedge_advice": {"zh": "套保建议", "en": "Hedge Advice"},
 
+    # China Import
+    "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
+    "landed_total": {"zh": "到库成本", "en": "Landed Cost"},
+    "cyp_share": {"zh": "CYP 占比", "en": "CYP Share"},
+    "current_hedge": {"zh": "当前套保比率", "en": "Current Hedge"},
+    "policy_events": {"zh": "政策事件", "en": "Policy Events"},
+    "no_policy_events": {"zh": "近 7 日无显著政策事件", "en": "No significant policy events in the past 7 days"},
+
     # Levels
     "support": {"zh": "支撑 Support", "en": "Support"},
     "resistance": {"zh": "阻力 Resistance", "en": "Resistance"},
@@ -597,6 +605,59 @@ def _build_hedge_html(hedge, lang: str) -> str:
         </div>"""
 
 
+def _build_china_import_html(report, lang: str) -> str:
+    """Render China import cost & policy section（china_import 为 None 时整段不渲染）."""
+    ci = getattr(report, "china_import", None)
+    if ci is None:
+        return ""
+
+    b = ci.landed
+
+    # ── 到库成本 ──
+    cost_html = ""
+    if b is not None:
+        cost_html = f"""
+          <div class="ci-cost">
+            <div class="ci-cost-main">{_fmt_number(b.total_cost_cny_jin, decimals=2)}<span class="ci-cost-unit"> CNY/斤</span></div>
+            <div class="ci-cost-sub">{_t("landed_total", lang)} · {_fmt_number(b.total_cost_usd_mt, decimals=0, suffix=" USD/MT")} · {_t("cyp_share", lang)} {_fmt_percent(b.cyp_fraction_pct, decimals=0, scale=100)} · {_t("current_hedge", lang)} {_fmt_percent(b.hedge_ratio_pct, decimals=0, scale=100)}</div>
+          </div>"""
+
+    # ── USD/CNY 汇率 ──
+    fx_html = ""
+    if ci.fx_rate is not None:
+        fx_src = f" · {ci.fx_source}" if ci.fx_source else ""
+        fx_html = f"""
+          <div class="ci-fx">USD/CNY <strong>{ci.fx_rate:.4f}</strong><span class="ci-fx-src">{fx_src}</span></div>"""
+
+    # ── 政策事件 ──
+    if ci.policy_events:
+        items = ""
+        for ev in ci.policy_events[:5]:
+            sev = int(ev.get("severity", 1) or 1)
+            color = "#1B365D" if sev >= 4 else "#504e49"
+            items += (f"<li><span class='ci-sev' style='color:{color};border-color:{color};'>S{sev}</span>"
+                      f"{ev.get('narrative', '')}</li>")
+        events_html = f"""
+          <div class="ci-events-title">{_t("policy_events", lang)}</div>
+          <ul class="ci-events">{items}</ul>"""
+    else:
+        events_html = f"""
+          <div class="ci-events-title">{_t("policy_events", lang)}</div>
+          <div class="ci-empty">{_t("no_policy_events", lang)}</div>"""
+
+    return f"""
+<div class="section">
+  <div class="section-title">{_t("china_import", lang)} <span>Import Cost &amp; Policy</span></div>
+  <div class="card ci-card">
+    <div class="ci-body">
+      {cost_html}
+      {fx_html}
+      {events_html}
+    </div>
+  </div>
+</div>"""
+
+
 def _build_market_context(market, lang: str) -> dict[str, str]:
     """Compute hero and metric-strip display values."""
     if not market:
@@ -695,6 +756,9 @@ def build_report_html(report, lang: str = "zh") -> str:
 
     # ── Hedge ──
     hedge_html = _build_hedge_html(h, lang)
+
+    # ── China Import ──
+    china_import_html = _build_china_import_html(report, lang)
 
     html_lang = "en" if lang == "en" else "zh-CN"
     body_font = "var(--serif)" if lang == "en" else "var(--sans)"
@@ -1265,6 +1329,83 @@ def build_report_html(report, lang: str = "zh") -> str:
   }}
   .risk-box li {{ margin-bottom: 1mm; }}
 
+  /* ── China Import ── */
+  .ci-card {{
+    background: #f7f6f1;
+    border: 1px solid var(--border-soft);
+    border-radius: 3px;
+    page-break-inside: avoid;
+  }}
+  .ci-body {{
+    padding: 2.4mm;
+  }}
+  .ci-cost-main {{
+    font-family: var(--serif);
+    font-size: 19pt;
+    font-weight: 600;
+    color: var(--near-black);
+    line-height: 1;
+  }}
+  .ci-cost-unit {{
+    font-family: var(--sans);
+    font-size: 7.5pt;
+    font-weight: 400;
+    color: var(--stone);
+  }}
+  .ci-cost-sub {{
+    font-family: var(--sans);
+    font-size: 7pt;
+    color: var(--olive);
+    margin-top: 1mm;
+  }}
+  .ci-fx {{
+    font-family: var(--sans);
+    font-size: 7.5pt;
+    color: var(--dark-warm);
+    margin-top: 1.6mm;
+  }}
+  .ci-fx-src {{
+    color: var(--stone);
+    font-size: 6.5pt;
+  }}
+  .ci-events-title {{
+    font-family: var(--sans);
+    font-size: 6.9pt;
+    font-weight: 500;
+    color: var(--dark-warm);
+    letter-spacing: 0.2px;
+    margin-top: 2mm;
+    padding-bottom: 0.8mm;
+    border-bottom: 1px solid var(--border-soft);
+  }}
+  .ci-events {{
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    font-size: 7pt;
+    color: var(--dark-warm);
+  }}
+  .ci-events li {{
+    margin-top: 1mm;
+    line-height: 1.5;
+  }}
+  .ci-sev {{
+    display: inline-block;
+    font-family: var(--sans);
+    font-size: 6.2pt;
+    font-weight: 600;
+    border: 1px solid var(--stone);
+    border-radius: 2px;
+    padding: 0 1mm;
+    margin-right: 1.6mm;
+    color: var(--stone);
+  }}
+  .ci-empty {{
+    font-size: 7pt;
+    color: var(--stone);
+    margin-top: 1mm;
+  }}
+
   /* ── Footer ── */
   .footer {{
     border-top: 1px solid var(--border-soft);
@@ -1389,6 +1530,9 @@ def build_report_html(report, lang: str = "zh") -> str:
     </div>
   </div>
 </div>
+
+<!-- ══ Import Cost & Policy ══ -->
+{china_import_html}
 
 <!-- ══ Outlook ══ -->
 <div class="section">

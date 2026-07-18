@@ -9,12 +9,68 @@ web/track_record.py
 from __future__ import annotations
 
 
-def build_track_record_html(record: dict, driver_stats: list[dict] | None = None) -> str:
+def _build_learning_html(learning: dict | None) -> str:
+    """自校准区块：当前系数 + 近期指标 + 最近 5 条调整记录。"""
+    if not learning:
+        return ""
+    cur = learning.get("current") or {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    n = learning.get("n_samples", 0)
+    min_samples = learning.get("min_samples", 8)
+    acc = learning.get("ml_accuracy")
+    hit = learning.get("band_hit_rate")
+    changelog = learning.get("changelog") or []
+
+    def _coef(name: str) -> str:
+        v = cur.get(name, 1.0)
+        base = ' <span class="tr-learn-base">未校准</span>' if abs(v - 1.0) < 1e-9 else ""
+        return f"{name} <b>{v:.2f}</b>{base}"
+
+    rows = f"""
+    <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>"""
+
+    if acc is not None and hit is not None:
+        rows += f"""
+    <div class="tr-learn-metrics">ML 方向准确率 {acc:.0%} · 区间命中率 {hit:.0%}（n={n}）</div>"""
+    else:
+        rows += f"""
+    <div class="tr-learn-metrics tr-learn-dim">样本不足 {n}/{min_samples}</div>"""
+
+    if changelog:
+        log_rows = ""
+        for e in reversed(changelog):  # 最新一条在前
+            ts = str(e.get("ts", ""))[:16].replace("T", " ")
+            log_rows += f"""
+        <tr>
+          <td class="tr-num">{ts}</td>
+          <td>{e.get("param", "")}</td>
+          <td class="tr-num">{e.get("old", 0):.2f} → {e.get("new", 0):.2f}</td>
+          <td>{e.get("reason", "")}</td>
+        </tr>"""
+        rows += f"""
+    <table class="tr-table tr-learn-log">
+      <thead>
+        <tr><th>时间</th><th>参数</th><th>调整</th><th>原因</th></tr>
+      </thead>
+      <tbody>{log_rows}
+      </tbody>
+    </table>"""
+    else:
+        rows += """
+    <div class="tr-empty" style="padding:14px;">暂无校准记录</div>"""
+
+    return f"""
+  <div class="tr-drivers-title">自校准</div>
+  <div class="tr-learn">{rows}
+  </div>"""
+
+
+def build_track_record_html(record: dict, driver_stats: list[dict] | None = None, learning: dict | None = None) -> str:
     """渲染预测战绩页。
 
     Args:
         record: reports.history.compute_track_record() 的返回 dict。
         driver_stats: reports.history.compute_driver_stats() 的返回 list（可选）。
+        learning: reports.learning.learning_status() 的返回 dict（可选）。
     """
     total = record.get("total", 0)
     weeks = record.get("weeks", [])
@@ -80,7 +136,8 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     </tbody>
   </table>
   {pending_html}
-  {drivers_html}"""
+  {drivers_html}
+  {_build_learning_html(learning)}"""
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -197,6 +254,36 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin: 28px 0 12px;
   }}
   .tr-drivers {{ margin-bottom: 4px; }}
+  .tr-learn {{
+    background: #faf9f5;
+    border: 1px solid #e8e6dc;
+    border-radius: 6px;
+    padding: 16px 14px;
+  }}
+  .tr-learn-coefs {{
+    font-size: 13px;
+    color: #141413;
+  }}
+  .tr-learn-coefs b {{
+    font-family: Charter, Georgia, "Source Han Serif SC", serif;
+    font-size: 18px;
+    color: #1B365D;
+  }}
+  .tr-learn-base {{
+    font-size: 10px;
+    color: #6b6a64;
+    border: 1px solid #e8e6dc;
+    border-radius: 4px;
+    padding: 1px 5px;
+    margin-left: 2px;
+  }}
+  .tr-learn-metrics {{
+    font-size: 12px;
+    color: #504e49;
+    margin-top: 8px;
+  }}
+  .tr-learn-dim {{ color: #6b6a64; }}
+  .tr-learn-log {{ margin-top: 12px; }}
   .tr-empty {{
     background: #faf9f5;
     border: 1px solid #e8e6dc;

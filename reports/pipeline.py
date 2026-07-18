@@ -298,10 +298,12 @@ def fetch_china_import_snapshot(
 def compute_levels_and_scenarios(
     market: Optional[MarketSnapshot],
     ml: Optional[MLSnapshot] = None,
+    band_scale: float = 1.0,
 ) -> tuple[list[Level], list[Level], list[Scenario]]:
     """
     Derive support/resistance levels and three price scenarios from market data.
     ML prediction (if available) drives scenario probabilities and price targets.
+    band_scale: 情景区间宽度缩放（自校准系数，中心不变，默认 1.0 不缩放）。
     """
     if market is None:
         return [], [], []
@@ -480,6 +482,14 @@ def compute_levels_and_scenarios(
             rationale=_build_rationale("下跌"),
         ),
     ]
+
+    # ── 自校准: 情景区间半宽缩放（中心不变，仅放缩宽度）───────────────
+    if band_scale != 1.0:
+        for s in scenarios:
+            center = (s.price_min + s.price_max) / 2
+            half = (s.price_max - s.price_min) / 2 * band_scale
+            s.price_min = round(center - half, 0)
+            s.price_max = round(center + half, 0)
 
     return supports, resistances, scenarios
 
@@ -830,8 +840,19 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2: ML prediction (needed for scenario + driver logic) ─
     ml = fetch_ml_snapshot(current_price=market.current if market else None)
 
+    # ── Step 2b: 自校准系数（Phase B；失败回退 1.0 不影响出报）───────
+    try:
+        from reports.learning import load_learned
+        learned = load_learned()
+    except Exception as e:
+        logger.warning(f"load_learned failed, fallback to 1.0: {e}")
+        learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    if ml:
+        ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
+
     # ── Step 3: Compute derived fields ──────────────────────────
-    support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(market, ml)
+    support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
+        market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
     hedge = compute_hedge_advice(market, scenarios)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)

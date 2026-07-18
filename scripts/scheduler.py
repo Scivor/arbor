@@ -98,6 +98,20 @@ def generate_and_publish(
     except Exception as e:
         logger.warning("Failed to save report summary: %s", e)
 
+    # ── 自校准：根据历史复盘微调系数（Phase B，不阻塞出报）──
+    try:
+        from reports.learning import recalibrate
+        result = recalibrate()
+        if result["changed"]:
+            from core.notify.ops_alert import send_ops_alert
+            lines = "\n".join(
+                f"• {c['param']}: {c['old']:.3f} → {c['new']:.3f}（{c['reason']}，n={result['n_samples']}）"
+                for c in result["changed"]
+            )
+            send_ops_alert(f"🔧 <b>Arbor 自校准已调整</b>\n{lines}")
+    except Exception as e:
+        logger.warning("recalibrate failed: %s", e)
+
     logger.info(
         "Published report %s | Forecast: %s ~ %s | Hedge: %s | ML: %s",
         today_str,

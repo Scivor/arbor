@@ -52,8 +52,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/HKUDS/Vibe-Trading"
-Repository = "https://github.com/HKUDS/Vibe-Trading"
+Homepage = "https://github.com/Scivor/arbor"
+Repository = "https://github.com/Scivor/arbor"
 
 [project.scripts]
 arbor = "coffee:main"

@@ -81,11 +81,18 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     if not weeks:
         body = '<div class="tr-empty">暂无历史复盘数据</div>'
     else:
+        # ── Brier 记分卡（None 时显示 —）──
+        mean_brier = record.get("mean_brier")
+        bss = record.get("bss")
+        brier_val = f"{mean_brier:.3f}" if mean_brier is not None else "—"
+        bss_html = f'<div class="tr-metric-sub">BSS {bss:+.2f}</div>' if bss is not None else ""
+
         rows = ""
         for w in reversed(weeks):  # 最新一期在前
             badge_cls = {"命中": "tr-badge-hit", "部分命中": "tr-badge-partial"}.get(w["badge"], "tr-badge-miss")
             chg = w["price_change_pct"]
             chg_color = "#1B365D" if chg >= 0 else "#504e49"
+            brier_cell = f'{w["brier"]:.3f}' if w.get("brier") is not None else "—"
             rows += f"""
         <tr>
           <td class="tr-date">{w["report_date"]}</td>
@@ -94,8 +101,34 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
           <td class="tr-num">{w["predicted_min"]:.0f} – {w["predicted_max"]:.0f}</td>
           <td class="tr-num">{w["actual_price"]:.1f}</td>
           <td class="tr-num" style="color:{chg_color};">{chg:+.1f}%</td>
+          <td class="tr-num">{brier_cell}</td>
         </tr>"""
         pending_html = f'<div class="tr-pending">{pending} 期预测待复盘（下期周报发布后更新）</div>' if pending else ""
+
+        # ── 校准度分桶 + 区分度 ──
+        cal_rows = ""
+        for b in (record.get("calibration") or []):
+            mp = f'{b["mean_predicted"]:.0%}' if b.get("mean_predicted") is not None else "—"
+            of = f'{b["observed_freq"]:.0%}' if b.get("observed_freq") is not None else "—"
+            cal_rows += f"""
+        <tr>
+          <td class="tr-date">{_esc(str(b["bucket"]))}</td>
+          <td class="tr-num">{mp}</td>
+          <td class="tr-num">{of}</td>
+          <td class="tr-num">{b["count"]}</td>
+        </tr>"""
+        resolution = record.get("resolution")
+        res_text = f"区分度: {resolution:.3f}（越大越敢报极端概率）" if resolution is not None else "区分度: —"
+        calibration_html = f"""
+  <div class="tr-drivers-title">校准度</div>
+  <table class="tr-table tr-calib">
+    <thead>
+      <tr><th>桶区间</th><th>平均预测</th><th>实际频率</th><th>样本数</th></tr>
+    </thead>
+    <tbody>{cal_rows}
+    </tbody>
+  </table>
+  <div class="tr-calib-note">{res_text}</div>"""
 
         # ── 驱动因子应验率（仅显示样本 ≥2 的因子，按样本数降序）──
         qualified = [s for s in (driver_stats or []) if s.get("samples", 0) >= 2]
@@ -129,15 +162,17 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     <div class="tr-metric"><div class="tr-metric-val">{record["direction_rate"]:.0%}</div><div class="tr-metric-label">方向正确率</div></div>
     <div class="tr-metric"><div class="tr-metric-val">{record["hedge_rate"]:.0%}</div><div class="tr-metric-label">套保有效率</div></div>
     <div class="tr-metric"><div class="tr-metric-val">{total}</div><div class="tr-metric-label">已复盘期数</div></div>
+    <div class="tr-metric"><div class="tr-metric-val">{brier_val}</div><div class="tr-metric-label">平均 Brier · 基准 0.667</div>{bss_html}</div>
   </div>
   <table class="tr-table">
     <thead>
-      <tr><th>日期</th><th>结果</th><th>预测方向</th><th>预测区间</th><th>实际价</th><th>涨跌</th></tr>
+      <tr><th>日期</th><th>结果</th><th>预测方向</th><th>预测区间</th><th>实际价</th><th>涨跌</th><th>Brier</th></tr>
     </thead>
     <tbody>{rows}
     </tbody>
   </table>
   {pending_html}
+  {calibration_html}
   {drivers_html}
   {_build_learning_html(learning)}"""
 
@@ -181,7 +216,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-back:hover {{ color: #1B365D; }}
   .tr-metrics {{
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     gap: 10px;
     margin-bottom: 24px;
   }}
@@ -203,6 +238,11 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     color: #6b6a64;
     margin-top: 6px;
     letter-spacing: 0.3px;
+  }}
+  .tr-metric-sub {{
+    font-size: 11px;
+    color: #6b6a64;
+    margin-top: 4px;
   }}
   .tr-table {{
     width: 100%;
@@ -256,6 +296,12 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin: 28px 0 12px;
   }}
   .tr-drivers {{ margin-bottom: 4px; }}
+  .tr-calib {{ margin-bottom: 4px; }}
+  .tr-calib-note {{
+    font-size: 11px;
+    color: #6b6a64;
+    margin-top: 8px;
+  }}
   .tr-learn {{
     background: #faf9f5;
     border: 1px solid #e8e6dc;

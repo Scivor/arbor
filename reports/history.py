@@ -46,6 +46,8 @@ class ReportSummary:
     drivers: list[dict] = field(default_factory=list)  # {param_name, signal, weight, category}
     # 当期生效的自校准系数快照（区分"模型原始输出"与"系数调整后"；旧 JSON 无此键 → 空 dict）
     learned_scales: dict = field(default_factory=dict)
+    # 情景概率快照（Brier 记分用；旧 JSON 无此键 → 默认空列表，向后兼容）
+    scenarios: list[dict] = field(default_factory=list)  # {direction, probability, price_min, price_max}
 
 
 def _history_dir() -> Path:
@@ -106,6 +108,9 @@ def save_report_summary(report) -> Path:
                   "weight": p.weight, "category": p.category}
                  for p in (report.bullish_params + report.bearish_params)],
         learned_scales=_current_learned_scales(),
+        scenarios=[{"direction": s.direction, "probability": s.probability,
+                    "price_min": s.price_min, "price_max": s.price_max}
+                   for s in report.scenarios],
     )
 
     path = summary_path(report.report_date)
@@ -133,6 +138,14 @@ def load_last_week_summary(today: date) -> Optional[ReportSummary]:
             logger.warning("Failed to parse history file %s: %s", c, e)
             continue
     return None
+
+
+# 方向归一映射（中英文 → up/flat/down；compute_prediction_review 与 compute_brier 共用）
+_DIRECTION_MAP = {
+    "上涨": "up", "看涨": "up", "BULLISH": "up",
+    "下跌": "down", "看跌": "down", "BEARISH": "down",
+    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
+}
 
 
 @dataclass
@@ -175,12 +188,7 @@ def compute_prediction_review(
 
     # Predicted direction mapping
     pred_dir = last.dominant_scenario_direction
-    pred_dir_map = {
-        "上涨": "up", "看涨": "up", "BULLISH": "up",
-        "下跌": "down", "看跌": "down", "BEARISH": "down",
-        "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
-    }
-    predicted_direction = pred_dir_map.get(pred_dir, "flat")
+    predicted_direction = _DIRECTION_MAP.get(pred_dir, "flat")
 
     # Hit tests
     prediction_hit = last.dominant_scenario_min <= current_price <= last.dominant_scenario_max
@@ -273,6 +281,50 @@ def adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, 
     return pairs
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Brier Score — 概率记分与校准
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 三分类均匀预测的 Brier 基准: 3 × (1/3)² × ... = 2/3 ≈ 0.667
+_BRIER_BASELINE = 0.6667
+
+
+def compute_brier(scenarios: list[dict], actual: str) -> float:
+    """
+    多类别 Brier 记分。
+
+    把各情景 direction 归一到 up/flat/down（中英文映射同 compute_prediction_review），
+    同类别概率求和得 (p_up, p_flat, p_down)，actual ∈ {up, flat, down}，
+    BS = Σ(p_i − o_i)²，o_actual=1。越小越好，基准（均匀预测）≈ 0.667。
+    """
+    probs = {"up": 0.0, "flat": 0.0, "down": 0.0}
+    for s in scenarios:
+        direction = _DIRECTION_MAP.get(s.get("direction"), "flat")
+        probs[direction] += float(s.get("probability", 0.0))
+    return sum((p - (1.0 if cat == actual else 0.0)) ** 2 for cat, p in probs.items())
+
+
+def _calibration_buckets(calib_preds: list[tuple[float, bool]]) -> list[dict]:
+    """
+    校准度分桶: 把每个情景概率当作一次"该类别会发生"的预测，
+    按预测概率分 4 桶 [0,0.3) [0.3,0.5) [0.5,0.7) [0.7,1.0]，
+    每桶聚合平均预测概率与实际发生频率（count=0 时均 None）。
+    """
+    edges = [(0.0, 0.3, "[0.0, 0.3)"), (0.3, 0.5, "[0.3, 0.5)"),
+             (0.5, 0.7, "[0.5, 0.7)"), (0.7, 1.0, "[0.7, 1.0]")]
+    buckets = []
+    for lo, hi, label in edges:
+        members = [(p, o) for p, o in calib_preds if lo <= p < hi or (hi == 1.0 and p == 1.0)]
+        count = len(members)
+        buckets.append({
+            "bucket": label,
+            "mean_predicted": sum(p for p, _ in members) / count if count else None,
+            "observed_freq": sum(1 for _, o in members if o) / count if count else None,
+            "count": count,
+        })
+    return buckets
+
+
 def compute_track_record() -> dict:
     """
     聚合历史周报战绩（track record）。
@@ -282,12 +334,16 @@ def compute_track_record() -> dict:
     纯本地文件读取，不联网。
 
     Returns:
-        {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending"}
+        {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending",
+         "mean_brier", "bss", "calibration", "resolution"}
     """
     summaries = load_summaries()
 
     weeks: list[dict] = []
     hits = dirs = hedges = 0
+    briers: list[float] = []
+    calib_preds: list[tuple[float, bool]] = []  # (情景概率, 该类别是否实际发生)
+    resolutions: list[float] = []
     for cur, nxt in adjacent_pairs(summaries):
         try:
             review = compute_prediction_review(cur, nxt.current_price)
@@ -297,6 +353,19 @@ def compute_track_record() -> dict:
         hits += review.prediction_hit
         dirs += review.direction_correct
         hedges += review.hedge_advice_correct
+
+        # ── Brier 记分（scenarios 为空 → 该周跳过，不计入聚合）──
+        brier = None
+        if cur.scenarios:
+            actual_dir = review.direction_actual
+            brier = compute_brier(cur.scenarios, actual_dir)
+            briers.append(brier)
+            for s in cur.scenarios:
+                cat = _DIRECTION_MAP.get(s.get("direction"), "flat")
+                p = float(s.get("probability", 0.0))
+                calib_preds.append((p, cat == actual_dir))
+                resolutions.append(abs(p - 1 / 3))
+
         weeks.append({
             "report_date": cur.report_date,
             "badge": review.review_badge,
@@ -305,9 +374,11 @@ def compute_track_record() -> dict:
             "predicted_max": cur.dominant_scenario_max,
             "actual_price": nxt.current_price,
             "price_change_pct": round(review.price_change_pct, 2),
+            "brier": brier,
         })
 
     total = len(weeks)
+    mean_brier = sum(briers) / len(briers) if briers else None
     return {
         "total": total,
         "hit_rate": hits / total if total else 0.0,
@@ -315,6 +386,10 @@ def compute_track_record() -> dict:
         "hedge_rate": hedges / total if total else 0.0,
         "weeks": weeks,
         "pending": summaries[-1].report_date if summaries else None,
+        "mean_brier": mean_brier,
+        "bss": 1 - mean_brier / _BRIER_BASELINE if mean_brier is not None else None,
+        "calibration": _calibration_buckets(calib_preds),
+        "resolution": sum(resolutions) / len(resolutions) if resolutions else None,
     }
 
 

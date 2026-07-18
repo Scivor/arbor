@@ -84,6 +84,9 @@ _TRANSLATIONS = {
     "scenario_a": {"zh": "情景A", "en": "Scenario A"},
     "scenario_b": {"zh": "情景B", "en": "Scenario B"},
     "scenario_c": {"zh": "情景C", "en": "Scenario C"},
+    "ref_class_note": {"zh": "参考类: 近 {years} 年相似行情 {n} 周，涨 {up} / 横 {flat} / 跌 {down}",
+                       "en": "Reference class: {n} similar weeks in {years}y — up {up} / flat {flat} / down {down}"},
+    "ref_class_thin": {"zh": "（样本稀薄，仅供参考）", "en": " (thin sample, for reference only)"},
 
     # ML
     "ml_model_type": {"zh": "ML 模型预测", "en": "ML Model Prediction"},
@@ -387,6 +390,22 @@ def _build_price_chart(report, lang: str = "zh") -> str:
     buf.seek(0)
     b64 = base64.b64encode(buf.read()).decode("utf-8")
     return f'<img class="figure-chart" src="data:image/png;base64,{b64}" style="width:100%;max-width:100%;display:block;margin:0;" alt="Price Chart">'
+
+
+def _build_reference_class_html(report, lang: str) -> str:
+    """参考类基础概率标注（情景区下方一行；reference_class 为 None 时不渲染）。"""
+    rc = getattr(report, "reference_class", None)
+    if not rc:
+        return ""
+    thin = _t("ref_class_thin", lang) if rc.get("n_analogs", 0) < 20 else ""
+    text = _t("ref_class_note", lang,
+              years=f"{rc.get('years', 5):.0f}",
+              n=rc.get("n_analogs", 0),
+              up=f"{rc.get('up', 0):.0%}",
+              flat=f"{rc.get('flat', 0):.0%}",
+              down=f"{rc.get('down', 0):.0%}")
+    return f"""
+  <div class="rc-note">{text}{thin}</div>"""
 
 
 def _scenario_accent(direction: str) -> str:
@@ -1035,6 +1054,11 @@ def build_report_html(report, lang: str = "zh") -> str:
   }}
 
   /* ── Scenarios ── */
+  .rc-note {{
+    font-size: 7pt;
+    color: var(--stone);
+    margin: 0.6mm 0 1.6mm;
+  }}
   .scenarios {{
     display: flex;
     gap: 2mm;
@@ -1562,6 +1586,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   <div class="scenarios">
     {scenario_rows}
   </div>
+  {_build_reference_class_html(report, lang)}
   {hedge_html}
 </div>
 

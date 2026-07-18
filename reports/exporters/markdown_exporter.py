@@ -122,6 +122,16 @@ def _md_scenarios(report: "Report", lang: str) -> list[str]:
         rationale = s.rationale[0] if s.rationale else ""
         lines.append(f"| {s.label} | {s.direction} | {s.price_min:.0f} – {s.price_max:.0f} | {s.probability:.0%} | {rationale} |")
     lines.append("")
+
+    # 参考类基础概率（reference_class 非 None 时一行标注）
+    rc = getattr(report, "reference_class", None)
+    if rc:
+        thin = "（样本稀薄，仅供参考）" if rc.get("n_analogs", 0) < 20 else ""
+        lines.append(
+            f"参考类: 近 {rc.get('years', 5):.0f} 年相似行情 {rc.get('n_analogs', 0)} 周，"
+            f"涨 {rc.get('up', 0):.0%} / 横 {rc.get('flat', 0):.0%} / 跌 {rc.get('down', 0):.0%}{thin}"
+        )
+        lines.append("")
     return lines
 
 

@@ -188,6 +188,9 @@ class PredictionReport:
     # 中国进口商视角（汇率 + 到库成本 + 政策事件）
     china_import: Optional[ChinaImportSnapshot] = None
 
+    # 参考类基础概率（超级预测 Phase 2：{up, flat, down, n_analogs, years}）
+    reference_class: Optional[dict] = None
+
     # 核心观点
     outlook: str = ""        # 一句话总结
     risk_warnings: list[str] = field(default_factory=list)
@@ -268,6 +271,16 @@ class PredictionReport:
             for s in self.scenarios:
                 dir_icon = "🔴" if s.direction == "BEARISH" else "⚪" if s.direction == "NEUTRAL" else "🟢"
                 lines.append(f"  {dir_icon} {s.label:6}  {s.price_min:.0f}–{s.price_max:.0f}  {s.probability:>4.0%}  |  {s.rationale[0] if s.rationale else ''}")
+            lines.append("")
+
+        # ─── 参考类基础概率 ─────────────────────────────────────────
+        if self.reference_class:
+            rc = self.reference_class
+            thin = "（样本稀薄，仅供参考）" if rc.get("n_analogs", 0) < 20 else ""
+            lines.append(
+                f"  {'参考类':>12}: 近 {rc.get('years', 5):.0f} 年相似行情 {rc.get('n_analogs', 0)} 周，"
+                f"涨 {rc.get('up', 0):.0%} / 横 {rc.get('flat', 0):.0%} / 跌 {rc.get('down', 0):.0%}{thin}"
+            )
             lines.append("")
 
         # ─── 驱动因子 ───────────────────────────────────────────────

@@ -50,6 +50,7 @@ class PipelineConfig:
     use_demo_data: bool = False       # If True, skip live fetches
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
     forecast_week_offset: int = 0     # 0 = current week, 1 = next week, etc.
+    shrink_w: float = 0.0             # 参考类概率收缩权重（0.0=关闭；>0 时 p'=w·p+(1−w)·p_base）
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -494,6 +495,33 @@ def compute_levels_and_scenarios(
     return supports, resistances, scenarios
 
 
+# 情景方向 → 参考类类别（与 reports/history._DIRECTION_MAP 同口径）
+_RC_DIR_MAP = {
+    "上涨": "up", "看涨": "up", "BULLISH": "up",
+    "下跌": "down", "看跌": "down", "BEARISH": "down",
+    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
+}
+
+
+def apply_shrink(scenarios: list[Scenario], reference_class: dict, w: float) -> list[Scenario]:
+    """
+    参考类概率收缩: p' = w·p + (1−w)·p_base，三情景重归一化使和为 1。
+
+    w ≤ 0 → 不动作（默认关闭）；未知方向类别的 p_base 取均匀 1/3。
+    原地修改 scenarios 并返回。
+    """
+    if w <= 0 or not reference_class:
+        return scenarios
+    for s in scenarios:
+        base = reference_class.get(_RC_DIR_MAP.get(s.direction, "flat"), 1 / 3)
+        s.probability = w * s.probability + (1 - w) * base
+    total = sum(s.probability for s in scenarios)
+    if total > 0:
+        for s in scenarios:
+            s.probability = round(s.probability / total, 4)
+    return scenarios
+
+
 def compute_drivers(
     market: Optional[MarketSnapshot],
     climate: Optional[ClimateSnapshot],
@@ -857,6 +885,18 @@ def run(config: PipelineConfig) -> PredictionReport:
     hedge = compute_hedge_advice(market, scenarios)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
+    # ── Step 3c: 参考类基础概率（超级预测 Phase 2；失败降级 None）────
+    reference_class = None
+    try:
+        from reports.reference_class import compute_base_rates
+        reference_class = compute_base_rates(market)
+    except Exception as e:
+        logger.warning(f"compute_base_rates failed: {e}")
+
+    # 概率收缩（PipelineConfig.shrink_w，默认 0.0 关闭）
+    if config.shrink_w > 0 and reference_class:
+        scenarios = apply_shrink(scenarios, reference_class, config.shrink_w)
+
     # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
     china_import = fetch_china_import_snapshot(market, hedge)
 
@@ -943,6 +983,13 @@ def run(config: PipelineConfig) -> PredictionReport:
                  latency="~15 min", reliability="B",
                  notes="USD/CNY 即期汇率，用于到库成本换算")
 
+    if reference_class:
+        prov.add("reference_class",
+                 f"涨{reference_class['up']:.0%}/横{reference_class['flat']:.0%}/跌{reference_class['down']:.0%} (n={reference_class['n_analogs']})",
+                 "Internal computed from Yahoo Finance KC=F 5y", "",
+                 latency="T+0", reliability="B",
+                 notes="参考类基础概率：与当前 RSI+30日动量相似的历史周，其后5日方向分布")
+
     # COT data (if available)
     try:
         from sources.cot.cftc_cot import COTSource
@@ -999,6 +1046,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         hedge_advice=hedge,
         ml_snapshot=ml,
         china_import=china_import,
+        reference_class=reference_class,
         outlook=outlook,
         risk_warnings=risk_warnings,
         weather_snapshots=weather_snaps,

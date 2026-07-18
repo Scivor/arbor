@@ -14,60 +14,18 @@ from __future__ import annotations
 
 import logging
 import sys
-from datetime import datetime, timedelta
-from pathlib import Path
 
 import pandas as pd
 
 from reports.indicators import compute_rsi
+from sources.coffee.kc_history import fetch_kc_daily  # noqa: F401 — 数据获取已下沉 sources 层（M4）
 
 logger = logging.getLogger(__name__)
-
-_CACHE_PATH = Path.home() / ".arbor" / "cache" / "kc_daily.csv"
-_CACHE_TTL = timedelta(days=7)
 
 # 方向分类阈值（±1%）与参考类筛选容差
 _DIR_THRESHOLD = 0.01
 _RSI_TOL = 5.0
 _MOM_TOL = 0.03
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 数据获取（带本地缓存）
-# ─────────────────────────────────────────────────────────────────────────────
-
-def fetch_kc_daily(years: int = 5) -> pd.DataFrame:
-    """
-    拉取 KC=F 日线收盘价，缓存到 ~/.arbor/cache/kc_daily.csv（TTL 7 天，按 mtime）。
-    缓存新鲜则直接读缓存；任何网络/解析失败抛出异常，由调用方兜底。
-    """
-    if _CACHE_PATH.exists():
-        age = datetime.now() - datetime.fromtimestamp(_CACHE_PATH.stat().st_mtime)
-        if age < _CACHE_TTL:
-            try:
-                df = pd.read_csv(_CACHE_PATH, index_col=0, parse_dates=True)
-                # 畸形缓存（缺 Close 列）视为失效，继续走实时拉取分支
-                if not df.empty and "Close" in df.columns:
-                    logger.info("fetch_kc_daily: 使用缓存（%d 行，age %s）", len(df), age)
-                    return df
-            except Exception as e:
-                logger.warning("fetch_kc_daily: 缓存读取失败，改为实时拉取: %s", e)
-
-    import yfinance as yf
-    df = yf.download("KC=F", period=f"{years}y", interval="1d",
-                     auto_adjust=True, progress=False)
-    if df is None or df.empty:
-        raise RuntimeError("yfinance 返回空数据")
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    df = df[["Close"]].dropna()
-
-    try:
-        _CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        df.to_csv(_CACHE_PATH)
-    except Exception as e:
-        logger.warning("fetch_kc_daily: 缓存写入失败: %s", e)
-    return df
 
 
 # ─────────────────────────────────────────────────────────────────────────────

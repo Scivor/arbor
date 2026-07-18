@@ -1,0 +1,17 @@
+[Unit]
+Description=Arbor Report Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=coffee
+Group=coffee
+WorkingDirectory=/home/coffee/coffee-v3
+Environment=PYTHONPATH=/home/coffee/coffee-v3
+Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/python3.11 scripts/scheduler.py --format both
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

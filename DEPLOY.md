@@ -44,17 +44,19 @@ usermod -aG sudo coffee    # Ubuntu
 
 ## 3. 安装依赖
 
-### 3.1 Python 3.9+
+### 3.1 Python 3.11+
 
-**CentOS 8:**
+**CentOS 8/9:**
 ```bash
-yum install -y python39 python39-pip git
-alternatives --set python3 /usr/bin/python3.9
+yum install -y python3.11 python3.11-pip git
 ```
 
 **Ubuntu 22.04:**
 ```bash
-apt install -y python3-pip python3-venv git
+# 22.04 默认 python3 为 3.10，pyproject 要求 >=3.11，走 deadsnakes
+apt install -y software-properties-common
+add-apt-repository -y ppa:deadsnakes/ppa
+apt update && apt install -y python3.11 python3.11-venv git
 ```
 
 ### 3.2 安装项目依赖
@@ -65,28 +67,18 @@ cd ~
 git clone <你的代码仓库> coffee-v3
 cd coffee-v3
 
-pip3 install --user -r requirements.txt
+python3.11 -m ensurepip --user 2>/dev/null || true
+python3.11 -m pip install --user -e .
 ```
 
-`requirements.txt` 内容：
-```
-fastapi>=0.100
-uvicorn>=0.23
-jinja2>=3.1
-apscheduler>=3.10
-requests>=2.31
-pandas>=2.0
-numpy>=2.0
-matplotlib>=3.7
-mplfinance>=0.12
-playwright>=1.40
-```
+> 依赖以 `pyproject.toml` 为单一事实源（editable install 自动装齐），
+> 不再维护手写 requirements 列表。
 
 ### 3.3 安装 Playwright 浏览器
 
 ```bash
-python3 -m playwright install chromium
-python3 -m playwright install-deps chromium
+python3.11 -m playwright install chromium
+python3.11 -m playwright install-deps chromium
 ```
 
 > 这一步会下载约 150MB 的 Chromium 浏览器，可能需要几分钟。
@@ -117,7 +109,7 @@ python3 -m playwright install-deps chromium
 
 ```bash
 cd ~/coffee-v3
-python3 scripts/scheduler.py --now --format both
+python3.11 scripts/scheduler.py --now --format both
 ```
 
 确认 `web/static/reports/` 下已生成报告文件。
@@ -142,7 +134,7 @@ Group=coffee
 WorkingDirectory=/home/coffee/coffee-v3
 Environment=PYTHONPATH=/home/coffee/coffee-v3
 Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=/usr/bin/python3 -m uvicorn web.app:app --host 127.0.0.1 --port 8000
+ExecStart=/usr/bin/python3.11 -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5
 
@@ -166,7 +158,7 @@ Group=coffee
 WorkingDirectory=/home/coffee/coffee-v3
 Environment=PYTHONPATH=/home/coffee/coffee-v3
 Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin
-ExecStart=/usr/bin/python3 scripts/scheduler.py --format both
+ExecStart=/usr/bin/python3.11 scripts/scheduler.py --format both
 Restart=always
 RestartSec=60
 
@@ -335,7 +327,7 @@ sudo tail -f /var/log/nginx/error.log
 ```bash
 sudo systemctl stop coffee-scheduler
 cd /home/coffee/coffee-v3
-python3 scripts/scheduler.py --now --format both
+python3.11 scripts/scheduler.py --now --format both
 sudo systemctl start coffee-scheduler
 ```
 
@@ -363,47 +355,20 @@ sudo systemctl restart coffee-web coffee-scheduler
 
 ## 一键部署脚本（可选）
 
-创建 `deploy.sh`：
+仓库内置一键部署脚本（涵盖上文第 2–6 步：系统依赖、运行用户、代码部署、
+Python 依赖、Playwright、首份报告、systemd、Nginx）：
 
 ```bash
-#!/bin/bash
-set -e
+# 1. 把项目打包上传到服务器
+scp coffee-v3.tar.gz root@<你的公网IP>:/tmp/
 
-USER="coffee"
-REPO="git@github.com:yourname/coffee-v3.git"
-DIR="/home/$USER/coffee-v3"
-
-echo "=== 1. Create user ==="
-useradd -m -s /bin/bash $USER || true
-
-echo "=== 2. Install deps ==="
-yum install -y python39 python39-pip git nginx
-
-su - $USER -c "
-  pip3 install --user fastapi uvicorn jinja2 apscheduler requests pandas numpy matplotlib mplfinance playwright
-  python3 -m playwright install chromium
-"
-
-echo "=== 3. Clone code ==="
-su - $USER -c "git clone $REPO $DIR || (cd $DIR && git pull)"
-
-echo "=== 4. Generate first report ==="
-su - $USER -c "cd $DIR && python3 scripts/scheduler.py --now --format both"
-
-echo "=== 5. Install systemd services ==="
-cp $DIR/deploy/coffee-web.service /etc/systemd/system/
-cp $DIR/deploy/coffee-scheduler.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable coffee-web coffee-scheduler
-systemctl start coffee-web coffee-scheduler
-
-echo "=== 6. Install Nginx ==="
-cp $DIR/deploy/nginx.conf /etc/nginx/conf.d/coffee.conf
-nginx -t && systemctl reload nginx
-
-echo "=== Done ==="
-echo "Visit: http://$(curl -s ip.sb)"
+# 2. 以 root 执行
+bash deploy/provision.sh
 ```
+
+- Python 依赖走 `pip3 install --user -e .`（pyproject.toml 单一事实源）
+- systemd unit 文件为 `deploy/coffee-web.service` / `deploy/coffee-scheduler.service`
+- Nginx 配置由脚本内 heredoc 写入 `/etc/nginx/conf.d/coffee.conf`
 
 ---
 

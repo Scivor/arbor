@@ -14,11 +14,15 @@ echo "========================================"
 if command -v apt-get &>/dev/null; then
     export DEBIAN_FRONTEND=noninteractive
     apt-get update -qq
-    apt-get install -y -qq python3 python3-pip git nginx curl \
+    # pyproject 要求 Python >=3.11；Ubuntu 22.04 默认 python3 为 3.10，走 deadsnakes
+    apt-get install -y -qq software-properties-common 2>/dev/null || true
+    add-apt-repository -y ppa:deadsnakes/ppa 2>/dev/null || true
+    apt-get update -qq
+    apt-get install -y -qq python3.11 python3.11-venv git nginx curl \
         fonts-noto-cjk fonts-wqy-zenhei 2>/dev/null || true
 elif command -v yum &>/dev/null; then
     yum update -y -q
-    yum install -y -q python39 python39-pip git nginx curl \
+    yum install -y -q python3.11 python3.11-pip git nginx curl \
         pango libXcomposite libXcursor libXdamage libXext libXi libXtst \
         cups-libs libXScrnSaver libXrandr alsa-lib atk gtk3 \
         xorg-x11-fonts-100dpi xorg-x11-fonts-75dpi \
@@ -26,6 +30,12 @@ elif command -v yum &>/dev/null; then
         wqy-zenhei-fonts 2>/dev/null || true
 else
     echo "Unsupported OS"
+    exit 1
+fi
+
+# 版本守卫：pyproject requires-python >=3.11
+if ! command -v python3.11 &>/dev/null; then
+    echo "ERROR: 未找到 python3.11（pyproject requires-python >=3.11），请手动安装后重跑"
     exit 1
 fi
 
@@ -54,66 +64,29 @@ fi
 echo ""
 echo "Step 4/8 — 安装 Python 依赖"
 echo "========================================"
+# 依赖单一事实源: pyproject.toml（editable install）
 su - "$USER" -c "
     cd $DIR
-    pip3 install --user --quiet \
-        fastapi uvicorn jinja2 apscheduler requests \
-        pandas numpy matplotlib mplfinance playwright 2>&1 | tail -5
+    python3.11 -m ensurepip --user 2>/dev/null || true
+    python3.11 -m pip install --user --quiet -e . 2>&1 | tail -5
 "
 
 echo ""
 echo "Step 5/8 — 安装 Playwright 浏览器"
 echo "========================================"
-su - "$USER" -c "python3 -m playwright install chromium 2>&1 | tail -3"
+su - "$USER" -c "python3.11 -m playwright install chromium 2>&1 | tail -3"
 
 echo ""
 echo "Step 6/8 — 生成首份报告"
 echo "========================================"
-su - "$USER" -c "cd $DIR && PYTHONPATH=$DIR python3 scripts/scheduler.py --now --format both 2>&1 | tail -3"
+su - "$USER" -c "cd $DIR && PYTHONPATH=$DIR python3.11 scripts/scheduler.py --now --format both 2>&1 | tail -3"
 
 echo ""
 echo "Step 7/8 — 配置 systemd 服务"
 echo "========================================"
 
-cat > /etc/systemd/system/coffee-web.service <<'EOF'
-[Unit]
-Description=Arbor Web Report
-After=network.target
-
-[Service]
-Type=simple
-User=coffee
-Group=coffee
-WorkingDirectory=/home/coffee/coffee-v3
-Environment=PYTHONPATH=/home/coffee/coffee-v3
-Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/python3 -m uvicorn web.app:app --host 127.0.0.1 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-cat > /etc/systemd/system/coffee-scheduler.service <<'EOF'
-[Unit]
-Description=Arbor Report Scheduler
-After=network.target
-
-[Service]
-Type=simple
-User=coffee
-Group=coffee
-WorkingDirectory=/home/coffee/coffee-v3
-Environment=PYTHONPATH=/home/coffee/coffee-v3
-Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/python3 scripts/scheduler.py --format both
-Restart=always
-RestartSec=60
-
-[Install]
-WantedBy=multi-user.target
-EOF
+# unit 文件单一事实源: deploy/coffee-*.service
+cp $DIR/deploy/coffee-web.service $DIR/deploy/coffee-scheduler.service /etc/systemd/system/
 
 systemctl daemon-reload
 systemctl enable coffee-web coffee-scheduler

@@ -547,9 +547,9 @@ def _build_attribution_html(last, current_price: float, lang: str) -> str:
     rows = ""
     for v in attr["verdicts"]:
         icon, color = icons.get(v["verdict"], icons["中性"])
-        weight = f" <span class='attr-weight'>{v['weight']}</span>" if v.get("weight") else ""
+        weight = f" <span class='attr-weight'>{_html.escape(str(v['weight']))}</span>" if v.get("weight") else ""
         rows += (f"<li><span class='attr-icon' style='color:{color};'>{icon}</span>"
-                 f"{v['param_name']}{weight}</li>")
+                 f"{_html.escape(str(v['param_name']))}{weight}</li>")
 
     summary = _t("attr_summary", lang, hits=attr["hits"], misses=attr["misses"], neutrals=attr["neutrals"])
     return f"""

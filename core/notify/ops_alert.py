@@ -65,5 +65,6 @@ def send_ops_alert(text: str) -> bool:
         logger.info("ops_alert: 告警已发送")
         return True
     except Exception as e:
-        logger.warning(f"ops_alert: 发送失败: {e}")
+        # 只记异常类型：连接类异常消息会内嵌含 token 的请求 URL，防止 token 落日志
+        logger.warning(f"ops_alert: 发送失败: {type(e).__name__}")
         return False

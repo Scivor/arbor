@@ -8,6 +8,8 @@ web/track_record.py
 
 from __future__ import annotations
 
+from html import escape as _esc
+
 
 def _build_learning_html(learning: dict | None) -> str:
     """自校准区块：当前系数 + 近期指标 + 最近 5 条调整记录。"""
@@ -41,10 +43,10 @@ def _build_learning_html(learning: dict | None) -> str:
             ts = str(e.get("ts", ""))[:16].replace("T", " ")
             log_rows += f"""
         <tr>
-          <td class="tr-num">{ts}</td>
-          <td>{e.get("param", "")}</td>
+          <td class="tr-num">{_esc(ts)}</td>
+          <td>{_esc(str(e.get("param", "")))}</td>
           <td class="tr-num">{e.get("old", 0):.2f} → {e.get("new", 0):.2f}</td>
-          <td>{e.get("reason", "")}</td>
+          <td>{_esc(str(e.get("reason", "")))}</td>
         </tr>"""
         rows += f"""
     <table class="tr-table tr-learn-log">
@@ -103,7 +105,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
                 rate_color = "#1B365D" if s["rate"] >= 0.5 else "#504e49"
                 drv_rows += f"""
         <tr>
-          <td class="tr-date">{s["param_name"]}</td>
+          <td class="tr-date">{_esc(str(s["param_name"]))}</td>
           <td class="tr-num" style="color:{rate_color};">{s["rate"]:.0%}</td>
           <td class="tr-num">{s["samples"]}</td>
         </tr>"""

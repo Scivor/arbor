@@ -170,7 +170,8 @@ def _job_with_alerts(**kwargs):
         logger.error("Scheduled report failed: %s", e, exc_info=True)
         try:
             from core.notify.ops_alert import send_ops_alert
-            send_ops_alert(f"🔴 <b>Arbor 周报定时任务失败</b>\n<code>{e}</code>")
+            from html import escape as _esc
+            send_ops_alert(f"🔴 <b>Arbor 周报定时任务失败</b>\n<code>{_esc(str(e))}</code>")
         except Exception:
             pass
         raise

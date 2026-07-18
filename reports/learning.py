@@ -25,7 +25,8 @@ CHANGELOG_PATH = Path.home() / ".arbor" / "learned_changelog.jsonl"
 _DEFAULTS = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
 
 # 钳制边界（有界自校准，防止反馈失控）
-_ML_BIAS_BOUNDS = (0.5, 1.5)
+# ml_bias_scale 是单向降级器：上限 1.0（只降不放大），准确时仅向 1.0 回归
+_ML_BIAS_BOUNDS = (0.5, 1.0)
 _BAND_BOUNDS = (0.7, 1.5)
 
 
@@ -33,9 +34,10 @@ def load_learned() -> dict:
     """读取已学习系数；文件不存在/损坏/缺键 → 返回默认 1.0（绝不抛异常）。"""
     try:
         data = json.loads(LEARNED_PATH.read_text(encoding="utf-8"))
+        # 装载即钳制：被篡改/手工编辑的状态文件不能突破有界承诺
         return {
-            "ml_bias_scale": float(data.get("ml_bias_scale", 1.0)),
-            "scenario_band_scale": float(data.get("scenario_band_scale", 1.0)),
+            "ml_bias_scale": _clamp(float(data.get("ml_bias_scale", 1.0)), _ML_BIAS_BOUNDS),
+            "scenario_band_scale": _clamp(float(data.get("scenario_band_scale", 1.0)), _BAND_BOUNDS),
         }
     except FileNotFoundError:
         return dict(_DEFAULTS)
@@ -52,10 +54,11 @@ def _evaluate(pairs) -> tuple[float, float]:
     """
     逐对评估 ML 方向准确率与情景区间命中率。
 
-    实际方向按 ±1% 判 up/down/flat；NEUTRAL 预测恒判正确
-    （与 compute_prediction_review 的口径一致）。
+    实际方向按 ±1% 判 up/down/flat；NEUTRAL/未知信号不做方向主张，
+    从 ML 准确率样本中剔除（不计对也不计错）；无方向样本时返回 1.0（不触发降级）。
     """
     ml_correct = 0
+    ml_total = 0
     band_hits = 0
     for cur, nxt in pairs:
         change_pct = (nxt.current_price - cur.current_price) / cur.current_price * 100 if cur.current_price else 0.0
@@ -66,15 +69,18 @@ def _evaluate(pairs) -> tuple[float, float]:
         else:
             actual = "flat"
 
-        pred = {"BULLISH": "up", "BEARISH": "down"}.get((cur.ml_signal or "").upper(), "flat")
-        if pred == "flat" or pred == actual:
-            ml_correct += 1
+        pred = {"BULLISH": "up", "BEARISH": "down"}.get((cur.ml_signal or "").upper())
+        if pred is not None:
+            ml_total += 1
+            if pred == actual:
+                ml_correct += 1
 
         if cur.dominant_scenario_min <= nxt.current_price <= cur.dominant_scenario_max:
             band_hits += 1
 
     n = len(pairs)
-    return ml_correct / n, band_hits / n
+    ml_accuracy = (ml_correct / ml_total) if ml_total else 1.0
+    return ml_accuracy, band_hits / n
 
 
 def _append_changelog(param: str, old: float, new: float, reason: str, n_samples: int):
@@ -119,12 +125,12 @@ def recalibrate(min_samples: int = 8) -> dict:
     样本对取自 reports.history 共享 helper（升序、≤8 天相邻窗口）。
     样本不足不动作；有变更才写回 LEARNED_PATH 并追加 changelog。
     """
-    from reports.history import _adjacent_pairs, _load_summaries
+    from reports.history import adjacent_pairs, load_summaries
 
     current = load_learned()
 
     try:
-        pairs = _adjacent_pairs(_load_summaries())
+        pairs = adjacent_pairs(load_summaries())
     except Exception as e:
         logger.warning("recalibrate: 读取历史失败: %s", e)
         pairs = []
@@ -141,12 +147,12 @@ def recalibrate(min_samples: int = 8) -> dict:
     new_values = dict(current)
     changed: list[dict] = []
 
-    # ── ml_bias_scale: 方向不准 → 收缩 ML 影响；持续准 → 小幅放大 ──
+    # ── ml_bias_scale: 方向不准 → 收缩 ML 影响；持续准 → 向 1.0 回归（单向降级，不放大）──
     if ml_accuracy < 0.45:
         reason = f"ML 方向准确率 {ml_accuracy:.0%} < 45%，降低 ML 影响"
         new_values["ml_bias_scale"] = _clamp(current["ml_bias_scale"] * 0.9, _ML_BIAS_BOUNDS)
     elif ml_accuracy > 0.65:
-        reason = f"ML 方向准确率 {ml_accuracy:.0%} > 65%，提高 ML 影响"
+        reason = f"ML 方向准确率 {ml_accuracy:.0%} > 65%，回调 ML 影响向基准"
         new_values["ml_bias_scale"] = _clamp(current["ml_bias_scale"] * 1.05, _ML_BIAS_BOUNDS)
     else:
         reason = ""
@@ -170,7 +176,10 @@ def recalibrate(min_samples: int = 8) -> dict:
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
-            LEARNED_PATH.write_text(json.dumps(new_values, indent=2), encoding="utf-8")
+            # 原子写：tmp + replace，避免写出中途崩溃导致学习状态损坏
+            tmp_path = LEARNED_PATH.with_suffix(".json.tmp")
+            tmp_path.write_text(json.dumps(new_values, indent=2), encoding="utf-8")
+            tmp_path.replace(LEARNED_PATH)
         except Exception as e:
             logger.warning("recalibrate: 写回失败: %s", e)
             return {"changed": [], "current": current, "n_samples": n,
@@ -192,8 +201,8 @@ def learning_status(min_samples: int = 8) -> dict:
     changelog = _read_changelog(limit=5)
 
     try:
-        from reports.history import _adjacent_pairs, _load_summaries
-        pairs = _adjacent_pairs(_load_summaries())
+        from reports.history import adjacent_pairs, load_summaries
+        pairs = adjacent_pairs(load_summaries())
         n = len(pairs)
         if n >= min_samples:
             ml_accuracy, band_hit_rate = _evaluate(pairs)

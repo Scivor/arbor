@@ -44,6 +44,8 @@ class ReportSummary:
     resistance_levels: list[dict] = field(default_factory=list)
     # 驱动因子快照（归因复盘用；旧 JSON 无此键 → 默认空列表，向后兼容）
     drivers: list[dict] = field(default_factory=list)  # {param_name, signal, weight, category}
+    # 当期生效的自校准系数快照（区分"模型原始输出"与"系数调整后"；旧 JSON 无此键 → 空 dict）
+    learned_scales: dict = field(default_factory=dict)
 
 
 def _history_dir() -> Path:
@@ -55,6 +57,15 @@ def _history_dir() -> Path:
 def summary_path(report_date: date) -> Path:
     """Path for a given report date's summary JSON."""
     return _history_dir() / f"weekly_summary_{report_date.isoformat()}.json"
+
+
+def _current_learned_scales() -> dict:
+    """读取当期生效的自校准系数快照（惰性导入避免循环依赖；失败回退空 dict）。"""
+    try:
+        from reports.learning import load_learned
+        return load_learned()
+    except Exception:
+        return {}
 
 
 def save_report_summary(report) -> Path:
@@ -94,6 +105,7 @@ def save_report_summary(report) -> Path:
         drivers=[{"param_name": p.param_name, "signal": p.signal,
                   "weight": p.weight, "category": p.category}
                  for p in (report.bullish_params + report.bearish_params)],
+        learned_scales=_current_learned_scales(),
     )
 
     path = summary_path(report.report_date)
@@ -229,7 +241,7 @@ def compute_prediction_review(
     )
 
 
-def _load_summaries() -> list[ReportSummary]:
+def load_summaries() -> list[ReportSummary]:
     """读取全部历史 summary（按 report_date 升序），坏文件跳过。纯本地，不联网。"""
     hist_dir = _history_dir()
     summaries: list[ReportSummary] = []
@@ -245,7 +257,7 @@ def _load_summaries() -> list[ReportSummary]:
     return summaries
 
 
-def _adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, ReportSummary]]:
+def adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, ReportSummary]]:
     """相邻周配对（间隔 ≤8 天）；跨期样本（如缺一周）不计入周度复盘统计。"""
     pairs = []
     for cur, nxt in zip(summaries, summaries[1:]):
@@ -272,11 +284,11 @@ def compute_track_record() -> dict:
     Returns:
         {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending"}
     """
-    summaries = _load_summaries()
+    summaries = load_summaries()
 
     weeks: list[dict] = []
     hits = dirs = hedges = 0
-    for cur, nxt in _adjacent_pairs(summaries):
+    for cur, nxt in adjacent_pairs(summaries):
         try:
             review = compute_prediction_review(cur, nxt.current_price)
         except Exception as e:
@@ -373,7 +385,7 @@ def compute_driver_stats() -> list[dict]:
         [{"param_name", "samples", "hits", "rate"}]，按 samples 降序。
     """
     stats: dict[str, dict] = {}
-    for cur, nxt in _adjacent_pairs(_load_summaries()):
+    for cur, nxt in adjacent_pairs(load_summaries()):
         try:
             attr = compute_attribution(cur, nxt.current_price)
         except Exception as e:

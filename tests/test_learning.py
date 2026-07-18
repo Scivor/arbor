@@ -123,26 +123,53 @@ def test_recalibrate_low_ml_accuracy_shrinks_bias(learn_env):
     assert log[0]["n_samples"] == 8 and log[0]["reason"]
 
 
-def test_recalibrate_high_ml_accuracy_scales_up_and_clamps(learn_env):
+def test_recalibrate_high_ml_accuracy_recovers_toward_baseline(learn_env):
+    """单向降级器：准确时仅向 1.0 回归，永不放大超过基准"""
     _seed_pairs(learn_env / "history", 8, ml_mode="right", band_mode="neutral")
 
-    r1 = recalibrate()
-    assert r1["ml_accuracy"] == 1.0
-    assert r1["current"]["ml_bias_scale"] == pytest.approx(1.05)
+    # 基准 1.0 + 全对 → 不动作（上限即 1.0，不放大）
+    r0 = recalibrate()
+    assert r0["ml_accuracy"] == 1.0
+    assert r0["current"]["ml_bias_scale"] == 1.0
+    assert r0["changed"] == []
 
-    # 手动抬到 1.45，下一次 ×1.05=1.5225 → 钳到 1.5
+    # 已被降级到 0.9 + 全对 → ×1.05 = 0.945 向基准回归一步
     (learn_env / "learned_adjustments.json").write_text(
-        json.dumps({"ml_bias_scale": 1.45, "scenario_band_scale": 1.0})
+        json.dumps({"ml_bias_scale": 0.9, "scenario_band_scale": 1.0})
+    )
+    r1 = recalibrate()
+    assert r1["current"]["ml_bias_scale"] == pytest.approx(0.945)
+    assert r1["changed"][0]["old"] == 0.9
+
+    # 0.98 → ×1.05 = 1.029 → 钳到 1.0；再到 1.0 后不再变
+    (learn_env / "learned_adjustments.json").write_text(
+        json.dumps({"ml_bias_scale": 0.98, "scenario_band_scale": 1.0})
     )
     r2 = recalibrate()
-    assert r2["current"]["ml_bias_scale"] == 1.5
-    assert r2["changed"][0]["old"] == 1.45
-
-    # 已在上限：不再变更、不再写 changelog
+    assert r2["current"]["ml_bias_scale"] == 1.0
     r3 = recalibrate()
     assert r3["changed"] == []
-    assert r3["current"]["ml_bias_scale"] == 1.5
     assert len(_changelog_lines(learn_env)) == 2
+
+
+def test_recalibrate_neutral_ml_excluded_from_accuracy(learn_env):
+    """NEUTRAL 信号不做方向主张：从准确率样本剔除，不触发降级/回归"""
+    hist = learn_env / "history"
+    prices = []
+    p = 400.0
+    for _ in range(9):
+        prices.append(round(p, 2))
+        p *= 0.97  # 大跌——若 NEUTRAL 被误计为"对"，会在错误的方向上给模型加分
+    for i in range(9):
+        nxt = prices[i + 1] if i < 8 else None
+        bmin, bmax = (nxt - 1.0, nxt + 1.0) if (nxt is not None and i % 2 == 0) \
+            else (prices[i] + 1000.0, prices[i] + 2000.0)  # band 命中率 50%，不触发
+        _write(hist, f"2026-07-{i + 1:02d}", prices[i], "NEUTRAL", bmin, bmax)
+
+    r = recalibrate()
+    assert r["ml_accuracy"] == 1.0   # 无方向样本 → 默认不降级
+    assert r["changed"] == []
+    assert r["current"]["ml_bias_scale"] == 1.0
 
 
 # ── scenario_band_scale ───────────────────────────────────────────────────────
@@ -194,9 +221,17 @@ def test_load_learned_corrupted_json(learn_env):
 
 def test_load_learned_partial_keys(learn_env):
     (learn_env / "learned_adjustments.json").write_text(
-        json.dumps({"ml_bias_scale": 1.2}), encoding="utf-8"
+        json.dumps({"ml_bias_scale": 0.8}), encoding="utf-8"
     )
-    assert load_learned() == {"ml_bias_scale": 1.2, "scenario_band_scale": 1.0}
+    assert load_learned() == {"ml_bias_scale": 0.8, "scenario_band_scale": 1.0}
+
+
+def test_load_learned_clamps_out_of_bounds_values(learn_env):
+    """装载即钳制：被篡改/手工编辑的状态文件不能突破有界承诺"""
+    (learn_env / "learned_adjustments.json").write_text(
+        json.dumps({"ml_bias_scale": 1.2, "scenario_band_scale": 9.9}), encoding="utf-8"
+    )
+    assert load_learned() == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.5}
 
 
 # ── 情景区间宽度缩放 ──────────────────────────────────────────────────────────
@@ -260,3 +295,42 @@ def test_track_record_learning_insufficient_samples():
     assert "样本不足 3/8" in html
     assert "未校准" in html
     assert "暂无校准记录" in html
+
+
+# ── M3: web 兜底隔离 / L1: scale 存证 ─────────────────────────────────────────
+
+def test_track_record_page_resilient_to_optional_data_failure(monkeypatch):
+    """可选数据（driver_stats / learning_status）失败时战绩页仍 200，主内容在位"""
+    from fastapi.testclient import TestClient
+    from web.app import app
+
+    def boom(*a, **k):
+        raise RuntimeError("optional data broken")
+
+    monkeypatch.setattr("reports.history.compute_driver_stats", boom)
+    monkeypatch.setattr("reports.learning.learning_status", boom)
+
+    c = TestClient(app, raise_server_exceptions=False)
+    r = c.get("/track-record/")
+    assert r.status_code == 200
+    assert "预测战绩" in r.text or "暂无历史复盘数据" in r.text
+
+
+def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
+    """ReportSummary 存证当期生效的自校准系数；旧格式 JSON（无此键）加载兼容"""
+    from reports.demo_data import demo_report
+    from reports.history import ReportSummary, save_report_summary
+
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    monkeypatch.setattr(
+        "reports.learning.load_learned",
+        lambda: {"ml_bias_scale": 0.9, "scenario_band_scale": 1.1},
+    )
+
+    path = save_report_summary(demo_report())
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["learned_scales"] == {"ml_bias_scale": 0.9, "scenario_band_scale": 1.1}
+
+    del data["learned_scales"]  # 模拟旧格式
+    s = ReportSummary(**data)
+    assert s.learned_scales == {}

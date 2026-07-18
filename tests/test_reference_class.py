@@ -11,11 +11,11 @@ import pytest
 from reports.demo_data import demo_report
 from reports.exporters.html_to_pdf import build_report_html
 from reports.exporters.markdown_exporter import export_markdown
+from reports.indicators import compute_rsi
 from reports.models import Scenario
 from reports.pipeline import apply_shrink
 from reports.reference_class import (
     _match_analogs,
-    _rsi,
     _weekly_features,
     compute_base_rates,
 )
@@ -38,10 +38,11 @@ def _df(closes: list[float]) -> pd.DataFrame:
 
 def test_rsi_caliber_matches_pipeline():
     # 交替 +2/−1 共 14 个 delta: avg_gain=1.0, avg_loss=0.5, rs=2 → RSI=66.7
+    # （M1 后算法统一在 reports/indicators.compute_rsi）
     closes = [100.0]
     for i in range(14):
         closes.append(closes[-1] + (2.0 if i % 2 == 0 else -1.0))
-    assert _rsi(closes) == 66.7
+    assert compute_rsi(closes) == 66.7
 
 
 def test_weekly_features_direction_boundary():

@@ -6,6 +6,7 @@ Core dataclass definitions for coffee futures reports.
 from __future__ import annotations
 
 import json
+import logging
 import textwrap
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, date, timedelta
@@ -13,6 +14,36 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.cost.landed_cost import LandedCostBreakdown  # noqa: F401
+
+logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 方向归一（M2 单一事实源：中英文 → up/flat/down）
+# ─────────────────────────────────────────────────────────────────────────────
+
+DIRECTION_MAP = {
+    "上涨": "up", "看涨": "up", "BULLISH": "up",
+    "下跌": "down", "看跌": "down", "BEARISH": "down",
+    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
+}
+
+# 每个未知方向值只告警一次（模块级去重）
+_UNKNOWN_DIRECTIONS: set = set()
+
+
+def normalize_direction(direction) -> str:
+    """
+    归一方向标签到 up/flat/down。
+    命中 DIRECTION_MAP 返回映射值；未命中返回 "flat" 并 logger.warning
+    （同一未知值整个进程只报一次）。
+    """
+    if direction in DIRECTION_MAP:
+        return DIRECTION_MAP[direction]
+    if direction not in _UNKNOWN_DIRECTIONS:
+        _UNKNOWN_DIRECTIONS.add(direction)
+        logger.warning("未知方向标签 %r，按 flat 处理", direction)
+    return "flat"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

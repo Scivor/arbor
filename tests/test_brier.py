@@ -101,6 +101,8 @@ def test_track_record_brier_aggregation(tmp_path, monkeypatch):
     # 校准桶: [0,0.3) 2 样本 obs 0; [0.3,0.5) 2 样本 obs 0; [0.5,0.7) 2 样本全中; [0.7,1.0] 空
     cal = rec["calibration"]
     assert [b["count"] for b in cal] == [2, 2, 2, 0]
+    # M3: 桶自带 lo/hi 数值边界
+    assert [(b["lo"], b["hi"]) for b in cal] == [(0.0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 1.0)]
     assert cal[0]["mean_predicted"] == pytest.approx(0.15)
     assert cal[0]["observed_freq"] == 0.0
     assert cal[2]["mean_predicted"] == pytest.approx(0.55)
@@ -164,8 +166,8 @@ def test_track_record_render_brier_and_calibration(tmp_path, monkeypatch):
     assert "<th>Brier</th>" in html
     assert "0.260" in html and "0.380" in html
 
-    # 校准度表 + 空桶 —
-    assert "校准度" in html
+    # 校准度表 + 空桶 —（L7 改名: 概率校准（Brier））
+    assert "概率校准（Brier）" in html
     assert "[0.5, 0.7)" in html
     assert "55%" in html and "100%" in html
     assert "区分度: 0.144" in html

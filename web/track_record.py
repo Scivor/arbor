@@ -61,7 +61,7 @@ def _build_learning_html(learning: dict | None) -> str:
     <div class="tr-empty" style="padding:14px;">暂无校准记录</div>"""
 
     return f"""
-  <div class="tr-drivers-title">自校准</div>
+  <div class="tr-drivers-title">系数自校准</div>
   <div class="tr-learn">{rows}
   </div>"""
 
@@ -122,7 +122,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
         resolution = record.get("resolution")
         res_text = f"区分度: {resolution:.3f}（越大越敢报极端概率）" if resolution is not None else "区分度: —"
         calibration_html = f"""
-  <div class="tr-drivers-title">校准度</div>
+  <div class="tr-drivers-title">概率校准（Brier）</div>
   <table class="tr-table tr-calib">
     <thead>
       <tr><th>桶区间</th><th>平均预测</th><th>实际频率</th><th>样本数</th></tr>

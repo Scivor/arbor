@@ -11,22 +11,14 @@ from __future__ import annotations
 
 import logging
 
+from reports.models import normalize_direction
+
 logger = logging.getLogger(__name__)
 
 BASELINE_RATIO = 0.65          # 无认知优势时的基线套保比率
 RATIO_BOUNDS = (0.40, 0.90)    # 建议比率钳制区间
 DEADBAND = 0.05                # 死区：|建议 − 当前| 小于该值则不调整
 MIN_SAMPLES = 8                # 校准桶最小样本数
-
-# 情景方向 → up/flat/down（与 reports/history._DIRECTION_MAP 同口径）
-_DIR_MAP = {
-    "上涨": "up", "看涨": "up", "BULLISH": "up",
-    "下跌": "down", "看跌": "down", "BEARISH": "down",
-    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
-}
-
-# 校准桶边界（与 reports/history._calibration_buckets 一致，按顺序对应）
-_BUCKET_EDGES = [(0.0, 0.3), (0.3, 0.5), (0.5, 0.7), (0.7, 1.0)]
 
 
 def kelly_fraction(p: float, b: float) -> float:
@@ -46,6 +38,8 @@ def compute_kelly_advice(
     edge = calibrated_p − base_rate_p（认知优势）；
     edge > 0 → suggested = clamp(0.65 + 0.5×edge, 0.40, 0.90)，active=True；
     死区: prev_ratio 非 None 且 |suggested − prev| < 0.05 → 保持 prev_ratio。
+        死区锚定对象（L6）: prev_ratio 应为上周的凯利影子建议值
+        （上周影子未产出时回退为上周规则建议比率），避免逐周漂移。
     任一输入为 None 或 edge ≤ 0 → 回基线 0.65，active=False。
 
     Returns:
@@ -81,12 +75,16 @@ def resolve_calibrated_p(
     """
     从 compute_track_record 的校准桶取 calibrated_p:
     主导方向预测概率（dominant_prob）所在桶的 observed_freq。
+    桶按自带 lo/hi 定位（M3 自描述，lo <= prob < hi，最后一桶含右端点）；
     桶样本 < MIN_SAMPLES、calibration 为空或缺 dominant_prob → None。
     """
     calibration = (track_record or {}).get("calibration") or []
     if not calibration or dominant_prob is None:
         return None
-    for b, (lo, hi) in zip(calibration, _BUCKET_EDGES):
+    for b in calibration:
+        lo, hi = b.get("lo"), b.get("hi")
+        if lo is None or hi is None:
+            continue  # 旧格式桶无边界，跳过
         if lo <= dominant_prob < hi or (hi == 1.0 and dominant_prob == 1.0):
             if b.get("count", 0) < MIN_SAMPLES:
                 return None
@@ -102,7 +100,7 @@ def resolve_base_rate(track_record: dict, dominant_direction: str) -> float | No
     weeks = (track_record or {}).get("weeks") or []
     if not weeks:
         return None
-    target = _DIR_MAP.get(dominant_direction, "flat")
+    target = normalize_direction(dominant_direction)
     n_match = 0
     for w in weeks:
         chg = w.get("price_change_pct", 0.0) or 0.0

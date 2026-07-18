@@ -19,6 +19,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from reports.indicators import compute_rsi
+
 logger = logging.getLogger(__name__)
 
 _CACHE_PATH = Path.home() / ".arbor" / "cache" / "kc_daily.csv"
@@ -44,7 +46,8 @@ def fetch_kc_daily(years: int = 5) -> pd.DataFrame:
         if age < _CACHE_TTL:
             try:
                 df = pd.read_csv(_CACHE_PATH, index_col=0, parse_dates=True)
-                if not df.empty:
+                # 畸形缓存（缺 Close 列）视为失效，继续走实时拉取分支
+                if not df.empty and "Close" in df.columns:
                     logger.info("fetch_kc_daily: 使用缓存（%d 行，age %s）", len(df), age)
                     return df
             except Exception as e:
@@ -71,31 +74,16 @@ def fetch_kc_daily(years: int = 5) -> pd.DataFrame:
 # 历史特征计算
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _rsi(closes: list[float], period: int = 14) -> float:
-    """
-    RSI(14) — 口径与 reports/pipeline.fetch_market_snapshot 完全一致:
-    最近 period 个交易日涨跌幅的简单平均（非 Wilder 指数平滑）。
-    """
-    if len(closes) < 2:
-        return 50.0
-    deltas = [closes[i + 1] - closes[i] for i in range(len(closes) - 1)]
-    gains = [max(d, 0) for d in deltas]
-    losses = [abs(min(d, 0)) for d in deltas]
-    avg_gain = sum(gains[-period:]) / period if len(gains) >= period else sum(gains) / len(gains)
-    avg_loss = sum(losses[-period:]) / period if len(losses) >= period else sum(losses) / len(losses)
-    rs = avg_gain / avg_loss if avg_loss else 0
-    return round(100 - 100 / (1 + rs), 1)
-
-
 def _weekly_features(closes: list[float]) -> list[dict]:
     """
     逐周（5 个交易日步长）计算历史特征:
     RSI(14)、30 日动量（小数形式）、后 5 个交易日方向（±1% 分 up/flat/down）。
     末尾不足"后 5 日"的数据不产出窗口。
+    RSI 口径: reports/indicators.compute_rsi（简单平均，与 pipeline 一致）。
     """
     weeks = []
     for end in range(30, len(closes) - 5, 5):
-        rsi = _rsi(closes[: end + 1])
+        rsi = compute_rsi(closes[: end + 1])
         mom30 = (closes[end] - closes[end - 30]) / closes[end - 30]
         fwd_ret = (closes[end + 5] - closes[end]) / closes[end]
         direction = "up" if fwd_ret > _DIR_THRESHOLD else "down" if fwd_ret < -_DIR_THRESHOLD else "flat"

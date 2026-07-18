@@ -70,10 +70,10 @@ def test_advice_deadband_keeps_prev():
 
 _TR = {
     "calibration": [
-        {"bucket": "[0.0, 0.3)", "mean_predicted": 0.15, "observed_freq": 0.2, "count": 20},
-        {"bucket": "[0.3, 0.5)", "mean_predicted": 0.4, "observed_freq": 0.45, "count": 30},
-        {"bucket": "[0.5, 0.7)", "mean_predicted": 0.6, "observed_freq": 0.7, "count": 4},
-        {"bucket": "[0.7, 1.0]", "mean_predicted": 0.85, "observed_freq": 0.9, "count": 12},
+        {"bucket": "[0.0, 0.3)", "lo": 0.0, "hi": 0.3, "mean_predicted": 0.15, "observed_freq": 0.2, "count": 20},
+        {"bucket": "[0.3, 0.5)", "lo": 0.3, "hi": 0.5, "mean_predicted": 0.4, "observed_freq": 0.45, "count": 30},
+        {"bucket": "[0.5, 0.7)", "lo": 0.5, "hi": 0.7, "mean_predicted": 0.6, "observed_freq": 0.7, "count": 4},
+        {"bucket": "[0.7, 1.0]", "lo": 0.7, "hi": 1.0, "mean_predicted": 0.85, "observed_freq": 0.9, "count": 12},
     ],
 }
 

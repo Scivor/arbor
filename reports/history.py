@@ -15,6 +15,8 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import Optional
 
+from reports.models import normalize_direction
+
 logger = logging.getLogger(__name__)
 
 _HISTORY_DIR = Path.home() / ".arbor" / "reports"
@@ -144,14 +146,6 @@ def load_last_week_summary(today: date) -> Optional[ReportSummary]:
     return None
 
 
-# 方向归一映射（中英文 → up/flat/down；compute_prediction_review 与 compute_brier 共用）
-_DIRECTION_MAP = {
-    "上涨": "up", "看涨": "up", "BULLISH": "up",
-    "下跌": "down", "看跌": "down", "BEARISH": "down",
-    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
-}
-
-
 @dataclass
 class PredictionReview:
     """Computed review of last week's prediction against current reality."""
@@ -192,7 +186,7 @@ def compute_prediction_review(
 
     # Predicted direction mapping
     pred_dir = last.dominant_scenario_direction
-    predicted_direction = _DIRECTION_MAP.get(pred_dir, "flat")
+    predicted_direction = normalize_direction(pred_dir)
 
     # Hit tests
     prediction_hit = last.dominant_scenario_min <= current_price <= last.dominant_scenario_max
@@ -303,7 +297,7 @@ def compute_brier(scenarios: list[dict], actual: str) -> float:
     """
     probs = {"up": 0.0, "flat": 0.0, "down": 0.0}
     for s in scenarios:
-        direction = _DIRECTION_MAP.get(s.get("direction"), "flat")
+        direction = normalize_direction(s.get("direction"))
         probs[direction] += float(s.get("probability", 0.0))
     return sum((p - (1.0 if cat == actual else 0.0)) ** 2 for cat, p in probs.items())
 
@@ -313,6 +307,7 @@ def _calibration_buckets(calib_preds: list[tuple[float, bool]]) -> list[dict]:
     校准度分桶: 把每个情景概率当作一次"该类别会发生"的预测，
     按预测概率分 4 桶 [0,0.3) [0.3,0.5) [0.5,0.7) [0.7,1.0]，
     每桶聚合平均预测概率与实际发生频率（count=0 时均 None）。
+    桶 dict 自带 lo/hi 数值边界（M3 自描述），消费方无需外配边界表。
     """
     edges = [(0.0, 0.3, "[0.0, 0.3)"), (0.3, 0.5, "[0.3, 0.5)"),
              (0.5, 0.7, "[0.5, 0.7)"), (0.7, 1.0, "[0.7, 1.0]")]
@@ -322,6 +317,8 @@ def _calibration_buckets(calib_preds: list[tuple[float, bool]]) -> list[dict]:
         count = len(members)
         buckets.append({
             "bucket": label,
+            "lo": lo,
+            "hi": hi,
             "mean_predicted": sum(p for p, _ in members) / count if count else None,
             "observed_freq": sum(1 for _, o in members if o) / count if count else None,
             "count": count,
@@ -329,7 +326,7 @@ def _calibration_buckets(calib_preds: list[tuple[float, bool]]) -> list[dict]:
     return buckets
 
 
-def compute_track_record() -> dict:
+def compute_track_record(summaries: list[ReportSummary] | None = None) -> dict:
     """
     聚合历史周报战绩（track record）。
 
@@ -337,11 +334,15 @@ def compute_track_record() -> dict:
     最后一期没有下一期，记为"待复盘"（pending）不计入统计。
     纯本地文件读取，不联网。
 
+    Args:
+        summaries: 预加载的 summary 列表（L5，None 时内部照旧 load_summaries()）。
+
     Returns:
         {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending",
          "mean_brier", "bss", "calibration", "resolution"}
     """
-    summaries = load_summaries()
+    if summaries is None:
+        summaries = load_summaries()
 
     weeks: list[dict] = []
     hits = dirs = hedges = 0
@@ -365,8 +366,11 @@ def compute_track_record() -> dict:
             brier = compute_brier(cur.scenarios, actual_dir)
             briers.append(brier)
             for s in cur.scenarios:
-                cat = _DIRECTION_MAP.get(s.get("direction"), "flat")
-                p = float(s.get("probability", 0.0))
+                cat = normalize_direction(s.get("direction"))
+                try:
+                    p = float(s.get("probability", 0.0))
+                except (TypeError, ValueError):
+                    continue  # 畸形 probability 跳过该条，不拖垮整页
                 calib_preds.append((p, cat == actual_dir))
                 resolutions.append(abs(p - 1 / 3))
 

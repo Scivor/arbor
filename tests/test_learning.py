@@ -271,14 +271,14 @@ def test_learning_status_and_track_record_block(learn_env):
                          "actual_price": 400.0, "price_change_pct": 0.5}],
               "pending": None}
     html = build_track_record_html(record, [], status)
-    assert "自校准" in html
+    assert "系数自校准" in html
     assert "ml_bias_scale" in html and "0.90" in html
     assert "区间命中率 50%" in html
     assert "1.00 → 0.90" in html          # changelog 行
     assert "暂无校准记录" not in html
 
     # learning=None → 区块不渲染
-    assert "自校准" not in build_track_record_html(record, [], None)
+    assert "系数自校准" not in build_track_record_html(record, [], None)
 
 
 def test_track_record_learning_insufficient_samples():

@@ -22,6 +22,7 @@ from reports.formatters import (
     format_range as _fmt_range,
     format_rsi as _fmt_rsi,
 )
+from reports.indicators import compute_rsi
 from reports.models import (
     PredictionReport,
     MarketSnapshot,
@@ -33,6 +34,7 @@ from reports.models import (
     HedgeAdvice,
     MLSnapshot,
     ChinaImportSnapshot,
+    normalize_direction,
     build_report,
 )
 from reports.demo_data import demo_report
@@ -85,14 +87,8 @@ def fetch_market_snapshot(ticker: str) -> Optional[MarketSnapshot]:
         highs  = [h for h in quote['high'] if h is not None]
         lows   = [l for l in quote['low'] if l is not None]
 
-        # RSI(14)
-        deltas = [closes[i+1] - closes[i] for i in range(len(closes)-1)]
-        gains   = [max(d, 0) for d in deltas]
-        losses  = [abs(min(d, 0)) for d in deltas]
-        avg_gain = sum(gains[-14:]) / 14 if len(gains) >= 14 else sum(gains) / len(gains)
-        avg_loss = sum(losses[-14:]) / 14 if len(losses) >= 14 else sum(losses) / len(losses)
-        rs       = avg_gain / avg_loss if avg_loss else 0
-        rsi      = round(100 - 100 / (1 + rs), 1)
+        # RSI(14) — 单一事实源: reports/indicators.compute_rsi
+        rsi = compute_rsi(closes)
 
         # Moving averages
         ma20 = round(sum(closes[-20:]) / 20, 2) if len(closes) >= 20 else None
@@ -495,14 +491,6 @@ def compute_levels_and_scenarios(
     return supports, resistances, scenarios
 
 
-# 情景方向 → 参考类类别（与 reports/history._DIRECTION_MAP 同口径）
-_RC_DIR_MAP = {
-    "上涨": "up", "看涨": "up", "BULLISH": "up",
-    "下跌": "down", "看跌": "down", "BEARISH": "down",
-    "横盘": "flat", "中性": "flat", "NEUTRAL": "flat",
-}
-
-
 def apply_shrink(scenarios: list[Scenario], reference_class: dict, w: float) -> list[Scenario]:
     """
     参考类概率收缩: p' = w·p + (1−w)·p_base，三情景重归一化使和为 1。
@@ -513,7 +501,7 @@ def apply_shrink(scenarios: list[Scenario], reference_class: dict, w: float) -> 
     if w <= 0 or not reference_class:
         return scenarios
     for s in scenarios:
-        base = reference_class.get(_RC_DIR_MAP.get(s.direction, "flat"), 1 / 3)
+        base = reference_class.get(normalize_direction(s.direction), 1 / 3)
         s.probability = w * s.probability + (1 - w) * base
     total = sum(s.probability for s in scenarios)
     if total > 0:
@@ -904,9 +892,15 @@ def run(config: PipelineConfig) -> PredictionReport:
         from reports.kelly import compute_kelly_advice, resolve_base_rate, resolve_calibrated_p
         dominant = max(scenarios, key=lambda s: s.probability) if scenarios else None
         if dominant:
-            track_record = compute_track_record()
-            summaries = load_summaries()
-            prev_ratio = summaries[-1].hedge_ratio if summaries else None
+            # L5: 历史只读一次，track_record 与 prev_ratio 共用
+            sums = load_summaries()
+            track_record = compute_track_record(sums)
+            if sums:
+                last = sums[-1]
+                # L6: 死区锚定上周影子建议值，无影子回退上周规则建议
+                prev_ratio = last.kelly_shadow.get("suggested_ratio") or last.hedge_ratio
+            else:
+                prev_ratio = None
             kelly_shadow = compute_kelly_advice(
                 dominant.direction,
                 resolve_calibrated_p(track_record, dominant.direction, dominant.probability),
@@ -946,7 +940,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         prov.add("rsi_14", market.rsi_14,
                  "Yahoo Finance (calculated)", "",
                  latency="T+0", reliability="B",
-                 notes="基于3个月日收盘价计算Wilder RSI(14)")
+                 notes="基于3个月日收盘价计算RSI(14)")
         prov.add("ma20", market.ma20,
                  "Yahoo Finance (calculated)", "",
                  latency="T+0", reliability="B")

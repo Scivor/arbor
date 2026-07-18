@@ -315,14 +315,16 @@ async def latest_report(request: Request):
 
 @app.get("/track-record/", response_class=HTMLResponse)
 async def track_record():
-    """预测战绩页 — 历史周报相邻期配对复盘聚合，纯本地数据。"""
-    from reports.history import compute_track_record
+    """预测战绩页 — 历史周报相邻期配对复盘聚合 + 驱动因子应验率，纯本地数据。"""
+    from reports.history import compute_track_record, compute_driver_stats
     try:
         record = compute_track_record()
+        driver_stats = compute_driver_stats()
     except Exception:
         record = {"total": 0, "hit_rate": 0.0, "direction_rate": 0.0,
                   "hedge_rate": 0.0, "weeks": [], "pending": None}
-    return HTMLResponse(content=build_track_record_html(record))
+        driver_stats = []
+    return HTMLResponse(content=build_track_record_html(record, driver_stats))
 
 
 @app.get("/reports/", response_class=HTMLResponse)

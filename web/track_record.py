@@ -9,11 +9,12 @@ web/track_record.py
 from __future__ import annotations
 
 
-def build_track_record_html(record: dict) -> str:
+def build_track_record_html(record: dict, driver_stats: list[dict] | None = None) -> str:
     """渲染预测战绩页。
 
     Args:
         record: reports.history.compute_track_record() 的返回 dict。
+        driver_stats: reports.history.compute_driver_stats() 的返回 list（可选）。
     """
     total = record.get("total", 0)
     weeks = record.get("weeks", [])
@@ -37,6 +38,33 @@ def build_track_record_html(record: dict) -> str:
           <td class="tr-num" style="color:{chg_color};">{chg:+.1f}%</td>
         </tr>"""
         pending_html = f'<div class="tr-pending">{pending} 期预测待复盘（下期周报发布后更新）</div>' if pending else ""
+
+        # ── 驱动因子应验率（仅显示样本 ≥2 的因子，按样本数降序）──
+        qualified = [s for s in (driver_stats or []) if s.get("samples", 0) >= 2]
+        if qualified:
+            drv_rows = ""
+            for s in qualified:
+                rate_color = "#1B365D" if s["rate"] >= 0.5 else "#504e49"
+                drv_rows += f"""
+        <tr>
+          <td class="tr-date">{s["param_name"]}</td>
+          <td class="tr-num" style="color:{rate_color};">{s["rate"]:.0%}</td>
+          <td class="tr-num">{s["samples"]}</td>
+        </tr>"""
+            drivers_html = f"""
+  <div class="tr-drivers-title">驱动因子应验率</div>
+  <table class="tr-table tr-drivers">
+    <thead>
+      <tr><th>因子</th><th>应验率</th><th>样本数</th></tr>
+    </thead>
+    <tbody>{drv_rows}
+    </tbody>
+  </table>"""
+        else:
+            drivers_html = """
+  <div class="tr-drivers-title">驱动因子应验率</div>
+  <div class="tr-empty" style="padding:20px;">驱动因子样本不足（需 ≥2 期复盘）</div>"""
+
         body = f"""
   <div class="tr-metrics">
     <div class="tr-metric"><div class="tr-metric-val">{record["hit_rate"]:.0%}</div><div class="tr-metric-label">区间命中率</div></div>
@@ -51,7 +79,8 @@ def build_track_record_html(record: dict) -> str:
     <tbody>{rows}
     </tbody>
   </table>
-  {pending_html}"""
+  {pending_html}
+  {drivers_html}"""
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -159,6 +188,15 @@ def build_track_record_html(record: dict) -> str:
     color: #6b6a64;
     margin-top: 14px;
   }}
+  .tr-drivers-title {{
+    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+    font-size: 15px;
+    font-weight: 600;
+    color: #141413;
+    letter-spacing: 0.3px;
+    margin: 28px 0 12px;
+  }}
+  .tr-drivers {{ margin-bottom: 4px; }}
   .tr-empty {{
     background: #faf9f5;
     border: 1px solid #e8e6dc;

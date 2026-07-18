@@ -42,6 +42,8 @@ class ReportSummary:
     outlook: str
     support_levels: list[dict] = field(default_factory=list)
     resistance_levels: list[dict] = field(default_factory=list)
+    # 驱动因子快照（归因复盘用；旧 JSON 无此键 → 默认空列表，向后兼容）
+    drivers: list[dict] = field(default_factory=list)  # {param_name, signal, weight, category}
 
 
 def _history_dir() -> Path:
@@ -89,6 +91,9 @@ def save_report_summary(report) -> Path:
         outlook=report.outlook,
         support_levels=[{"price": l.price, "label": l.label} for l in report.support_levels],
         resistance_levels=[{"price": l.price, "label": l.label} for l in report.resistance_levels],
+        drivers=[{"param_name": p.param_name, "signal": p.signal,
+                  "weight": p.weight, "category": p.category}
+                 for p in (report.bullish_params + report.bearish_params)],
     )
 
     path = summary_path(report.report_date)
@@ -224,6 +229,38 @@ def compute_prediction_review(
     )
 
 
+def _load_summaries() -> list[ReportSummary]:
+    """读取全部历史 summary（按 report_date 升序），坏文件跳过。纯本地，不联网。"""
+    hist_dir = _history_dir()
+    summaries: list[ReportSummary] = []
+    for c in sorted(hist_dir.glob("weekly_summary_*.json")):
+        try:
+            data = json.loads(c.read_text(encoding="utf-8"))
+            summaries.append(ReportSummary(**data))
+        except Exception as e:
+            logger.warning("Failed to parse history file %s: %s", c, e)
+            continue
+    # 按 report_date 升序（文件名与内容不一致时以内容为准）
+    summaries.sort(key=lambda s: s.report_date)
+    return summaries
+
+
+def _adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, ReportSummary]]:
+    """相邻周配对（间隔 ≤8 天）；跨期样本（如缺一周）不计入周度复盘统计。"""
+    pairs = []
+    for cur, nxt in zip(summaries, summaries[1:]):
+        try:
+            gap = (date.fromisoformat(nxt.report_date) - date.fromisoformat(cur.report_date)).days
+        except ValueError:
+            logger.warning("Skip pair with bad dates: %s -> %s", cur.report_date, nxt.report_date)
+            continue
+        if gap > 8:
+            logger.info("Skip cross-gap pair: %s -> %s (%d days)", cur.report_date, nxt.report_date, gap)
+            continue
+        pairs.append((cur, nxt))
+    return pairs
+
+
 def compute_track_record() -> dict:
     """
     聚合历史周报战绩（track record）。
@@ -235,31 +272,11 @@ def compute_track_record() -> dict:
     Returns:
         {"total", "hit_rate", "direction_rate", "hedge_rate", "weeks", "pending"}
     """
-    hist_dir = _history_dir()
-    summaries: list[ReportSummary] = []
-    for c in sorted(hist_dir.glob("weekly_summary_*.json")):
-        try:
-            data = json.loads(c.read_text(encoding="utf-8"))
-            summaries.append(ReportSummary(**data))
-        except Exception as e:
-            logger.warning("Failed to parse history file %s: %s", c, e)
-            continue
-
-    # 按 report_date 升序（文件名与内容不一致时以内容为准）
-    summaries.sort(key=lambda s: s.report_date)
+    summaries = _load_summaries()
 
     weeks: list[dict] = []
     hits = dirs = hedges = 0
-    for cur, nxt in zip(summaries, summaries[1:]):
-        # 仅相邻周配对（≤8 天）；跨期样本（如缺一周）不计入周度复盘统计
-        try:
-            gap = (date.fromisoformat(nxt.report_date) - date.fromisoformat(cur.report_date)).days
-        except ValueError:
-            logger.warning("Skip pair with bad dates: %s -> %s", cur.report_date, nxt.report_date)
-            continue
-        if gap > 8:
-            logger.info("Skip cross-gap pair: %s -> %s (%d days)", cur.report_date, nxt.report_date, gap)
-            continue
+    for cur, nxt in _adjacent_pairs(summaries):
         try:
             review = compute_prediction_review(cur, nxt.current_price)
         except Exception as e:
@@ -287,3 +304,94 @@ def compute_track_record() -> dict:
         "weeks": weeks,
         "pending": summaries[-1].report_date if summaries else None,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Driver Attribution — 驱动因子归因复盘
+# ─────────────────────────────────────────────────────────────────────────────
+
+def compute_attribution(last: ReportSummary, current_price: float) -> dict:
+    """
+    驱动因子归因: 上期每个驱动因子对照本期实际涨跌判 应验/失效/中性。
+
+    涨跌判定沿用 ±1% 阈值（与 compute_prediction_review 同口径）。
+    verdict 规则:
+        signal=看涨: up→应验, down→失效, flat→中性
+        signal=看跌: down→应验, up→失效, flat→中性
+        signal=中性: 恒中性
+
+    Returns:
+        {"change_pct", "verdicts": [{param_name, signal, weight, verdict}],
+         "hits", "misses", "neutrals"}
+    """
+    change_pct = (current_price - last.current_price) / last.current_price * 100 if last.current_price else 0.0
+    if change_pct > 1.0:
+        actual = "up"
+    elif change_pct < -1.0:
+        actual = "down"
+    else:
+        actual = "flat"
+
+    verdicts: list[dict] = []
+    hits = misses = neutrals = 0
+    for d in last.drivers:
+        signal = d.get("signal", "中性")
+        if signal == "中性" or actual == "flat":
+            verdict = "中性"
+        elif (signal == "看涨" and actual == "up") or (signal == "看跌" and actual == "down"):
+            verdict = "应验"
+        else:
+            verdict = "失效"
+        hits += verdict == "应验"
+        misses += verdict == "失效"
+        neutrals += verdict == "中性"
+        verdicts.append({
+            "param_name": d.get("param_name", ""),
+            "signal": signal,
+            "weight": d.get("weight", ""),
+            "verdict": verdict,
+        })
+
+    return {
+        "change_pct": change_pct,
+        "verdicts": verdicts,
+        "hits": hits,
+        "misses": misses,
+        "neutrals": neutrals,
+    }
+
+
+def compute_driver_stats() -> list[dict]:
+    """
+    驱动因子应验率聚合。
+
+    与 compute_track_record 同一口径（升序、≤8 天相邻配对），
+    逐因子对照下期 current_price 判应验/失效，按 param_name 聚合。
+    samples 只计 应验+失效（中性判定不构成对错），rate = hits / samples。
+
+    Returns:
+        [{"param_name", "samples", "hits", "rate"}]，按 samples 降序。
+    """
+    stats: dict[str, dict] = {}
+    for cur, nxt in _adjacent_pairs(_load_summaries()):
+        try:
+            attr = compute_attribution(cur, nxt.current_price)
+        except Exception as e:
+            logger.warning("Failed to attribute %s: %s", cur.report_date, e)
+            continue
+        for v in attr["verdicts"]:
+            s = stats.setdefault(
+                v["param_name"],
+                {"param_name": v["param_name"], "samples": 0, "hits": 0},
+            )
+            if v["verdict"] == "中性":
+                continue  # 中性不计入样本
+            s["samples"] += 1
+            s["hits"] += v["verdict"] == "应验"
+
+    result = []
+    for s in stats.values():
+        s["rate"] = s["hits"] / s["samples"] if s["samples"] else 0.0
+        result.append(s)
+    result.sort(key=lambda s: s["samples"], reverse=True)
+    return result

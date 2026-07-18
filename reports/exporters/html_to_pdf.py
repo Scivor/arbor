@@ -110,6 +110,11 @@ _TRANSLATIONS = {
     "review_partial": {"zh": "部分命中", "en": "Partial"},
     "review_miss": {"zh": "偏离", "en": "Miss"},
 
+    # Driver Attribution
+    "attr_title": {"zh": "驱动因子归因", "en": "Driver Attribution"},
+    "attr_empty": {"zh": "上期未记录驱动因子", "en": "No drivers recorded last week"},
+    "attr_summary": {"zh": "应验 {hits} / 失效 {misses} / 中性 {neutrals}", "en": "Confirmed {hits} / Missed {misses} / Neutral {neutrals}"},
+
     # Related / Climate
     "related_markets": {"zh": "关联市场", "en": "Related Markets"},
     "climate_bg": {"zh": "气候背景", "en": "Climate"},
@@ -523,6 +528,38 @@ def _actual_direction_text(direction: str, lang: str) -> str:
     return _t("sideways", lang)
 
 
+def _build_attribution_html(last, current_price: float, lang: str) -> str:
+    """Render driver attribution block — 上期驱动因子逐个判 应验/失效/中性。"""
+    if not last.drivers:
+        return f"""
+                <div class="attr-block">
+                  <div class="attr-title">{_t("attr_title", lang)}</div>
+                  <div class="attr-empty">{_t("attr_empty", lang)}</div>
+                </div>"""
+
+    try:
+        from reports.history import compute_attribution
+        attr = compute_attribution(last, current_price)
+    except Exception:
+        return ""
+
+    icons = {"应验": ("✓", "#1B365D"), "失效": ("✗", "#504e49"), "中性": ("–", "#6b6a64")}
+    rows = ""
+    for v in attr["verdicts"]:
+        icon, color = icons.get(v["verdict"], icons["中性"])
+        weight = f" <span class='attr-weight'>{v['weight']}</span>" if v.get("weight") else ""
+        rows += (f"<li><span class='attr-icon' style='color:{color};'>{icon}</span>"
+                 f"{v['param_name']}{weight}</li>")
+
+    summary = _t("attr_summary", lang, hits=attr["hits"], misses=attr["misses"], neutrals=attr["neutrals"])
+    return f"""
+                <div class="attr-block">
+                  <div class="attr-title">{_t("attr_title", lang)}</div>
+                  <ul class="attr-list">{rows}</ul>
+                  <div class="attr-summary">{summary}</div>
+                </div>"""
+
+
 def _build_review_html(report, current_price: float | None, lang: str) -> str:
     """Render prediction review card when history is available."""
     if current_price is None:
@@ -540,6 +577,7 @@ def _build_review_html(report, current_price: float | None, lang: str) -> str:
 
     direction_result = _t("review_dir_correct", lang) if review.direction_correct else _t("review_dir_miss", lang)
     hedge_result = _t("review_hedge_ok", lang) if review.hedge_advice_correct else _t("review_hedge_conservative", lang)
+    attribution_html = _build_attribution_html(last, review.current_price, lang)
 
     return f"""
             <div class="card review-card">
@@ -555,6 +593,7 @@ def _build_review_html(report, current_price: float | None, lang: str) -> str:
                   <li>{"✓" if review.direction_correct else "✗"} {direction_result}</li>
                   <li>{"✓" if review.hedge_advice_correct else "✗"} {_t("review_hedge", lang)}{hedge_result}</li>
                 </ul>
+                {attribution_html}
                 <p class="review-note">{review.review_text}</p>
               </div>
             </div>"""
@@ -1269,6 +1308,51 @@ def build_report_html(report, lang: str = "zh") -> str:
     margin-top: 1.5mm !important;
     padding-top: 1.5mm;
     border-top: 1px solid var(--border);
+  }}
+
+  /* ── Driver Attribution ── */
+  .attr-block {{
+    margin-top: 1.8mm;
+    padding-top: 1.5mm;
+    border-top: 1px solid var(--border);
+  }}
+  .attr-title {{
+    font-family: var(--sans);
+    font-size: 6.9pt;
+    font-weight: 500;
+    color: var(--dark-warm);
+    letter-spacing: 0.2px;
+    margin-bottom: 1mm;
+  }}
+  .attr-list {{
+    margin: 0;
+    padding-left: 0;
+    list-style: none;
+    font-size: 6.9pt;
+    color: var(--dark-warm);
+  }}
+  .attr-list li {{
+    margin-bottom: 0.6mm;
+    line-height: 1.5;
+  }}
+  .attr-icon {{
+    display: inline-block;
+    width: 3.5mm;
+    font-weight: 600;
+  }}
+  .attr-weight {{
+    font-size: 6.2pt;
+    color: var(--stone);
+    margin-left: 1mm;
+  }}
+  .attr-summary {{
+    font-size: 6.8pt;
+    color: var(--stone);
+    margin-top: 1mm;
+  }}
+  .attr-empty {{
+    font-size: 6.9pt;
+    color: var(--stone);
   }}
 
   /* ── Related / Climate strip ── */

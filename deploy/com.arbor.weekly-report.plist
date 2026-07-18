@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.arbor.weekly-report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/duncan/Documents/Arbor/.venv/bin/python</string>
+        <string>scripts/scheduler.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/duncan/Documents/Arbor</string>
+
+    <!-- 登录即启动守护进程；APScheduler 内部按周六 03:00 CST 触发 -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- 崩溃自动重启（节流 60s，避免异常时疯狂拉起） -->
+    <key>KeepAlive</key>
+    <true/>
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/duncan/Documents/Arbor/output/logs/scheduler.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/duncan/Documents/Arbor/output/logs/scheduler.err.log</string>
+</dict>
+</plist>

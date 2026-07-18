@@ -407,4 +407,29 @@ echo "Visit: http://$(curl -s ip.sb)"
 
 ---
 
+## 7. macOS 本地常驻（launchd）
+
+周报调度器（`scripts/scheduler.py`，APScheduler，每周六 03:00 CST 触发）可通过 launchd 常驻：
+
+```bash
+cp deploy/com.arbor.weekly-report.plist ~/Library/LaunchAgents/
+launchctl bootstrap "gui/$(id -u)" ~/Library/LaunchAgents/com.arbor.weekly-report.plist
+launchctl list | grep arbor        # 验证已加载
+```
+
+- 崩溃自动重启（KeepAlive，节流 60s）；日志在 `output/logs/scheduler.err.log`
+- 卸载：`launchctl bootout "gui/$(id -u)" ~/Library/LaunchAgents/com.arbor.weekly-report.plist`
+- 注意：gui 域代理在用户注销后停止；服务器场景请用上文 systemd 方案
+
+### 运维告警（Telegram）
+
+数据源降级或生成失败时自动推送 Telegram 告警：
+
+```bash
+cp deploy/arbor.env.example ~/.arbor/.env   # 填入 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID
+python scripts/scheduler.py --alert-test     # 验证告警链路
+```
+
+---
+
 有问题随时问我。

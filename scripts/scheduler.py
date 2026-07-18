@@ -107,10 +107,60 @@ def generate_and_publish(
         report.ml_snapshot.signal if report.ml_snapshot else "N/A",
     )
 
+    # ── 数据源健康评估：降级/失败时 Telegram 告警（未配置则静默跳过）──
+    try:
+        level, problems = assess_report_health(report)
+        if level != "ok":
+            from core.notify.ops_alert import send_ops_alert
+            icon = "🔴" if level == "critical" else "🟡"
+            outcome = "失败" if level == "critical" else "降级"
+            send_ops_alert(
+                f"{icon} <b>Arbor 周报 {today_str} 生成{outcome}</b>\n"
+                + "\n".join(f"• {p}" for p in problems)
+            )
+    except Exception as e:
+        logger.warning("Health alert failed: %s", e)
+
     return report_dir
 
 
+def assess_report_health(report) -> tuple[str, list[str]]:
+    """
+    评估周报数据源健康度。
+
+    Returns:
+        (level, problems): level ∈ {"ok", "degraded", "critical"}
+        critical = 无价格数据，报告不成立；degraded = 次要板块缺失
+    """
+    if report is None:
+        return "critical", ["报告对象为 None"]
+    if report.market is None:
+        return "critical", ["KC=F 价格数据缺失（yfinance 可能失效）"]
+    problems: list[str] = []
+    if report.climate is None:
+        problems.append("ONI 气候数据缺失")
+    if report.ml_snapshot is None:
+        problems.append("ML 预测缺失")
+    if getattr(report, "china_import", None) is None:
+        problems.append("中国进口板块缺失（汇率/到库成本/政策）")
+    return ("degraded" if problems else "ok"), problems
+
+
 # ── Scheduler ────────────────────────────────────────────────────────────────
+
+def _job_with_alerts(**kwargs):
+    """APScheduler 任务包装：生成失败时 Telegram 告警后再抛出。"""
+    try:
+        generate_and_publish(**kwargs)
+    except Exception as e:
+        logger.error("Scheduled report failed: %s", e, exc_info=True)
+        try:
+            from core.notify.ops_alert import send_ops_alert
+            send_ops_alert(f"🔴 <b>Arbor 周报定时任务失败</b>\n<code>{e}</code>")
+        except Exception:
+            pass
+        raise
+
 
 def run_scheduler(
     output_dir: Path,
@@ -129,7 +179,7 @@ def run_scheduler(
     scheduler = BlockingScheduler()
 
     scheduler.add_job(
-        generate_and_publish,
+        _job_with_alerts,
         trigger=CronTrigger(day_of_week="sat", hour=hour, minute=minute),
         kwargs={
             "output_dir": output_dir,
@@ -139,6 +189,8 @@ def run_scheduler(
         id="weekly_report",
         name="Arbor Weekly Report",
         replace_existing=True,
+        misfire_grace_time=3600,  # 机器休眠唤醒后 1 小时内仍补跑
+        coalesce=True,
     )
 
     logger.info("Scheduler started. Next run: Saturday %02d:%02d CST", hour, minute)
@@ -182,6 +234,10 @@ def main(argv=None) -> int:
         help="Week offset: 0=current, 1=next (default: 1)",
     )
     parser.add_argument(
+        "--alert-test", action="store_true",
+        help="Send a test ops alert via Telegram and exit",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Enable verbose logging",
     )
@@ -191,6 +247,14 @@ def main(argv=None) -> int:
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
     )
+
+    if args.alert_test:
+        from core.notify.ops_alert import send_ops_alert
+        ok = send_ops_alert(
+            "✅ <b>Arbor 告警链路测试</b>\n看到这条消息说明 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 配置正确。"
+        )
+        print("✓ alert sent" if ok else "✗ alert NOT sent（未配置或发送失败，加 -v 看日志）")
+        return 0 if ok else 1
 
     output_dir = Path(args.output_dir).expanduser().resolve()
 

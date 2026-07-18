@@ -191,6 +191,9 @@ class PredictionReport:
     # 参考类基础概率（超级预测 Phase 2：{up, flat, down, n_analogs, years}）
     reference_class: Optional[dict] = None
 
+    # 凯利仓位影子（Phase 3：{edge, suggested_ratio, active, reason}，只读不改 hedge_advice）
+    kelly_shadow: Optional[dict] = None
+
     # 核心观点
     outlook: str = ""        # 一句话总结
     risk_warnings: list[str] = field(default_factory=list)
@@ -336,6 +339,17 @@ class PredictionReport:
                 lines.append(f"  ↓ Break {h.trigger_below:.0f} → increase hedge to 75-80%")
             if h.trigger_above:
                 lines.append(f"  ↑ Break {h.trigger_above:.0f} → reduce hedge to 50%")
+            lines.append("")
+
+        # ─── 凯利仓位影子 ───────────────────────────────────────────
+        if self.kelly_shadow:
+            k = self.kelly_shadow
+            if k.get("active"):
+                edge = k.get("edge") or 0.0
+                current = f"{self.hedge_advice.ratio:.0%}" if self.hedge_advice else "N/A"
+                lines.append(f"  {'凯利视角':>12}: 建议 {k['suggested_ratio']:.0%}（edge {edge:+.0%}）vs 当前建议 {current}")
+            else:
+                lines.append(f"  {'凯利视角':>12}: {k.get('reason', '')}")
             lines.append("")
 
         # ─── 中国进口视角 ───────────────────────────────────────────

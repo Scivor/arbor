@@ -124,6 +124,9 @@ _TRANSLATIONS = {
 
     # Hedge
     "hedge_advice": {"zh": "套保建议", "en": "Hedge Advice"},
+    "kelly_active": {"zh": "凯利视角: 建议 {suggested}（edge {edge}）vs 当前建议 {current}",
+                     "en": "Kelly view: suggests {suggested} (edge {edge}) vs current {current}"},
+    "kelly_inactive": {"zh": "凯利视角: {reason}", "en": "Kelly view: {reason}"},
 
     # China Import
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
@@ -664,6 +667,24 @@ def _build_hedge_html(hedge, lang: str) -> str:
         </div>"""
 
 
+def _build_kelly_html(report, lang: str) -> str:
+    """凯利仓位影子一行（kelly_shadow 为 None 时不渲染；只读不改 hedge_advice）。"""
+    k = getattr(report, "kelly_shadow", None)
+    if not k:
+        return ""
+    if k.get("active"):
+        edge = k.get("edge") or 0.0
+        current = report.hedge_advice.ratio if report.hedge_advice else None
+        text = _t("kelly_active", lang,
+                  suggested=f"{k['suggested_ratio']:.0%}",
+                  edge=f"{edge:+.0%}",
+                  current=f"{current:.0%}" if current is not None else "N/A")
+    else:
+        text = _t("kelly_inactive", lang, reason=k.get("reason", ""))
+    return f"""
+  <div class="kelly-note">{text}</div>"""
+
+
 def _build_china_import_html(report, lang: str) -> str:
     """Render China import cost & policy section（china_import 为 None 时整段不渲染）."""
     ci = getattr(report, "china_import", None)
@@ -1058,6 +1079,11 @@ def build_report_html(report, lang: str = "zh") -> str:
     font-size: 7pt;
     color: var(--stone);
     margin: 0.6mm 0 1.6mm;
+  }}
+  .kelly-note {{
+    font-size: 7pt;
+    color: var(--stone);
+    margin: 1.2mm 0 0;
   }}
   .scenarios {{
     display: flex;
@@ -1588,6 +1614,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   </div>
   {_build_reference_class_html(report, lang)}
   {hedge_html}
+  {_build_kelly_html(report, lang)}
 </div>
 
 <!-- ══ Key Levels ══ -->

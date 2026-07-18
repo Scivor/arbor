@@ -48,6 +48,8 @@ class ReportSummary:
     learned_scales: dict = field(default_factory=dict)
     # 情景概率快照（Brier 记分用；旧 JSON 无此键 → 默认空列表，向后兼容）
     scenarios: list[dict] = field(default_factory=list)  # {direction, probability, price_min, price_max}
+    # 凯利仓位影子快照（旧 JSON 无此键 → 空 dict，向后兼容）
+    kelly_shadow: dict = field(default_factory=dict)  # {suggested_ratio, edge, active}
 
 
 def _history_dir() -> Path:
@@ -111,6 +113,8 @@ def save_report_summary(report) -> Path:
         scenarios=[{"direction": s.direction, "probability": s.probability,
                     "price_min": s.price_min, "price_max": s.price_max}
                    for s in report.scenarios],
+        kelly_shadow={k: (report.kelly_shadow or {}).get(k)
+                      for k in ("suggested_ratio", "edge", "active")} if report.kelly_shadow else {},
     )
 
     path = summary_path(report.report_date)
@@ -375,6 +379,8 @@ def compute_track_record() -> dict:
             "actual_price": nxt.current_price,
             "price_change_pct": round(review.price_change_pct, 2),
             "brier": brier,
+            # 凯利影子账本（旧 summary 无此字段 → None 显示 —）
+            "kelly": cur.kelly_shadow.get("suggested_ratio") if cur.kelly_shadow else None,
         })
 
     total = len(weeks)

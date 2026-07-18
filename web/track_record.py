@@ -93,6 +93,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
             chg = w["price_change_pct"]
             chg_color = "#1B365D" if chg >= 0 else "#504e49"
             brier_cell = f'{w["brier"]:.3f}' if w.get("brier") is not None else "—"
+            kelly_cell = f'{w["kelly"]:.0%}' if w.get("kelly") is not None else "—"
             rows += f"""
         <tr>
           <td class="tr-date">{w["report_date"]}</td>
@@ -102,6 +103,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
           <td class="tr-num">{w["actual_price"]:.1f}</td>
           <td class="tr-num" style="color:{chg_color};">{chg:+.1f}%</td>
           <td class="tr-num">{brier_cell}</td>
+          <td class="tr-num">{kelly_cell}</td>
         </tr>"""
         pending_html = f'<div class="tr-pending">{pending} 期预测待复盘（下期周报发布后更新）</div>' if pending else ""
 
@@ -166,7 +168,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   </div>
   <table class="tr-table">
     <thead>
-      <tr><th>日期</th><th>结果</th><th>预测方向</th><th>预测区间</th><th>实际价</th><th>涨跌</th><th>Brier</th></tr>
+      <tr><th>日期</th><th>结果</th><th>预测方向</th><th>预测区间</th><th>实际价</th><th>涨跌</th><th>Brier</th><th>凯利</th></tr>
     </thead>
     <tbody>{rows}
     </tbody>

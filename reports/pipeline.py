@@ -897,6 +897,25 @@ def run(config: PipelineConfig) -> PredictionReport:
     if config.shrink_w > 0 and reference_class:
         scenarios = apply_shrink(scenarios, reference_class, config.shrink_w)
 
+    # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
+    kelly_shadow = None
+    try:
+        from reports.history import compute_track_record, load_summaries
+        from reports.kelly import compute_kelly_advice, resolve_base_rate, resolve_calibrated_p
+        dominant = max(scenarios, key=lambda s: s.probability) if scenarios else None
+        if dominant:
+            track_record = compute_track_record()
+            summaries = load_summaries()
+            prev_ratio = summaries[-1].hedge_ratio if summaries else None
+            kelly_shadow = compute_kelly_advice(
+                dominant.direction,
+                resolve_calibrated_p(track_record, dominant.direction, dominant.probability),
+                resolve_base_rate(track_record, dominant.direction),
+                prev_ratio=prev_ratio,
+            )
+    except Exception as e:
+        logger.warning(f"kelly shadow failed: {e}")
+
     # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
     china_import = fetch_china_import_snapshot(market, hedge)
 
@@ -1047,6 +1066,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         ml_snapshot=ml,
         china_import=china_import,
         reference_class=reference_class,
+        kelly_shadow=kelly_shadow,
         outlook=outlook,
         risk_warnings=risk_warnings,
         weather_snapshots=weather_snaps,

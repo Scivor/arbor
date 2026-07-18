@@ -197,6 +197,16 @@ def _md_hedge(report: "Report", lang: str) -> list[str]:
         lines.append(f"- ↑ 突破 {h.trigger_above:.0f} → 降低套保至 50%")
     if h.trigger_below or h.trigger_above:
         lines.append("")
+
+    # 凯利仓位影子（kelly_shadow 非 None 时一行，只读展示）
+    k = getattr(report, "kelly_shadow", None)
+    if k:
+        if k.get("active"):
+            edge = k.get("edge") or 0.0
+            lines.append(f"凯利视角: 建议 {k['suggested_ratio']:.0%}（edge {edge:+.0%}）vs 当前建议 {h.ratio:.0%}")
+        else:
+            lines.append(f"凯利视角: {k.get('reason', '')}")
+        lines.append("")
     return lines
 
 

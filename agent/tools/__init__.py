@@ -12,6 +12,10 @@ def _get_all_tools():
     if _ALL_TOOLS is None:
         from agent.tools.system import query_system_status, get_recent_events, scan_all_domains
         from agent.tools.market import fetch_market_price, get_ml_advice, get_landed_cost
+        from agent.tools.analysis import (
+            get_track_record, get_driver_stats, get_learning_status,
+            get_kelly_shadow, get_reference_class, get_policy_events,
+        )
         _ALL_TOOLS = [
             query_system_status,
             get_recent_events,
@@ -19,6 +23,12 @@ def _get_all_tools():
             fetch_market_price,
             get_ml_advice,
             get_landed_cost,
+            get_track_record,
+            get_driver_stats,
+            get_learning_status,
+            get_kelly_shadow,
+            get_reference_class,
+            get_policy_events,
         ]
     return _ALL_TOOLS
 

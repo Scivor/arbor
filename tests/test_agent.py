@@ -35,6 +35,8 @@ _langchain.tools = _make_module("langchain.tools")
 def _mock_tool(*args, **kwargs):
     def wrapper(func):
         func.name = func.__name__
+        # 模拟 StructuredTool.invoke 接口（dict 入参 → 关键字参数展开）
+        func.invoke = lambda input_dict=None, **kw: func(**(input_dict or kw or {}))
         return func
     if args and callable(args[0]):
         return wrapper(args[0])
@@ -62,8 +64,8 @@ from agent.tools import ALL_TOOLS
 
 @pytest.mark.unit
 def test_agent_tools_count():
-    """工具集应包含 6 个工具"""
-    assert len(ALL_TOOLS) == 6
+    """工具集应包含 12 个工具（6 个系统/市场 + 6 个分析面）"""
+    assert len(ALL_TOOLS) == 12
     names = [t.name for t in ALL_TOOLS]
     assert "query_system_status" in names
     assert "get_recent_events" in names
@@ -71,6 +73,12 @@ def test_agent_tools_count():
     assert "fetch_market_price" in names
     assert "get_ml_advice" in names
     assert "get_landed_cost" in names
+    assert "get_track_record" in names
+    assert "get_driver_stats" in names
+    assert "get_learning_status" in names
+    assert "get_kelly_shadow" in names
+    assert "get_reference_class" in names
+    assert "get_policy_events" in names
 
 
 @pytest.mark.unit

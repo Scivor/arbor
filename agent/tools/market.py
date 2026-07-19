@@ -21,14 +21,14 @@ def fetch_market_price(symbol: str = "KC=F") -> str:
             data = src.fetch()
             return (
                 f"KC=F 价格: {data.current:.2f} cents/lb\n"
-                f"  变化: {data.change_pct:+.2%}\n"
-                f"  来源: {data.source}"
+                f"  变化: {data.change_1d_pct:+.2%}\n"
+                f"  来源: Yahoo Finance"
             )
         elif symbol in ("USD/CNY", "FX", "fx"):
-            from sources.coffee.yfinance_price import FXSource
+            from sources.fx.yfinance import FXSource
             src = FXSource()
             data = src.fetch()
-            return f"USD/CNY: {data.rate:.4f} (来源: {data.source})"
+            return f"USD/CNY: {data.rate:.4f} (来源: Yahoo Finance)"
         else:
             return f"不支持的品种: {symbol}"
     except Exception as e:
@@ -54,15 +54,26 @@ def get_ml_advice() -> str:
 
 @tool
 def get_landed_cost() -> str:
-    """计算基于当前 KC=F 价格和 USD/CNY 汇率的到岸成本估算。"""
+    """计算基于当前 KC=F 价格和 USD/CNY 汇率的到岸成本估算（CYP、汇率、到库总成本、CYP 占比）。"""
     try:
-        from coffee import CoffeeSystem
-        system = CoffeeSystem()
-        report = system.report()
-        # report 里已包含 landed cost 段落
-        for line in report.splitlines():
-            if "Landed Cost" in line or "到库成本" in line:
-                return line
-        return "到岸成本信息未在报告中找到"
+        from sources.fx.yfinance import FXSource
+        from sources.coffee.yfinance_price import PriceSource
+        from core.cost.landed_cost import LandedCostCalculator
+
+        price = PriceSource().fetch()
+        fx = FXSource().fetch()
+        if price is None or fx is None:
+            return "到岸成本计算失败: 价格或汇率数据不可用"
+
+        b = LandedCostCalculator().calculate(
+            cyp_price_usd_lb=price.current,
+            fx_rate_usd_cny=fx.rate,
+            hedge_ratio=0.0,
+        )
+        return (
+            f"CYP {price.current:.2f} cents/lb × USD/CNY {fx.rate:.4f} → "
+            f"到库总成本 {b.total_cost_cny_jin:.2f} CNY/斤 "
+            f"({b.total_cost_usd_mt:.0f} USD/MT)，CYP 占比 {b.cyp_fraction_pct:.0%}"
+        )
     except Exception as e:
         return f"[get_landed_cost] 错误: {e}"

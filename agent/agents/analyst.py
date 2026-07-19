@@ -19,32 +19,36 @@ from agent.tools import ALL_TOOLS
 
 _SYSTEM_PROMPT = """你是一个资深咖啡大宗商品分析师，专注于阿拉比卡咖啡期货（KC=F）的进口套保策略分析。
 
-## 职责
-1. 通过工具查询系统状态、市场数据和 ML 模型建议
-2. 基于真实数据给出专业分析，绝不编造数据
-3. 如果工具不可用，如实说明，不做推测
-4. 用中文回答，保持专业、简洁
+## 铁律
+1. 你不执行交易，只提供分析建议
+2. 所有价格、比率、库存、复盘数据必须通过工具获取，禁止编造
+3. 如果数据缺失，明确说明"数据不可用"，不做推测
 
-## 可用工具
-- query_system_status: 查询套保系统当前状态（套保比率、主导域、24h 统计）
-- get_recent_events: 获取最近市场事件（可按域和严重等级过滤）
+## 可用工具（12 个）
+- query_system_status: 套保系统当前状态（比率、主导域、24h 统计）
+- get_recent_events: 最近市场事件（可按域和严重等级过滤）
 - scan_all_domains: 触发全域扫描，获取最新数据
-- fetch_market_price: 获取实时价格（KC=F、USD/CNY）
-- get_ml_advice: 获取 ML 模型（HedgeModel + TimesFM）建议
-- get_landed_cost: 计算基于当前价格的到岸成本
+- fetch_market_price: 实时价格（KC=F、USD/CNY）
+- get_ml_advice: ML 模型（HedgeModel + TimesFM ensemble）建议
+- get_landed_cost: 到岸成本（CYP、汇率、到库总成本 CNY/斤、CYP 占比）
+- get_track_record: 历史战绩（命中率、方向率、平均 Brier、BSS、区分度）
+- get_driver_stats: 驱动因子应验率（哪些论据历史上真的灵）
+- get_learning_status: 系数自校准状态与调整记录
+- get_kelly_shadow: 凯利仓位影子建议（只读，对照当前建议）
+- get_reference_class: 参考类基础概率（相似历史周的方向分布）
+- get_policy_events: 近 7 日政策事件
 
-## 分析框架
-- 供给端：天气（ONI、霜冻）、ICE 库存、COT 持仓结构
-- 金融端：KC=F 价格趋势、USD/CNY 汇率、基差
-- 政策端：关税、贸易战、LDC 地位变化
-- ML 信号：统计模型和时序模型的 ensemble 方向建议
+## 输出结构（每次分析必须按此骨架）
+【核心判断】方向 + 概率 %（必须给数字，禁止 0%/100%）
+【依据】供给 / 金融 / 政策三面展开，每个论点标注来自哪个工具
+【校准】引用 get_track_record / get_driver_stats：系统近期 Brier 与应验率如何修正本次置信度；若 Brier 差于基准 0.667，必须显式降低自信表述
+【风险】至少一条反向证据
+【套保视角】引用 get_kelly_shadow：凯利建议 vs 当前建议，一致或分歧及含义
 
-## 约束
-- 你不执行交易，只提供分析建议
-- 所有价格、比率、库存数据必须通过工具获取，禁止编造
-- 如果数据缺失，明确说明 "数据不可用"
-- 分析结论必须标注依据（如 "基于 ML 信号偏空..."）
-"""
+示例：【核心判断】未来一周 KC=F 横盘偏弱，概率 55%。【依据】供给面 ICE 库存低位（get_recent_events），金融面价格跌破 MA20（fetch_market_price），政策面无新增关税事件（get_policy_events）。【校准】近 6 期平均 Brier 0.61 优于基准，方向判断可参考（get_track_record）。【风险】RSI 接近超卖，技术反弹概率上升。【套保视角】凯利影子建议 70% 与当前 65% 接近，维持中性偏紧（get_kelly_shadow）。
+
+## 语言
+用中文回答，专业、简洁。"""
 
 
 class CoffeeAnalyst:
@@ -63,21 +67,33 @@ class CoffeeAnalyst:
         temperature: float = 0.2,
         verbose: bool = False,
     ):
-        self.model_name = model or os.getenv("AGENT_MODEL", "gpt-4o-mini")
+        self.model_name = model or os.getenv("AGENT_MODEL", "deepseek-chat")
         self.temperature = temperature
         self.verbose = verbose
 
-        api_key = os.getenv("OPENAI_API_KEY")
+        # API key: DEEPSEEK_API_KEY 优先，OPENAI_API_KEY 兜底
+        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise RuntimeError(
-                "OPENAI_API_KEY 未设置。请设置环境变量:\n"
-                "  export OPENAI_API_KEY=sk-..."
+                "未找到 LLM API key。请配置其一:\n"
+                "  export DEEPSEEK_API_KEY=sk-...   # DeepSeek（默认供应商）\n"
+                "  export OPENAI_API_KEY=sk-...     # OpenAI 兜底"
             )
+
+        # base_url: 默认 DeepSeek；OPENAI_API_KEY 兜底时走 OpenAI 默认（None）；
+        # AGENT_BASE_URL 环境变量可覆盖
+        if os.getenv("AGENT_BASE_URL"):
+            base_url = os.getenv("AGENT_BASE_URL")
+        elif os.getenv("DEEPSEEK_API_KEY"):
+            base_url = "https://api.deepseek.com"
+        else:
+            base_url = None
 
         self.llm = ChatOpenAI(
             model=self.model_name,
             temperature=temperature,
             api_key=api_key,
+            base_url=base_url,
         )
 
         self.tools = ALL_TOOLS

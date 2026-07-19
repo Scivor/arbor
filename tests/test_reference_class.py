@@ -3,8 +3,6 @@ tests/test_reference_class.py
 超级预测 Phase 2: 参考类基础概率 — 无网络（全部合成 DataFrame）
 """
 
-from types import SimpleNamespace
-
 import pandas as pd
 import pytest
 
@@ -75,38 +73,41 @@ def test_match_analogs_filtering():
     assert m["counts"] == {"up": 1, "down": 1, "flat": 1}
 
 
-def test_compute_base_rates_integration():
+def test_compute_base_rates_climate_frequency():
+    """无条件气候频率: 频率=全样本分布，n_analogs=全部周数，不依赖 RSI/mom 筛选"""
     closes = _make_closes(300)
     weeks = _weekly_features(closes)
-    w = weeks[10]
-    market = SimpleNamespace(rsi_14=w["rsi"], change_30d_pct=w["mom30"])
 
-    rates = compute_base_rates(market, _df(closes))
+    rates = compute_base_rates(None, _df(closes))  # market 传 None 也不影响（不再参与筛选）
 
-    expected = _match_analogs(weeks, w["rsi"], w["mom30"])
-    assert rates["n_analogs"] == expected["n"]
-    assert rates["n_analogs"] >= 1
-    assert rates["up"] + rates["flat"] + rates["down"] == pytest.approx(1.0)
+    assert rates["n_analogs"] == len(weeks)
+    expected = {"up": 0, "flat": 0, "down": 0}
+    for w in weeks:
+        expected[w["direction"]] += 1
+    n = len(weeks)
     for cat in ("up", "flat", "down"):
-        assert rates[cat] == pytest.approx(expected["counts"][cat] / expected["n"])
+        assert rates[cat] == pytest.approx(expected[cat] / n)
+    assert rates["up"] + rates["flat"] + rates["down"] == pytest.approx(1.0)
 
 
-def test_compute_base_rates_no_analogs_uniform_fallback():
-    closes = _make_closes(300)
-    # RSI 偏离所有历史窗口 → 无相似样本 → 均匀先验降级
-    market = SimpleNamespace(rsi_14=0.0, change_30d_pct=5.0)
-    rates = compute_base_rates(market, _df(closes))
-    assert rates["n_analogs"] == 0
-    assert rates["up"] == pytest.approx(1 / 3)
-    assert rates["flat"] == pytest.approx(1 / 3)
-    assert rates["down"] == pytest.approx(1 / 3)
+def test_compute_base_rates_empty_df_returns_none():
+    assert compute_base_rates(None, pd.DataFrame()) is None
+    # 数据太短无有效周窗口（< 36 个交易日）→ None
+    assert compute_base_rates(None, _df(_make_closes(30))) is None
 
 
-def test_compute_base_rates_none_inputs():
-    market = SimpleNamespace(rsi_14=50.0, change_30d_pct=0.05)
-    assert compute_base_rates(None, _df(_make_closes(100))) is None
-    assert compute_base_rates(market, pd.DataFrame()) is None
-    assert compute_base_rates(SimpleNamespace(rsi_14=None, change_30d_pct=0.05), _df(_make_closes(100))) is None
+# ── --validate 对照（参考类 vs 气候频率）──────────────────────────────────────
+
+def test_validate_prints_comparison(capsys, monkeypatch):
+    """--validate 输出参考类与气候频率两行 Brier（monkeypatch 数据获取，无网络）"""
+    monkeypatch.setattr("reports.reference_class.fetch_kc_daily",
+                        lambda *a, **k: _df(_make_closes(400)))
+    from reports.reference_class import _validate
+    _validate(n_windows=10)
+    out = capsys.readouterr().out
+    assert "参考类 Brier 均值" in out
+    assert "气候频率 Brier 均值" in out
+    assert "同窗口对照" in out
 
 
 # ── 概率收缩 ──────────────────────────────────────────────────────────────────
@@ -146,23 +147,23 @@ def test_reference_class_rendered_everywhere():
     report = demo_report()
     report.reference_class = _RC
 
-    assert "参考类" in report.to_text() and "样本稀薄" in report.to_text()
-    assert "参考类" in build_report_html(report, lang="zh")
+    assert "基础概率" in report.to_text() and "样本稀薄" in report.to_text()
+    assert "基础概率" in build_report_html(report, lang="zh")
     assert "样本稀薄" in build_report_html(report, lang="zh")
-    assert "Reference class" in build_report_html(report, lang="en")
-    assert "参考类" in export_markdown(report) and "样本稀薄" in export_markdown(report)
+    assert "Base rate" in build_report_html(report, lang="en")
+    assert "基础概率" in export_markdown(report) and "样本稀薄" in export_markdown(report)
 
 
 def test_reference_class_none_hidden_everywhere():
     report = demo_report()
     assert report.reference_class is None
-    assert "参考类" not in report.to_text()
-    assert "参考类" not in build_report_html(report, lang="zh")
-    assert "参考类" not in export_markdown(report)
+    assert "基础概率" not in report.to_text()
+    assert "基础概率" not in build_report_html(report, lang="zh")
+    assert "基础概率" not in export_markdown(report)
 
 
 def test_reference_class_thin_note_only_when_small():
     report = demo_report()
     report.reference_class = {**_RC, "n_analogs": 42}
-    assert "参考类" in report.to_text()
+    assert "基础概率" in report.to_text()
     assert "样本稀薄" not in report.to_text()

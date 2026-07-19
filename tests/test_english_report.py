@@ -61,7 +61,7 @@ def test_english_markdown_labels_and_numbers():
     assert "## Hedge Advice" in md
     assert "Landed Cost" in md
     assert "Policy Events" in md
-    assert "Reference class" in md
+    assert "Base rate" in md
     assert "month avg" in md
     assert "Kelly view" in md
     assert "Direction Accuracy" in md

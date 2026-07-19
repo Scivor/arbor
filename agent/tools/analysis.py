@@ -93,17 +93,16 @@ def get_kelly_shadow() -> str:
 
 @tool
 def get_reference_class() -> str:
-    """获取参考类基础概率：与当前 RSI + 30 日动量相似的历史周，其后 5 日方向分布。"""
+    """获取基础概率：近 5 年全部历史周其后 5 日方向的无条件分布（气候频率）。"""
     try:
         from reports.pipeline import fetch_market_snapshot
         from reports.reference_class import compute_base_rates
         rates = compute_base_rates(fetch_market_snapshot())
         if not rates:
-            return "参考类数据不可用"
-        thin = "（样本稀薄，仅供参考）" if rates["n_analogs"] < 20 else ""
+            return "基础概率数据不可用"
         return (
-            f"参考类（近 {rates['years']:.0f} 年 {rates['n_analogs']} 个相似周）: "
-            f"涨 {rates['up']:.0%} / 横 {rates['flat']:.0%} / 跌 {rates['down']:.0%}{thin}"
+            f"基础概率（近 {rates['years']:.0f} 年 {rates['n_analogs']} 个历史周）: "
+            f"涨 {rates['up']:.0%} / 横 {rates['flat']:.0%} / 跌 {rates['down']:.0%}"
         )
     except Exception as e:
         return f"[get_reference_class] 错误: {e}"

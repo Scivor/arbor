@@ -92,15 +92,35 @@ def test_resolve_calibrated_p_insufficient_samples():
 
 
 def test_resolve_base_rate():
+    # ≥ MIN_SAMPLES(8) 时: 用自有历史实际方向频率
     tr = {"weeks": [
         {"price_change_pct": 2.0},   # up
         {"price_change_pct": -2.0},  # down
         {"price_change_pct": 0.5},   # flat
         {"price_change_pct": 3.0},   # up
+        {"price_change_pct": 1.5},   # up
+        {"price_change_pct": -1.5},  # down
+        {"price_change_pct": 0.0},   # flat
+        {"price_change_pct": 4.0},   # up
     ]}
     assert resolve_base_rate(tr, "上涨") == 0.5
     assert resolve_base_rate(tr, "下跌") == 0.25
     assert resolve_base_rate(tr, "横盘") == 0.25
+
+
+def test_resolve_base_rate_fallback_to_climate(monkeypatch):
+    """自有历史 < MIN_SAMPLES → 气候频率兜底；兜底也失败 → None"""
+    tr = {"weeks": [{"price_change_pct": 2.0}]}
+    monkeypatch.setattr("reports.reference_class.compute_base_rates",
+                        lambda market=None, df=None: {"up": 0.4, "flat": 0.3, "down": 0.3})
+    assert resolve_base_rate(tr, "上涨") == 0.4
+    assert resolve_base_rate(tr, "横盘") == 0.3
+
+    monkeypatch.setattr("reports.reference_class.compute_base_rates",
+                        lambda market=None, df=None: None)
+    assert resolve_base_rate(tr, "上涨") is None
+
+    # 完全无历史 + 兜底失败 → None
     assert resolve_base_rate({"weeks": []}, "上涨") is None
 
 

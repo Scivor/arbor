@@ -95,15 +95,25 @@ def resolve_calibrated_p(
 def resolve_base_rate(track_record: dict, dominant_direction: str) -> float | None:
     """
     base_rate: 全部已复盘周中实际方向为该方向的占比（±1% 判 up/flat/down）。
-    无已复盘周 → None。
+    已复盘周 < MIN_SAMPLES 时回退到气候频率（reports.reference_class 无条件分布，
+    证据: 条件化 0.6496 vs 无条件 0.5815）；仍失败 → None。
     """
     weeks = (track_record or {}).get("weeks") or []
-    if not weeks:
-        return None
     target = normalize_direction(dominant_direction)
-    n_match = 0
-    for w in weeks:
-        chg = w.get("price_change_pct", 0.0) or 0.0
-        actual = "up" if chg > 1.0 else "down" if chg < -1.0 else "flat"
-        n_match += actual == target
-    return n_match / len(weeks)
+    if len(weeks) >= MIN_SAMPLES:
+        n_match = 0
+        for w in weeks:
+            chg = w.get("price_change_pct", 0.0) or 0.0
+            actual = "up" if chg > 1.0 else "down" if chg < -1.0 else "flat"
+            n_match += actual == target
+        return n_match / len(weeks)
+
+    # 自有历史不足 → 气候频率兜底（惰性 import 防循环；market 传 None 走内部 fetch）
+    try:
+        from reports.reference_class import compute_base_rates
+        rates = compute_base_rates(None)
+        if rates:
+            return rates.get(target)
+    except Exception as e:
+        logger.warning("resolve_base_rate: 气候频率回退失败: %s", e)
+    return None

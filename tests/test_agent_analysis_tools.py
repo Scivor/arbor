@@ -126,9 +126,9 @@ def test_reference_class_frequencies(monkeypatch):
         "up": 0.31, "flat": 0.26, "down": 0.43, "n_analogs": 12, "years": 5,
     })
     out = get_reference_class.invoke({})
-    assert "12 个相似周" in out
+    assert "12 个历史周" in out
     assert "涨 31% / 横 26% / 跌 43%" in out
-    assert "样本稀薄" in out  # n<20 标注
+    assert "基础概率" in out
 
 
 def test_reference_class_unavailable(monkeypatch):

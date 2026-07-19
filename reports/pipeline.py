@@ -1032,7 +1032,7 @@ def run(config: PipelineConfig) -> PredictionReport:
                  f"涨{reference_class['up']:.0%}/横{reference_class['flat']:.0%}/跌{reference_class['down']:.0%} (n={reference_class['n_analogs']})",
                  "Internal computed from Yahoo Finance KC=F 5y", "",
                  latency="T+0", reliability="B",
-                 notes="参考类基础概率：与当前 RSI+30日动量相似的历史周，其后5日方向分布")
+                 notes="气候频率基础概率：近5年全部周其后5日方向的无条件分布")
 
     # COT data (if available)
     try:

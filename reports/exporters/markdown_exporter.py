@@ -60,8 +60,8 @@ _T = {
     "md_prob_col": {"zh": "概率", "en": "Prob"},
     "md_rationale_col": {"zh": "主要依据", "en": "Key Rationale"},
     "ref_class_line": {
-        "zh": "参考类: 近 {years} 年相似行情 {n} 周，涨 {up} / 横 {flat} / 跌 {down}",
-        "en": "Reference class: {n} similar weeks in {years}y — up {up} / flat {flat} / down {down}",
+        "zh": "基础概率: 近 {years} 年周度分布，涨 {up} / 横 {flat} / 跌 {down}",
+        "en": "Base rate: {years}y weekly distribution — up {up} / flat {flat} / down {down}",
     },
     "ref_class_thin": {"zh": "（样本稀薄，仅供参考）", "en": " (thin sample, for reference only)"},
     "ml_signal": {"zh": "信号", "en": "Signal"},
@@ -193,7 +193,7 @@ def _md_scenarios(report: "Report", lang: str) -> list[str]:
     if rc:
         thin = _t("ref_class_thin", lang) if rc.get("n_analogs", 0) < 20 else ""
         lines.append(_t("ref_class_line", lang,
-                        years=f"{rc.get('years', 5):.0f}", n=rc.get("n_analogs", 0),
+                        years=f"{rc.get('years', 5):.0f}",
                         up=f"{rc.get('up', 0):.0%}", flat=f"{rc.get('flat', 0):.0%}",
                         down=f"{rc.get('down', 0):.0%}") + thin)
         lines.append("")

@@ -318,12 +318,12 @@ class PredictionReport:
                 lines.append(f"  {dir_icon} {s.label:6}  {s.price_min:.0f}–{s.price_max:.0f}  {s.probability:>4.0%}  |  {s.rationale[0] if s.rationale else ''}")
             lines.append("")
 
-        # ─── 参考类基础概率 ─────────────────────────────────────────
+        # ─── 基础概率（气候频率）────────────────────────────────────
         if self.reference_class:
             rc = self.reference_class
             thin = "（样本稀薄，仅供参考）" if rc.get("n_analogs", 0) < 20 else ""
             lines.append(
-                f"  {'参考类':>12}: 近 {rc.get('years', 5):.0f} 年相似行情 {rc.get('n_analogs', 0)} 周，"
+                f"  {'基础概率':>12}: 近 {rc.get('years', 5):.0f} 年周度分布，"
                 f"涨 {rc.get('up', 0):.0%} / 横 {rc.get('flat', 0):.0%} / 跌 {rc.get('down', 0):.0%}{thin}"
             )
             lines.append("")

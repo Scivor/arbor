@@ -1064,6 +1064,19 @@ def run(config: PipelineConfig) -> PredictionReport:
         provenance=prov,
     )
 
+    # ── Step 6: AI 分析师点评（LLM 单轮合成；失败静默，报告不含此板块）──
+    try:
+        from reports.llm_commentary import generate_commentary
+        report.llm_commentary = generate_commentary(report)
+    except Exception as e:
+        logger.warning(f"generate_commentary failed: {e}")
+
+    if report.llm_commentary:
+        prov.add("ai_commentary", "AI 分析师点评",
+                 "DeepSeek", "https://api.deepseek.com",
+                 latency="实时生成", reliability="C",
+                 notes="LLM 单轮合成，非实时检索")
+
     return report
 
 

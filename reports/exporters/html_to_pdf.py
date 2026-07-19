@@ -148,6 +148,7 @@ _TRANSLATIONS = {
     # Outlook
     "no_outlook": {"zh": "暂无展望", "en": "No outlook available"},
     "risk_warnings": {"zh": "⚠ 风险提示 Risk Warnings", "en": "⚠ Risk Warnings"},
+    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
 
     # Footer
     "data_sources": {"zh": "数据来源", "en": "Data Sources"},
@@ -796,6 +797,19 @@ def _build_metrics_html(metric_ctx: dict[str, str], lang: str) -> str:
         <div class="metric-sub">{sub}</div>
       </div>"""
     return rows
+
+
+def _build_ai_commentary_html(report, lang: str) -> str:
+    """AI 分析师点评 section（llm_commentary 为 None 时不渲染；LLM 输出先转义再插入）。"""
+    text = getattr(report, "llm_commentary", None)
+    if not text:
+        return ""
+    body = _html.escape(text).replace("\n", "<br>")
+    return f"""
+<div class="section">
+  <div class="section-title">{_t("ai_commentary", lang)} <span>AI Analyst</span></div>
+  <div class="outlook-box ai-commentary">{body}</div>
+</div>"""
 
 
 def build_report_html(report, lang: str = "zh") -> str:
@@ -1676,6 +1690,9 @@ def build_report_html(report, lang: str = "zh") -> str:
     <ul>{risk_items}</ul>
   </div>''' if report.risk_warnings else ''}
 </div>
+
+<!-- ══ AI Analyst Commentary ══ -->
+{_build_ai_commentary_html(report, lang)}
 
 <!-- ══ Footer ══ -->
 <div class="footer">

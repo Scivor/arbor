@@ -225,6 +225,9 @@ class PredictionReport:
     # 凯利仓位影子（Phase 3：{edge, suggested_ratio, active, reason}，只读不改 hedge_advice）
     kelly_shadow: Optional[dict] = None
 
+    # AI 分析师点评（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
+    llm_commentary: Optional[str] = None
+
     # 核心观点
     outlook: str = ""        # 一句话总结
     risk_warnings: list[str] = field(default_factory=list)
@@ -415,6 +418,14 @@ class PredictionReport:
             for rw in self.risk_warnings:
                 lines.append(f"      • {rw}")
         lines.append("")
+
+        # ─── AI 分析师点评 ──────────────────────────────────────────
+        if self.llm_commentary:
+            lines.append(f"  {'[ AI ANALYST ]':─^74}")
+            for w in textwrap.wrap(self.llm_commentary, width=68):
+                lines.append(f"  {w}")
+            lines.append("")
+
         lines.append(f"  {'─' * 74}")
         lines.append(f"  Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M')}")
         lines.append(f"  {'═' * 74}")
@@ -466,6 +477,7 @@ class PredictionReport:
             } if self.china_import else None,
             "outlook": self.outlook,
             "risk_warnings": self.risk_warnings,
+            "llm_commentary": self.llm_commentary,
         }
 
 

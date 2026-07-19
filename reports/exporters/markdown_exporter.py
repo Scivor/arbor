@@ -30,6 +30,7 @@ _T = {
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
     "outlook": {"zh": "核心观点", "en": "Outlook"},
     "risk_warnings": {"zh": "风险提示", "en": "Risk Warnings"},
+    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
     "policy_events": {"zh": "政策事件", "en": "Policy Events"},
     "no_policy_events": {"zh": "近 7 日无显著政策事件", "en": "No significant policy events in the past 7 days"},
     "support": {"zh": "支撑", "en": "Support"},
@@ -234,6 +235,14 @@ def _md_china_import(report: "Report", lang: str) -> list[str]:
     return lines
 
 
+def _md_ai_commentary(report: "Report", lang: str) -> list[str]:
+    """AI 分析师点评小节（llm_commentary 非 None 时，markdown 原文插入无执行面）"""
+    text = getattr(report, "llm_commentary", None)
+    if not text:
+        return []
+    return [f"## {_t('ai_commentary', lang)}", "", text.strip(), ""]
+
+
 def _md_outlook(report: "Report", lang: str) -> list[str]:
     lines = [f"## {_t('outlook', lang)}", ""]
     if report.outlook:
@@ -276,6 +285,7 @@ def export_markdown(report: "Report", lang: str = "zh") -> str:
     lines += _md_ml(report, lang)
     lines += _md_hedge(report, lang)
     lines += _md_china_import(report, lang)
+    lines += _md_ai_commentary(report, lang)
     lines += _md_outlook(report, lang)
 
     # ── 页脚 ──

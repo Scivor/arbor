@@ -135,7 +135,32 @@ def generate_and_publish(
     except Exception as e:
         logger.warning("Health alert failed: %s", e)
 
+    # ── 发布提醒：常态通知（与告警语义不同，无 🔴/🟡；未配置则静默）──
+    try:
+        from core.notify.ops_alert import send_ops_alert
+        send_ops_alert(_build_publish_notice(report, report_dir, today_str))
+    except Exception as e:
+        logger.warning("Publish notice failed: %s", e)
+
     return report_dir
+
+
+def _build_publish_notice(report, report_dir: Path, today_str: str) -> str:
+    """发布提醒文本（常态通知，不出现告警图标）。"""
+    price = f"{report.market.current:.2f}" if report.market else "N/A"
+    hedge = (f"{report.hedge_advice.ratio:.0%} {report.hedge_advice.signal}"
+             if report.hedge_advice else "N/A")
+    ml = report.ml_snapshot.signal if report.ml_snapshot else "N/A"
+    commentary = ""
+    if report.llm_commentary:
+        commentary = report.llm_commentary.strip().splitlines()[0][:60]
+    return (
+        f"📰 <b>Arbor 周报已生成 {today_str}</b>\n"
+        f"现价 {price} | 套保 {hedge} | ML {ml}\n"
+        f"AI 点评: {commentary or '无'}\n"
+        f"公众号 markdown: {report_dir}/report.md\n"
+        f"在线版: http://<host>/reports/{today_str}/"
+    )
 
 
 def assess_report_health(report) -> tuple[str, list[str]]:

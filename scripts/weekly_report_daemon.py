@@ -45,6 +45,21 @@ logger = logging.getLogger("weekly_daemon")
 # Email Distribution
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _resolve_recipients() -> list[str]:
+    """
+    收件人解析: ~/.arbor/subscribers.json 的 active 列表非空 → 用它；
+    否则回退 COFFEE_SMTP_TO 环境变量（逗号分隔）；都无 → []（调用方跳过发送）。
+    """
+    try:
+        from scripts.subscribers import load_active_emails
+        emails = load_active_emails()
+        if emails:
+            return emails
+    except Exception as e:
+        logger.warning("subscribers 读取失败，回退 COFFEE_SMTP_TO: %s", e)
+    return [a.strip() for a in os.getenv("COFFEE_SMTP_TO", "").split(",") if a.strip()]
+
+
 def _send_report_email(report, html_path: Path) -> None:
     """
     Send the weekly report via SMTP if COFFEE_SMTP_* env vars are configured.
@@ -54,7 +69,7 @@ def _send_report_email(report, html_path: Path) -> None:
     port = int(os.getenv("COFFEE_SMTP_PORT", "587"))
     user = os.getenv("COFFEE_SMTP_USER")
     password = os.getenv("COFFEE_SMTP_PASS")
-    to_addrs = os.getenv("COFFEE_SMTP_TO", "")
+    to_addrs = _resolve_recipients()
     from_addr = os.getenv("COFFEE_SMTP_FROM", user or "coffee-report@localhost")
 
     if not host or not to_addrs:
@@ -70,7 +85,7 @@ def _send_report_email(report, html_path: Path) -> None:
     msg = MIMEMultipart("alternative")
     msg["Subject"] = f"【咖啡期货周报】{report.ticker} {report.report_date} | ML:{report.ml_snapshot.signal if report.ml_snapshot else 'N/A'}"
     msg["From"] = from_addr
-    msg["To"] = to_addrs
+    msg["To"] = ", ".join(to_addrs)
 
     # Plain text preview
     text_body = f"""咖啡期货周报 {report.report_date}
@@ -102,9 +117,9 @@ ML信号: {report.ml_snapshot.signal if report.ml_snapshot else 'N/A'}
         server.starttls()
         if user and password:
             server.login(user, password)
-        server.sendmail(from_addr, to_addrs.split(","), msg.as_string())
+        server.sendmail(from_addr, to_addrs, msg.as_string())
 
-    logger.info("Report email sent to %s", to_addrs)
+    logger.info("Report email sent to %s", ", ".join(to_addrs))
 
 
 # ─────────────────────────────────────────────────────────────────────────────

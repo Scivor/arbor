@@ -165,11 +165,13 @@ class MLSnapshot:
 
 @dataclass
 class ChinaImportSnapshot:
-    """中国进口商视角快照 — 汇率 / 到库成本 / 政策事件"""
+    """中国进口商视角快照 — 汇率 / 到库成本 / 政策事件 / ICO现货 / 广期所"""
     fx_rate: Optional[float] = None      # USD/CNY 即期汇率
     fx_source: str = ""
     landed: Optional["LandedCostBreakdown"] = None  # 到库成本明细（运行时保持本文件零项目内 import，类型经 TYPE_CHECKING 标注）
     policy_events: list[dict] = field(default_factory=list)  # {event_type, severity, narrative, source, timestamp}
+    ico_spot: Optional[dict] = None      # ICOSpotSource.fetch() 结果（ICO I-CIP 现货指标）
+    gfex: Optional[dict] = None          # GFEXCoffeeSource.fetch() + compute_spread（未上市时为 None）
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -400,6 +402,14 @@ class PredictionReport:
                 b = ci.landed
                 lines.append(f"  {'到库成本':>12}: {b.total_cost_cny_jin:>8.4f} CNY/斤  ({b.total_cost_usd_mt:.2f} USD/MT)")
                 lines.append(f"  {'CYP 占比':>12}: {b.cyp_fraction_pct:>8.1%}  当前套保比率: {b.hedge_ratio_pct:.0%}")
+            if ci.ico_spot:
+                s = ci.ico_spot
+                dod = f"{s['dod_change_pct']:+.1f}%" if s.get("dod_change_pct") is not None else "N/A"
+                avg = f"{s['month_avg']:.2f}" if s.get("month_avg") is not None else "N/A"
+                lines.append(f"  {'ICO 现货':>12}: {s['icip']:>8.2f} ¢/lb  (月均 {avg}，日变动 {dod})")
+            if ci.gfex:
+                g = ci.gfex
+                lines.append(f"  {'广期所咖啡':>12}: {g['close']:>8.0f} 元/吨  内外盘价差 {g['spread_cny_mt']:+.0f} 元/吨 ({g['spread_pct']:+.1%})")
             if ci.policy_events:
                 lines.append(f"  {'政策事件':>12}:")
                 for ev in ci.policy_events[:5]:

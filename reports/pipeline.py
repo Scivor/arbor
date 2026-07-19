@@ -275,6 +275,27 @@ def fetch_china_import_snapshot(
     except Exception as e:
         logger.warning(f"fetch_china_import_snapshot policy scan failed: {e}")
 
+    # ── ICO I-CIP 每日现货指标 ──────────────────────────────────────
+    ico_spot = None
+    try:
+        from sources.coffee.ico_spot import ICOSpotSource
+        ico_spot = ICOSpotSource().fetch()
+    except Exception as e:
+        logger.warning(f"fetch_china_import_snapshot ICO spot failed: {e}")
+
+    # ── 广期所咖啡期货（未上市时优雅降级为 None）────────────────────
+    gfex = None
+    if fx_rate is not None and market is not None:
+        try:
+            from sources.coffee.gfex_coffee import GFEXCoffeeSource, compute_spread
+            gfex_src = GFEXCoffeeSource()
+            if gfex_src.is_available():
+                data = gfex_src.fetch()
+                data.update(compute_spread(data["close"], market.current, fx_rate))
+                gfex = data
+        except Exception as e:
+            logger.warning(f"fetch_china_import_snapshot GFEX failed: {e}")
+
     # 仅当汇率、到库成本、政策事件三者全部失败才放弃整个板块
     if fx_rate is None and landed is None and not policy_events:
         return None
@@ -284,6 +305,8 @@ def fetch_china_import_snapshot(
         fx_source=fx_source,
         landed=landed,
         policy_events=policy_events,
+        ico_spot=ico_spot,
+        gfex=gfex,
     )
 
 
@@ -989,6 +1012,20 @@ def run(config: PipelineConfig) -> PredictionReport:
                  "Yahoo Finance", "https://finance.yahoo.com/quote/USDCNY=X",
                  latency="~15 min", reliability="B",
                  notes="USD/CNY 即期汇率，用于到库成本换算")
+
+    if china_import and china_import.ico_spot:
+        s = china_import.ico_spot
+        prov.add("ico_icip", f"{s['icip']:.2f} ¢/lb",
+                 "ICO I-CIP", "https://icocoffee.org/documents/I-CIP.pdf",
+                 latency="日更", reliability="A-",
+                 notes=f"国际咖啡组织综合现货指标（{s.get('date', '')}）")
+
+    if china_import and china_import.gfex:
+        g = china_import.gfex
+        prov.add("gfex_coffee", f"{g['close']:.0f} 元/吨",
+                 "GFEX/akshare", "",
+                 latency="日更", reliability="B",
+                 notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
     if reference_class:
         prov.add("reference_class",

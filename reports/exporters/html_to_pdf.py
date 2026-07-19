@@ -134,6 +134,10 @@ _TRANSLATIONS = {
     "current_hedge": {"zh": "当前套保比率", "en": "Current Hedge"},
     "policy_events": {"zh": "政策事件", "en": "Policy Events"},
     "no_policy_events": {"zh": "近 7 日无显著政策事件", "en": "No significant policy events in the past 7 days"},
+    "ico_spot_line": {"zh": "ICO 综合现货 {icip} ¢/lb（月均 {avg}，日变动 {dod}）",
+                      "en": "ICO composite spot {icip} ¢/lb (month avg {avg}, DoD {dod})"},
+    "gfex_line": {"zh": "广期所咖啡 {close} 元/吨，内外盘价差 {spread} 元/吨（{pct}）",
+                  "en": "GFEX coffee {close} CNY/MT, spread vs KC {spread} CNY/MT ({pct})"},
 
     # Levels
     "support": {"zh": "支撑 Support", "en": "Support"},
@@ -708,6 +712,23 @@ def _build_china_import_html(report, lang: str) -> str:
         fx_html = f"""
           <div class="ci-fx">USD/CNY <strong>{ci.fx_rate:.4f}</strong><span class="ci-fx-src">{fx_src}</span></div>"""
 
+    # ── ICO 现货 / 广期所（None 时不显示）──
+    extra_html = ""
+    if ci.ico_spot:
+        s = ci.ico_spot
+        extra_html += f"""
+          <div class="ci-fx">{_t("ico_spot_line", lang,
+              icip=_fmt_number(s.get("icip"), decimals=2),
+              avg=_fmt_number(s.get("month_avg"), decimals=2),
+              dod=(f"{s['dod_change_pct']:+.1f}%" if s.get("dod_change_pct") is not None else "N/A"))}</div>"""
+    if ci.gfex:
+        g = ci.gfex
+        extra_html += f"""
+          <div class="ci-fx">{_t("gfex_line", lang,
+              close=_fmt_number(g.get("close"), decimals=0),
+              spread=_fmt_number(g.get("spread_cny_mt"), decimals=0, signed=True),
+              pct=_fmt_percent(g.get("spread_pct"), decimals=1, signed=True, scale=100))}</div>"""
+
     # ── 政策事件 ──
     if ci.policy_events:
         items = ""
@@ -732,6 +753,7 @@ def _build_china_import_html(report, lang: str) -> str:
     <div class="ci-body">
       {cost_html}
       {fx_html}
+      {extra_html}
       {events_html}
     </div>
   </div>

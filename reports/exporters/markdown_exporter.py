@@ -223,6 +223,14 @@ def _md_china_import(report: "Report", lang: str) -> list[str]:
         b = ci.landed
         lines.append(f"- **到库成本: {b.total_cost_cny_jin:.2f} CNY/斤**（{b.total_cost_usd_mt:.0f} USD/MT）")
         lines.append(f"- CYP 占比: {b.cyp_fraction_pct:.0%} | 当前套保比率: {b.hedge_ratio_pct:.0%}")
+    if ci.ico_spot:
+        s = ci.ico_spot
+        dod = f"{s['dod_change_pct']:+.1f}%" if s.get("dod_change_pct") is not None else "N/A"
+        avg = f"{s['month_avg']:.2f}" if s.get("month_avg") is not None else "N/A"
+        lines.append(f"- ICO 综合现货 {s['icip']:.2f} ¢/lb（月均 {avg}，日变动 {dod}）")
+    if ci.gfex:
+        g = ci.gfex
+        lines.append(f"- 广期所咖啡 {g['close']:.0f} 元/吨，内外盘价差 {g['spread_cny_mt']:+.0f} 元/吨（{g['spread_pct']:+.1%}）")
     lines.append("")
     if ci.policy_events:
         lines.append(f"**{_t('policy_events', lang)}**")

@@ -87,6 +87,18 @@ def save_report_summary(report) -> Path:
     # Dominant scenario
     dominant = max(report.scenarios, key=lambda s: s.probability) if report.scenarios else None
 
+    # 驱动因子（含 LLM 点评方向：作为一个驱动因子入归因记分）
+    drivers = [{"param_name": p.param_name, "signal": p.signal,
+                "weight": p.weight, "category": p.category}
+               for p in (report.bullish_params + report.bearish_params)]
+    if getattr(report, "llm_direction", None):
+        drivers.append({
+            "param_name": "AI 分析师点评",
+            "signal": {"上涨": "看涨", "下跌": "看跌", "横盘": "中性"}.get(report.llm_direction, "中性"),
+            "weight": "中",
+            "category": "LLM",
+        })
+
     summary = ReportSummary(
         report_date=report.report_date.isoformat(),
         forecast_week_start=report.forecast_week_start.isoformat(),
@@ -107,9 +119,7 @@ def save_report_summary(report) -> Path:
         outlook=report.outlook,
         support_levels=[{"price": lvl.price, "label": lvl.label} for lvl in report.support_levels],
         resistance_levels=[{"price": lvl.price, "label": lvl.label} for lvl in report.resistance_levels],
-        drivers=[{"param_name": p.param_name, "signal": p.signal,
-                  "weight": p.weight, "category": p.category}
-                 for p in (report.bullish_params + report.bearish_params)],
+        drivers=drivers,
         learned_scales=_current_learned_scales(),
         scenarios=[{"direction": s.direction, "probability": s.probability,
                     "price_min": s.price_min, "price_max": s.price_max}

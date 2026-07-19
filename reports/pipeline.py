@@ -1067,7 +1067,9 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 6: AI 分析师点评（LLM 单轮合成；失败静默，报告不含此板块）──
     try:
         from reports.llm_commentary import generate_commentary
-        report.llm_commentary = generate_commentary(report)
+        commentary = generate_commentary(report)
+        if commentary:
+            report.llm_commentary, report.llm_direction = commentary
     except Exception as e:
         logger.warning(f"generate_commentary failed: {e}")
 

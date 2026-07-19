@@ -10,6 +10,7 @@ reports/llm_commentary.py
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
@@ -20,8 +21,13 @@ _MODEL = "deepseek-chat"
 # base_url 按 _load_api_key 的 provider 决定（与 agent.agents.analyst 同口径）
 _BASE_URLS = {"deepseek": "https://api.deepseek.com", "openai": None}
 
+# 方向标记（点评入归因：正文第一行的机器可读标记）
+_DIRECTION_RE = re.compile(r"^\[DIRECTION:(上涨|下跌|横盘)\]\s*")
+
 _SYSTEM_PROMPT = (
-    "你是资深咖啡大宗商品分析师。基于给定数据写 150-250 字中文点评，固定四段：\n"
+    "你是资深咖啡大宗商品分析师。基于给定数据写中文点评。\n"
+    "硬性输出约定: 正文第一行必须是机器可读标记 [DIRECTION:X]，X ∈ {上涨, 下跌, 横盘}；\n"
+    "标记之后才是点评正文，150-250 字，固定四段：\n"
     "【核心判断】方向 + 概率%（必须给数字，禁止 0%/100%）\n"
     "【关键依据】最多 3 条，每条注明依据的数据\n"
     "【风险提示】至少 1 条反向证据\n"
@@ -97,12 +103,24 @@ def _build_context(report) -> str:
     return "\n".join(lines)
 
 
-def generate_commentary(report) -> Optional[str]:
+def _parse_direction(text: str) -> tuple[str, str]:
+    """
+    剥离首行 [DIRECTION:X] 标记，返回（清洗后正文, direction）。
+    标记缺失/非法 → direction 记 "横盘"（正文保留，logger.info 记录）。
+    """
+    m = _DIRECTION_RE.match(text)
+    if m:
+        return text[m.end():].strip(), m.group(1)
+    logger.info("llm_commentary: 未找到方向标记，按横盘处理")
+    return text, "横盘"
+
+
+def generate_commentary(report) -> Optional[tuple[str, str]]:
     """
     生成 AI 分析师点评（单轮 LLM 调用）。
 
     Returns:
-        点评文本；无 API key 或任何异常 → None（静默，报告不含此板块）。
+        (清洗后正文, direction)；无 API key 或任何异常 → None（静默，报告不含此板块）。
     """
     try:
         from agent.agents.analyst import _load_api_key
@@ -127,7 +145,9 @@ def generate_commentary(report) -> Optional[str]:
             ("human", _build_context(report)),
         ])
         text = (resp.content or "").strip()
-        return text or None
+        if not text:
+            return None
+        return _parse_direction(text)
     except Exception as e:
         logger.warning("llm_commentary: 生成失败: %s", e)
         return None

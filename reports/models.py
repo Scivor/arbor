@@ -228,6 +228,9 @@ class PredictionReport:
     # AI 分析师点评（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
     llm_commentary: Optional[str] = None
 
+    # AI 点评的方向判断（上涨/下跌/横盘；作为驱动因子入归因记分）
+    llm_direction: Optional[str] = None
+
     # 核心观点
     outlook: str = ""        # 一句话总结
     risk_warnings: list[str] = field(default_factory=list)

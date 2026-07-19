@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # nightly 金丝雀：依赖为 >= 宽松约束，上游发布破坏性版本时能次日发现
+  schedule:
+    - cron: "17 2 * * *"   # 每天 02:17 UTC
+  workflow_dispatch:        # 允许手动触发
 
 jobs:
   pytest:

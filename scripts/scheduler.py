@@ -75,10 +75,12 @@ def generate_and_publish(
         html_en_path.write_text(html_en, encoding="utf-8")
         logger.info("HTML saved: %s (zh) + %s (en)", html_path, html_en_path)
 
-        # ── Generate Markdown (公众号友好) ──
+        # ── Generate Markdown (公众号友好，中英双语) ──
         md_path = report_dir / "report.md"
         md_path.write_text(export_markdown(report), encoding="utf-8")
-        logger.info("Markdown saved: %s", md_path)
+        md_en_path = report_dir / "report_en.md"
+        md_en_path.write_text(export_markdown(report, lang="en"), encoding="utf-8")
+        logger.info("Markdown saved: %s (zh) + %s (en)", md_path, md_en_path)
 
     # ── Generate PDF ──
     if output_format in ("pdf", "both"):

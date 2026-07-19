@@ -35,6 +35,19 @@ _SYSTEM_PROMPT = (
     "只用给定数据，禁止编造数字；数据缺失的维度直接跳过不提。"
 )
 
+# 英文版：正文英文输出；[DIRECTION:X] 值仍为中文（归因链路只用中文三值，保持一致）
+_SYSTEM_PROMPT_EN = (
+    "You are a senior coffee commodity analyst. Write the commentary in ENGLISH.\n"
+    "Hard output contract: the FIRST line must be a machine-readable marker [DIRECTION:X] "
+    "where X ∈ {上涨, 下跌, 横盘} (Chinese values only — consumed by our attribution pipeline); "
+    "then the English commentary body, 150-250 words, exactly four sections:\n"
+    "[Core View] direction + probability % (a number, never 0%/100%)\n"
+    "[Key Evidence] at most 3 items, each citing the data used\n"
+    "[Risk] at least 1 piece of counter-evidence\n"
+    "[One-line advice for the importer]\n"
+    "Use only the provided data; never invent numbers; skip dimensions whose data is missing."
+)
+
 
 def _build_context(report) -> str:
     """把报告关键字段压缩成紧凑纯文本上下文（None 字段跳过）。"""
@@ -115,9 +128,13 @@ def _parse_direction(text: str) -> tuple[str, str]:
     return text, "横盘"
 
 
-def generate_commentary(report) -> Optional[tuple[str, str]]:
+def generate_commentary(report, lang: str = "zh") -> Optional[tuple[str, str]]:
     """
     生成 AI 分析师点评（单轮 LLM 调用）。
+
+    Args:
+        report: PredictionReport。
+        lang:   "zh" 中文点评 | "en" 英文点评（[DIRECTION:X] 值仍为中文三值）。
 
     Returns:
         (清洗后正文, direction)；无 API key 或任何异常 → None（静默，报告不含此板块）。
@@ -141,7 +158,7 @@ def generate_commentary(report) -> Optional[tuple[str, str]]:
             base_url=_BASE_URLS.get(provider),
         )
         resp = llm.invoke([
-            ("system", _SYSTEM_PROMPT),
+            ("system", _SYSTEM_PROMPT_EN if lang == "en" else _SYSTEM_PROMPT),
             ("human", _build_context(report)),
         ])
         text = (resp.content or "").strip()

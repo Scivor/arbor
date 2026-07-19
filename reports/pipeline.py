@@ -1101,12 +1101,9 @@ def run(config: PipelineConfig) -> PredictionReport:
         provenance=prov,
     )
 
-    # ── Step 6: AI 分析师点评（LLM 单轮合成；失败静默，报告不含此板块）──
+    # ── Step 6: AI 分析师点评（中英双语；失败静默，报告不含此板块）──
     try:
-        from reports.llm_commentary import generate_commentary
-        commentary = generate_commentary(report)
-        if commentary:
-            report.llm_commentary, report.llm_direction = commentary
+        _attach_llm_commentary(report)
     except Exception as e:
         logger.warning(f"generate_commentary failed: {e}")
 
@@ -1122,6 +1119,24 @@ def run(config: PipelineConfig) -> PredictionReport:
 # ─────────────────────────────────────────────────────────────────────────────
 # Convenience helpers
 # ─────────────────────────────────────────────────────────────────────────────
+
+def _attach_llm_commentary(report: PredictionReport) -> None:
+    """
+    生成中英双语 AI 点评并挂到报告（每期 2 次 LLM 单轮调用，成本可忽略）。
+    任一语言失败静默跳过，不影响另一语言与出报主流程。
+    """
+    from reports.llm_commentary import generate_commentary
+
+    commentary = generate_commentary(report, lang="zh")
+    if commentary:
+        report.llm_commentary, report.llm_direction = commentary
+        try:
+            en = generate_commentary(report, lang="en")
+            if en:
+                report.llm_commentary_en = en[0]  # direction 共用中文标记，无需重复存
+        except Exception as e:
+            logger.warning(f"english commentary failed: {e}")
+
 
 def generate_demo_report() -> PredictionReport:
     """Shorthand: generate a demo report with no configuration."""

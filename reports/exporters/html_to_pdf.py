@@ -822,14 +822,21 @@ def _build_metrics_html(metric_ctx: dict[str, str], lang: str) -> str:
 
 
 def _build_ai_commentary_html(report, lang: str) -> str:
-    """AI 分析师点评 section（llm_commentary 为 None 时不渲染；LLM 输出先转义再插入）。"""
+    """AI 分析师点评 section（None 不渲染；en 模式优先 llm_commentary_en，缺省回退中文并标注）。"""
     text = getattr(report, "llm_commentary", None)
+    tag = "AI Analyst"
+    if lang == "en":
+        en_text = getattr(report, "llm_commentary_en", None)
+        if en_text:
+            text = en_text
+        elif text:
+            tag = "AI Analyst · 中文"  # 英文版缺失时回退中文点评并标注
     if not text:
         return ""
     body = _html.escape(text).replace("\n", "<br>")
     return f"""
 <div class="section">
-  <div class="section-title">{_t("ai_commentary", lang)} <span>AI Analyst</span></div>
+  <div class="section-title">{_t("ai_commentary", lang)} <span>{tag}</span></div>
   <div class="outlook-box ai-commentary">{body}</div>
 </div>"""
 

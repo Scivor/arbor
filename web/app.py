@@ -20,19 +20,22 @@ Deployment:
 
 from __future__ import annotations
 
+import asyncio
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from web.chat import build_chat_page
 from web.track_record import build_track_record_html
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -241,8 +244,14 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
     recent_meta = [_read_report_meta(d) for d in recent]
     past_index_html = _build_past_index_html(report_date, recent_meta, lang=lang)
 
-    # 首页入口: 指向预测战绩页
+    # 首页入口: 指向预测战绩页 / AI 分析师聊天页
     if is_latest:
+        chat_text = "AI Analyst →" if lang == "en" else "AI 分析师 →"
+        past_index_html = past_index_html.replace(
+            '<a class="past-index-all"',
+            f'<a class="past-index-all" style="margin-right:14px;" href="/chat/">{chat_text}</a><a class="past-index-all"',
+            1,
+        )
         tr_text = "Track Record →" if lang == "en" else "预测战绩 →"
         past_index_html = past_index_html.replace(
             '<a class="past-index-all"',
@@ -332,6 +341,72 @@ async def track_record():
     except Exception:
         learning = None
     return HTMLResponse(content=build_track_record_html(record, driver_stats, learning))
+
+
+# ── AI 分析师聊天 ─────────────────────────────────────────────────────────────
+
+_analyst = None  # 进程级 CoffeeAnalyst 单例（lazy 首次构造）
+
+
+def _get_analyst():
+    """lazy 构造 CoffeeAnalyst 单例；无 API key 时 RuntimeError 向上抛。"""
+    global _analyst
+    if _analyst is None:
+        from agent.agents.analyst import CoffeeAnalyst
+        _analyst = CoffeeAnalyst()
+    return _analyst
+
+
+_CHAT_RATE: dict[str, list[float]] = {}
+_CHAT_RATE_LIMIT = 10  # 每 IP 每分钟最多 10 次（防公开部署被刷 token）
+
+
+def _chat_rate_ok(ip: str) -> bool:
+    """内存简易限流: 滑动窗口 60s 内不超过 _CHAT_RATE_LIMIT 次。"""
+    now = time.time()
+    hits = [t for t in _CHAT_RATE.get(ip, []) if now - t < 60]
+    if len(hits) >= _CHAT_RATE_LIMIT:
+        _CHAT_RATE[ip] = hits
+        return False
+    hits.append(now)
+    _CHAT_RATE[ip] = hits
+    return True
+
+
+@app.get("/chat/", response_class=HTMLResponse)
+async def chat_page():
+    """AI 分析师聊天页。"""
+    return HTMLResponse(content=build_chat_page())
+
+
+@app.post("/api/chat")
+async def chat_api(request: Request):
+    """聊天 API: {message} → {output}。agent 是同步长任务，走 to_thread 不阻塞事件循环。"""
+    ip = request.client.host if request.client else "unknown"
+    if not _chat_rate_ok(ip):
+        return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
+
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    message = (body.get("message") or "").strip() if isinstance(body, dict) else ""
+    if not message:
+        return JSONResponse({"error": "消息不能为空"}, status_code=400)
+
+    try:
+        analyst = _get_analyst()
+    except RuntimeError:
+        return JSONResponse(
+            {"error": "LLM 未配置，请设置 DEEPSEEK_API_KEY 或 ~/.arbor/.env"},
+            status_code=503,
+        )
+
+    try:
+        output = await asyncio.to_thread(analyst.chat, message)
+    except Exception as e:
+        return JSONResponse({"error": str(e)[:200]}, status_code=500)
+    return {"output": output}
 
 
 @app.get("/reports/", response_class=HTMLResponse)

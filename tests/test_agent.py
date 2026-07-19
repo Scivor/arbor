@@ -2,62 +2,15 @@
 tests/test_agent.py
 Agent Swarm mock 冒烟测试
 
-不需要 OPENAI_API_KEY — 用 unittest.mock 替换 LangChain 组件，
+不需要真实 API key — 用 unittest.mock 替换 LangChain 组件，
 验证 AgentRuntime + CoffeeAnalyst + tools 的集成链路能正常组装。
+（langchain 已实装；早期版本的 sys.modules stub 已移除，避免污染其他测试）
 """
 
-import sys
-import types
 from unittest.mock import MagicMock, patch
 
-
-def _make_module(name):
-    """Create a fake module object that behaves like a real package."""
-    mod = types.ModuleType(name)
-    mod.__path__ = []
-    return mod
-
-
-# ── Inject fake langchain modules before any agent import ────────────────
-
-# langchain_openai
-_langchain_openai = _make_module("langchain_openai")
-_langchain_openai.ChatOpenAI = MagicMock
-sys.modules["langchain_openai"] = _langchain_openai
-
-# langchain
-_langchain = _make_module("langchain")
-_langchain.agents = _make_module("langchain.agents")
-_langchain.agents.create_openai_tools_agent = MagicMock(return_value=MagicMock())
-_langchain.agents.AgentExecutor = MagicMock(return_value=MagicMock())
-_langchain.tools = _make_module("langchain.tools")
-
-def _mock_tool(*args, **kwargs):
-    def wrapper(func):
-        func.name = func.__name__
-        # 模拟 StructuredTool.invoke 接口（dict 入参 → 关键字参数展开）
-        func.invoke = lambda input_dict=None, **kw: func(**(input_dict or kw or {}))
-        return func
-    if args and callable(args[0]):
-        return wrapper(args[0])
-    return wrapper
-_langchain.tools.tool = _mock_tool
-
-sys.modules["langchain"] = _langchain
-sys.modules["langchain.agents"] = _langchain.agents
-sys.modules["langchain.tools"] = _langchain.tools
-
-# langchain_core
-_langchain_core = _make_module("langchain_core")
-_langchain_core.prompts = _make_module("langchain_core.prompts")
-_langchain_core.prompts.ChatPromptTemplate = MagicMock()
-_langchain_core.prompts.MessagesPlaceholder = MagicMock()
-_langchain_core.tools = _make_module("langchain_core.tools")
-sys.modules["langchain_core"] = _langchain_core
-sys.modules["langchain_core.prompts"] = _langchain_core.prompts
-sys.modules["langchain_core.tools"] = _langchain_core.tools
-
 import pytest
+
 from agent.runtime import AgentRuntime
 from agent.tools import ALL_TOOLS
 
@@ -90,12 +43,15 @@ def test_agent_runtime_init():
 
 
 @pytest.mark.unit
-def test_agent_analyst_init_without_api_key():
-    """没有 OPENAI_API_KEY 时应抛出 RuntimeError"""
-    with patch.dict("os.environ", {"OPENAI_API_KEY": ""}, clear=False):
-        from agent.agents.analyst import CoffeeAnalyst
-        with pytest.raises(RuntimeError, match="OPENAI_API_KEY"):
-            CoffeeAnalyst()
+def test_agent_analyst_init_without_api_key(tmp_path, monkeypatch):
+    """env 与 ~/.arbor/.env 都没有 key 时应抛出 RuntimeError"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # 隔离本机真实 ~/.arbor/.env（可能配置了真实 key）
+    monkeypatch.setattr("agent.agents.analyst._ENV_FILE", tmp_path / "nonexistent.env")
+    from agent.agents.analyst import CoffeeAnalyst
+    with pytest.raises(RuntimeError, match="API key"):
+        CoffeeAnalyst()
 
 
 @pytest.mark.unit

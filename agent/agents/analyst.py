@@ -7,7 +7,9 @@ CoffeeAnalyst — LLM 驱动的咖啡套保分析 Agent
 """
 
 from __future__ import annotations
+import logging
 import os
+from pathlib import Path
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
@@ -15,6 +17,35 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from agent.tools import ALL_TOOLS
+
+logger = logging.getLogger(__name__)
+
+# 凭据兜底文件（与 core.notify.ops_alert 同一模式；模块级常量便于测试 monkeypatch）
+_ENV_FILE = Path.home() / ".arbor" / ".env"
+
+
+def _load_api_key() -> tuple[Optional[str], Optional[str]]:
+    """
+    读取 LLM API key: 环境变量优先，~/.arbor/.env 兜底（不覆盖已存在的 env 值）。
+
+    Returns:
+        (api_key, provider): provider ∈ {"deepseek", "openai"}；未找到 → (None, None)
+    """
+    deepseek = os.getenv("DEEPSEEK_API_KEY", "")
+    openai = os.getenv("OPENAI_API_KEY", "")
+    if (not deepseek and not openai) and _ENV_FILE.exists():
+        try:
+            from dotenv import dotenv_values
+            vals = dotenv_values(_ENV_FILE)
+            deepseek = deepseek or vals.get("DEEPSEEK_API_KEY", "") or ""
+            openai = openai or vals.get("OPENAI_API_KEY", "") or ""
+        except Exception as e:
+            logger.warning(f"读取 {_ENV_FILE} 失败: {e}")
+    if deepseek:
+        return deepseek, "deepseek"
+    if openai:
+        return openai, "openai"
+    return None, None
 
 
 _SYSTEM_PROMPT = """你是一个资深咖啡大宗商品分析师，专注于阿拉比卡咖啡期货（KC=F）的进口套保策略分析。
@@ -71,20 +102,21 @@ class CoffeeAnalyst:
         self.temperature = temperature
         self.verbose = verbose
 
-        # API key: DEEPSEEK_API_KEY 优先，OPENAI_API_KEY 兜底
-        api_key = os.getenv("DEEPSEEK_API_KEY") or os.getenv("OPENAI_API_KEY")
+        # API key: env 优先（DEEPSEEK > OPENAI），~/.arbor/.env 兜底
+        api_key, provider = _load_api_key()
         if not api_key:
             raise RuntimeError(
                 "未找到 LLM API key。请配置其一:\n"
                 "  export DEEPSEEK_API_KEY=sk-...   # DeepSeek（默认供应商）\n"
-                "  export OPENAI_API_KEY=sk-...     # OpenAI 兜底"
+                "  export OPENAI_API_KEY=sk-...     # OpenAI 兜底\n"
+                "或写入 ~/.arbor/.env（DEEPSEEK_API_KEY=... 或 OPENAI_API_KEY=...）"
             )
 
-        # base_url: 默认 DeepSeek；OPENAI_API_KEY 兜底时走 OpenAI 默认（None）；
+        # base_url: 默认 DeepSeek；OpenAI key 兜底时走 OpenAI 默认（None）；
         # AGENT_BASE_URL 环境变量可覆盖
         if os.getenv("AGENT_BASE_URL"):
             base_url = os.getenv("AGENT_BASE_URL")
-        elif os.getenv("DEEPSEEK_API_KEY"):
+        elif provider == "deepseek":
             base_url = "https://api.deepseek.com"
         else:
             base_url = None

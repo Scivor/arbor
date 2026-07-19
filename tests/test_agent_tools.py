@@ -131,12 +131,56 @@ def test_get_landed_cost_source_unavailable(monkeypatch):
 
 # ── analyst 无 key ────────────────────────────────────────────────────────────
 
-def test_analyst_requires_api_key(monkeypatch):
+def test_analyst_requires_api_key(tmp_path, monkeypatch):
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    # 隔离本机真实 ~/.arbor/.env（可能配置了真实 key）
+    monkeypatch.setattr("agent.agents.analyst._ENV_FILE", tmp_path / "nonexistent.env")
     from agent.agents.analyst import CoffeeAnalyst
     with pytest.raises(RuntimeError) as exc_info:
         CoffeeAnalyst()
     msg = str(exc_info.value)
     assert "DEEPSEEK_API_KEY" in msg and "OPENAI_API_KEY" in msg
-    assert "export" in msg  # 报错含具体配置指引
+    assert "export" in msg and ".arbor/.env" in msg  # 报错含两种配置指引
+
+
+# ── analyst 从 ~/.arbor/.env 取 key ───────────────────────────────────────────
+
+def test_load_api_key_from_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEEPSEEK_API_KEY=sk-from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr("agent.agents.analyst._ENV_FILE", env_file)
+
+    from agent.agents.analyst import _load_api_key
+    key, provider = _load_api_key()
+    assert key == "sk-from-dotenv"
+    assert provider == "deepseek"
+
+
+def test_load_api_key_env_not_overridden_by_dotenv(tmp_path, monkeypatch):
+    """已存在的 env 值优先，.env 不覆盖"""
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-from-env")
+    env_file = tmp_path / ".env"
+    env_file.write_text("DEEPSEEK_API_KEY=sk-from-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr("agent.agents.analyst._ENV_FILE", env_file)
+
+    from agent.agents.analyst import _load_api_key
+    key, provider = _load_api_key()
+    assert key == "sk-from-env"
+    assert provider == "deepseek"
+
+
+def test_load_api_key_openai_fallback(tmp_path, monkeypatch):
+    """无 DEEPSEEK 时 .env 的 OPENAI key 兜底，provider=openai"""
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text("OPENAI_API_KEY=sk-openai-dotenv\n", encoding="utf-8")
+    monkeypatch.setattr("agent.agents.analyst._ENV_FILE", env_file)
+
+    from agent.agents.analyst import _load_api_key
+    key, provider = _load_api_key()
+    assert key == "sk-openai-dotenv"
+    assert provider == "openai"

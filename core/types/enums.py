@@ -37,6 +37,7 @@ class EventType(Enum):
     HEAT_WAVE = "heat_wave"
     SEASONAL_WINDOW_OPEN = "seasonal_window_open"
     ML_MODEL_UPDATE = "ml_model_update"
+    PRODUCTION_UPDATE = "production_update"  # USDA PSD 产量/供需数据修订
 
     # === FINANCE DOMAIN ===
     FX_USD_CNY_THRESHOLD = "fx_usd_cny_threshold"

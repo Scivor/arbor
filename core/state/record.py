@@ -3,9 +3,8 @@ core/state/record.py
 HedgeState and HedgeAdjustment — state machine record types.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Optional
 
 from core.types.enums import Domain, HedgeSignal
 

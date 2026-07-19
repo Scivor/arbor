@@ -17,7 +17,6 @@ __all__ = [
 ]
 
 # Also make them available at module root for `from core.events import subscribe_handler`
-from core.events.bus import EventBus
 
 
 def subscribe_handler(handler) -> None:

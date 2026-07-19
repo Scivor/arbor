@@ -3,7 +3,6 @@ reports/demo_data.py
 Seed / demo data for testing and demonstration.
 """
 
-from datetime import date, timedelta
 from reports.models import (
     MarketSnapshot, ClimateSnapshot, Level, Scenario,
     SupportParam, ResistParam, HedgeAdvice, PredictionReport,

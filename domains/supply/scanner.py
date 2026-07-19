@@ -4,10 +4,8 @@ domains/supply/scanner.py
 """
 
 from typing import Optional, List
-from datetime import datetime
 
-from core.events import EventBus, get_event_bus
-from core.types.enums import EventType, Domain
+from core.events import EventBus
 from core.types.event import CoffeeEvent
 from domains.base import BaseDomainScanner
 

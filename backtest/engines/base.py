@@ -13,7 +13,6 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-import numpy as np
 import pandas as pd
 
 from backtest.models import EquitySnapshot, Position, TradeRecord
@@ -91,7 +90,7 @@ def align_signals(
 
 def load_optimizer(config: Dict[str, Any]) -> Optional[Callable]:
     """Dynamically load an optimizer function from config.
-    
+
     Note: Optimizer modules were removed in V3.0 cleanup.
     This function is kept for API compatibility but always returns None.
     """

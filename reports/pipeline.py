@@ -35,7 +35,6 @@ from reports.models import (
     MLSnapshot,
     ChinaImportSnapshot,
     normalize_direction,
-    build_report,
 )
 from reports.demo_data import demo_report
 
@@ -85,7 +84,7 @@ def fetch_market_snapshot(ticker: str) -> Optional[MarketSnapshot]:
         quote = chart['indicators']['quote'][0]
         closes = [c for c in quote['close'] if c is not None]
         highs  = [h for h in quote['high'] if h is not None]
-        lows   = [l for l in quote['low'] if l is not None]
+        lows   = [x for x in quote['low'] if x is not None]
 
         # RSI(14) — 单一事实源: reports/indicators.compute_rsi
         rsi = compute_rsi(closes)
@@ -129,7 +128,6 @@ def fetch_climate_snapshot() -> Optional[ClimateSnapshot]:
         if df is None or df.empty:
             return None
         latest = df.iloc[-1]
-        prev   = df.iloc[-2] if len(df) >= 2 else latest
 
         return ClimateSnapshot(
             oni_value=round(float(latest['oni']), 2),
@@ -148,7 +146,7 @@ def fetch_ml_snapshot(current_price: Optional[float] = None) -> Optional[MLSnaps
     Returns None if models unavailable.
     """
     try:
-        from models.ml_advisor import get_ml_advice, MLSignal
+        from models.ml_advisor import get_ml_advice
         from models.model_manager import ModelManager
 
         advice = get_ml_advice(use_cache=True, current_price=current_price)
@@ -400,9 +398,6 @@ def compute_levels_and_scenarios(
         avg_delta = sum(deltas) / len(deltas)
     else:
         avg_delta = p * 0.02  # fallback 2%
-
-    # 30-day range for context
-    range_30d = market.high_30d - market.low_30d if market.high_30d and market.low_30d else p * 0.10
 
     # Neutral range: current ± 1x avg daily move
     neutral_min = round(p - avg_delta, 0)
@@ -711,7 +706,6 @@ def compute_hedge_advice(
 
     dominant = max(scenarios, key=lambda s: s.probability)
     rsi = market.rsi_14 or 50
-    p   = market.current
 
     # Dominant direction determines base ratio
     dom_dir = dominant.direction if dominant else "横盘"

@@ -5,7 +5,6 @@ M1: RSI 单一事实源（reports/indicators.compute_rsi）锚点测试
 
 import logging
 
-import pytest
 
 from reports.indicators import compute_rsi
 from reports.models import DIRECTION_MAP, normalize_direction

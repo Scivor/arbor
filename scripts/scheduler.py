@@ -20,7 +20,7 @@ import logging
 import os
 import sys
 import tempfile
-from datetime import date, datetime
+from datetime import date
 from pathlib import Path
 
 # ── Ensure project root on path ────────────────────────────────────────────

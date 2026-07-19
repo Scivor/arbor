@@ -8,7 +8,7 @@ monitor 内部使用 万包 (1万袋) 方便阅读，换算: 200万袋 = 2,000,0
 from datetime import datetime
 from typing import Optional, List
 
-from core.events import EventBus, get_event_bus
+from core.events import EventBus
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseMonitor

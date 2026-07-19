@@ -27,7 +27,6 @@ if str(_proj_root) not in _sys.path:
 
 import numpy as np
 import pandas as pd
-from datetime import datetime
 from typing import Optional
 
 from sources.climate.noaa_oni import ONIScraper
@@ -228,7 +227,6 @@ class FeatureEngine:
         df['oni_duration'] = self._oni_duration(df['oni'])
 
         # 季节 × ONI 交互
-        dates = df.index if not isinstance(df.index, pd.RangeIndex) else pd.Series(df.index, name='date')
         if isinstance(df.index, pd.MultiIndex):
             month = df.index.get_level_values(0).month
         else:

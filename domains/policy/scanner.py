@@ -6,7 +6,7 @@ domains/policy/scanner.py
 from datetime import datetime
 from typing import Optional, List
 
-from core.events import EventBus, get_event_bus
+from core.events import EventBus
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseDomainScanner

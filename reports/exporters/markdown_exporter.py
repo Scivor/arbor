@@ -98,13 +98,13 @@ def _md_levels(report: "Report", lang: str) -> list[str]:
     lines = [f"## {_t('key_levels', lang)}", ""]
     if report.support_levels:
         lines += [f"**{_t('support', lang)}**", "", "| 价位 | 标签 |", "|---|---|"]
-        for l in report.support_levels:
-            lines.append(f"| {l.price:.2f} | {l.label} |")
+        for lvl in report.support_levels:
+            lines.append(f"| {lvl.price:.2f} | {lvl.label} |")
         lines.append("")
     if report.resistance_levels:
         lines += [f"**{_t('resistance', lang)}**", "", "| 价位 | 标签 |", "|---|---|"]
-        for l in report.resistance_levels:
-            lines.append(f"| {l.price:.2f} | {l.label} |")
+        for lvl in report.resistance_levels:
+            lines.append(f"| {lvl.price:.2f} | {lvl.label} |")
         lines.append("")
     return lines
 

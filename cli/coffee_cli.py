@@ -123,7 +123,7 @@ def _do_paper_trading(args: list):
                     print(f"  Unrealized: ${unrealized:+.2f} "
                           f"({pos.contracts} contracts @ {pos.entry_price:.2f} → {current_price:.2f})")
                 else:
-                    print(f"  FLAT — no position")
+                    print("  FLAT — no position")
 
             elif cmd == 'price' and len(parts) == 2:
                 current_price = float(parts[1])

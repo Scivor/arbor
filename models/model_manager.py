@@ -21,14 +21,13 @@ import numpy as np
 import pandas as pd
 import json
 import pickle
-from datetime import datetime, date
+from datetime import datetime
 from typing import Optional
 
 from models.hedge_model import HedgeModel, HedgeRecommendation
 from models.features import FeatureEngine
 from backtest.loader import HistoryLoader
 from sources.climate.noaa_oni import ONIScraper
-from core.persistence import DecisionDB
 
 
 MODEL_DIR = _Path('~/.arbor/models').expanduser()
@@ -237,7 +236,6 @@ class ModelManager:
         oni_phase = latest.get('oni_phase', 'NEUTRAL')
         frost_season = latest.get('frost_season', 0)
         rsi = latest.get('rsi_14', 50)
-        vol = latest.get('volatility_20d', 0.02)
         price_rank = latest.get('price_rank_60d', 0.5)
         momentum = latest.get('momentum_20d', 0)
 
@@ -247,28 +245,38 @@ class ModelManager:
         rationale = []
 
         if frost_season and oni <= -0.5:
-            adj += 0.20; rationale.append('La Nina + Frost Season: +20%')
+            adj += 0.20
+            rationale.append('La Nina + Frost Season: +20%')
         elif frost_season and oni >= 0.5:
-            adj += 0.10; rationale.append('El Nino + Frost Season: +10%')
+            adj += 0.10
+            rationale.append('El Nino + Frost Season: +10%')
         elif oni <= -0.5:
-            adj += 0.10; rationale.append('La Nina active: +10%')
+            adj += 0.10
+            rationale.append('La Nina active: +10%')
         elif oni >= 0.5:
-            adj -= 0.05; rationale.append('El Nino active: -5%')
+            adj -= 0.05
+            rationale.append('El Nino active: -5%')
 
         if price_rank > 0.9:
-            adj -= 0.15; rationale.append(f'Price {price_rank:.0%} percentile (high): -15%')
+            adj -= 0.15
+            rationale.append(f'Price {price_rank:.0%} percentile (high): -15%')
         elif price_rank < 0.2:
-            adj += 0.10; rationale.append(f'Price {price_rank:.0%} percentile (low): +10%')
+            adj += 0.10
+            rationale.append(f'Price {price_rank:.0%} percentile (low): +10%')
 
         if momentum < -0.1:
-            adj += 0.05; rationale.append('Downtrend: +5%')
+            adj += 0.05
+            rationale.append('Downtrend: +5%')
         elif momentum > 0.1:
-            adj -= 0.05; rationale.append('Uptrend: -5%')
+            adj -= 0.05
+            rationale.append('Uptrend: -5%')
 
         if rsi < 30:
-            adj += 0.10; rationale.append(f'RSI oversold {rsi:.0f}: +10%')
+            adj += 0.10
+            rationale.append(f'RSI oversold {rsi:.0f}: +10%')
         elif rsi > 70:
-            adj -= 0.10; rationale.append(f'RSI overbought {rsi:.0f}: -10%')
+            adj -= 0.10
+            rationale.append(f'RSI overbought {rsi:.0f}: -10%')
 
         target_ratio = np.clip(base + adj, 0.20, 0.95)
 
@@ -351,7 +359,6 @@ class ModelManager:
             equity_unhedged[i] = equity_unhedged[i-1] * (1 + ret)
 
             # 静态套保
-            hedge_pnl_static = -ret * hedge_ratio_static  # 期货盈利对冲现货亏损
             equity_static[i] = equity_static[i-1] * (1 + ret * (1 - hedge_ratio_static))
             # 简化：直接乘
             equity_static[i] = equity_static[i-1] + ret * initial_equity * (1 - hedge_ratio_static)

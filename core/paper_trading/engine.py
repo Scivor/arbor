@@ -18,8 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -440,9 +439,9 @@ class PaperTradingEngine:
         """Print a human-readable summary."""
         s = self.get_summary()
         print(f"\n{'='*50}")
-        print(f"  PAPER TRADING SUMMARY")
+        print("  PAPER TRADING SUMMARY")
         print(f"{'='*50}")
-        print(f"  Mode:          PAPER (simulated, no real orders)")
+        print("  Mode:          PAPER (simulated, no real orders)")
         print(f"  Initial:       ${s['initial_equity']:,.2f}")
         print(f"  Current:       ${s['current_equity']:,.2f}")
         print(f"  Realized PnL:  ${s['realized_pnl']:+.2f}")
@@ -455,9 +454,9 @@ class PaperTradingEngine:
             print(f"  Current Price: {pos['current_price']:.2f}")
             print(f"  Unrealized:    ${pos['unrealized']:+.2f}")
         else:
-            print(f"  Open Position: NONE (FLAT)")
+            print("  Open Position: NONE (FLAT)")
 
-        print(f"\n  Paper Trades:")
+        print("\n  Paper Trades:")
         for k, v in [('total', s['trade_summary']['paper']['total_trades']),
                      ('wins', s['trade_summary']['paper'].get('win_rate', 0)),
                      ('total_pnl', s['trade_summary']['paper'].get('total_pnl', 0))]:

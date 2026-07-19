@@ -294,9 +294,9 @@ class PredictionReport:
         if self.resistance_levels or self.support_levels:
             lines.append(f"  {'[ KEY LEVELS ]':─^74}")
             if self.resistance_levels:
-                lines.append(f"  {'Resistance':>12}:  " + "  ".join(f"{l.price:>7.2f} ({l.label})" for l in self.resistance_levels))
+                lines.append(f"  {'Resistance':>12}:  " + "  ".join(f"{lvl.price:>7.2f} ({lvl.label})" for lvl in self.resistance_levels))
             if self.support_levels:
-                lines.append(f"  {'Support':>12}:  " + "  ".join(f"{l.price:>7.2f} ({l.label})" for l in self.support_levels))
+                lines.append(f"  {'Support':>12}:  " + "  ".join(f"{lvl.price:>7.2f} ({lvl.label})" for lvl in self.support_levels))
             lines.append("")
 
         # ─── 情景分析 ───────────────────────────────────────────────
@@ -352,7 +352,7 @@ class PredictionReport:
                 lines.append(f"  Model Performance: {' | '.join(perf_parts)}")
             # 特征重要性
             if ml.top_features:
-                lines.append(f"  Key Features:")
+                lines.append("  Key Features:")
                 for name, imp in ml.top_features:
                     bar = "█" * int(min(abs(imp) * 50, 10))
                     lines.append(f"    • {name}: {imp:.4f} {bar}")
@@ -411,7 +411,7 @@ class PredictionReport:
                 lines.append(f"  {w}")
         if self.risk_warnings:
             lines.append("")
-            lines.append(f"  ⚠️  Risk Warnings:")
+            lines.append("  ⚠️  Risk Warnings:")
             for rw in self.risk_warnings:
                 lines.append(f"      • {rw}")
         lines.append("")
@@ -448,8 +448,8 @@ class PredictionReport:
             "related_markets": self.related_markets,
             "climate": asdict(self.climate) if self.climate else None,
             "levels": {
-                "resistance": [asdict(l) for l in self.resistance_levels],
-                "support": [asdict(l) for l in self.support_levels],
+                "resistance": [asdict(lvl) for lvl in self.resistance_levels],
+                "support": [asdict(lvl) for lvl in self.support_levels],
             },
             "scenarios": [asdict(s) for s in self.scenarios],
             "drivers": {

@@ -7,8 +7,10 @@ AgentRuntime — Agent Swarm 的运行时入口
 - 交互模式:   python coffee.py --agent
 """
 
-import sys
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from agent.agents import CoffeeAnalyst  # noqa: F401 — 仅注解用，运行时惰性导入
 
 class AgentRuntime:
     """

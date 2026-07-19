@@ -8,9 +8,7 @@ Fallback chain: yfinance → akshare → manual CSV
 
 from __future__ import annotations
 
-import json
 import logging
-from pathlib import Path
 from typing import Optional
 
 import pandas as pd
@@ -25,13 +23,13 @@ except ImportError:
     HAS_YFINANCE = False
 
 try:
-    import akshare as ak
+    import akshare as ak  # noqa: F401 — import 本身即可用性探测（HAS_AKSHARE）
     HAS_AKSHARE = True
 except ImportError:
     HAS_AKSHARE = False
 
 try:
-    import requests
+    import requests  # noqa: F401 — import 本身即可用性探测（HAS_REQUESTS）
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
@@ -156,7 +154,6 @@ class CoffeeLoader:
         interval: str,
     ) -> dict[str, pd.DataFrame]:
         """Fallback via akshare (Chinese finance data)."""
-        import requests
         raise NotImplementedError("akshare source not yet implemented")
 
 

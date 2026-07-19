@@ -84,7 +84,7 @@ def _changelog_lines(env) -> list[dict]:
     path = env / "learned_changelog.jsonl"
     if not path.exists():
         return []
-    return [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
 # ── 样本不足不动作 ────────────────────────────────────────────────────────────

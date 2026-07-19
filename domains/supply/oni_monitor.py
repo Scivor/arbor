@@ -4,11 +4,10 @@ ONI (Oceanic Niño Index) 监测器 — thresholds externalized to config/regime
 """
 
 import requests
-import xml.etree.ElementTree as ET
 from datetime import datetime
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 
-from core.events import EventBus, get_event_bus
+from core.events import EventBus
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseMonitor

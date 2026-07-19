@@ -4,13 +4,16 @@ domains/finance/scanner.py
 """
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, TYPE_CHECKING
 from dataclasses import dataclass
 
-from core.events import EventBus, get_event_bus
+from core.events import EventBus
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseDomainScanner
+
+if TYPE_CHECKING:
+    from core.types.market import FXData  # noqa: F401 — 仅注解用
 
 # Sherlock 风格: 配置优先，回退次之
 from core.regime_config import get_regime_loader
@@ -69,7 +72,6 @@ class FinanceDomainScanner(BaseDomainScanner):
         if data is None:
             return None
         # 映射到本地 FXData 格式
-        from dataclasses import dataclass
         @dataclass
         class _FXData:
             usd_cny: float
@@ -227,10 +229,6 @@ class FinanceDomainScanner(BaseDomainScanner):
         self._last_fx = fx_data.usd_cny
         return events
 
-        """
-        """
-        return monitor.check_and_publish()
-
     def scan_all(self) -> List[CoffeeEvent]:
         """执行所有金融域检查"""
         events = []
@@ -240,43 +238,3 @@ class FinanceDomainScanner(BaseDomainScanner):
 
         return events
 
-        try:
-            signals = self.poly.get_relevant_signals()
-        except Exception as e:
-            return
-
-        print(f"\n{'='*65}")
-        print(f"  {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        print(f"{'='*65}")
-
-        climate = {k: v for k, v in signals.items()
-                  if any(kw in k.lower() for kw in ['el nino', 'la nina', 'weather', 'temperature'])}
-        trade = {k: v for k, v in signals.items()
-                if any(kw in k.lower() for kw in ['tariff', 'trade', 'china', 'visit'])}
-        oil = {k: v for k, v in signals.items()
-              if any(kw in k.lower() for kw in ['wti', 'crude', 'oil', 'hormuz', 'middle east'])}
-        fx = {k: v for k, v in signals.items()
-              if any(kw in k.lower() for kw in ['dollar', 'usd', 'forex', 'federal reserve', 'fed rate'])}
-
-        if climate:
-            print(f"\n  [气候] ({len(climate)} 个市场)")
-            for q, d in climate.items():
-                print(f"    {q[:55]}")
-                print(f"      概率: {d['prob']:.1%}  |  量: {d['volume']:,.0f}")
-        if trade:
-            print(f"\n  [贸易] ({len(trade)} 个市场)")
-            for q, d in trade.items():
-                print(f"    {q[:55]}")
-                print(f"      概率: {d['prob']:.1%}  |  量: {d['volume']:,.0f}")
-        if oil:
-            print(f"\n  [油价/中东] ({len(oil)} 个市场)")
-            for q, d in oil.items():
-                print(f"    {q[:55]}")
-                print(f"      概率: {d['prob']:.1%}  |  量: {d['volume']:,.0f}")
-        if fx:
-            print(f"\n  [外汇/美联储] ({len(fx)} 个市场)")
-            for q, d in fx.items():
-                print(f"    {q[:55]}")
-                print(f"      概率: {d['prob']:.1%}  |  量: {d['volume']:,.0f}")
-
-        print(f"\n{'='*65}")

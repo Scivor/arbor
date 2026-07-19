@@ -6,11 +6,15 @@ Thread-safe, stores last 2000 events.
 
 from collections import deque
 from datetime import datetime, timedelta
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 import threading
 
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
+
+if TYPE_CHECKING:
+    from core.notify.handlers import HedgeHandler  # noqa: F401 — 仅注解用，避免循环导入
+    from core.types.state import HedgeAdjustment  # noqa: F401 — 仅注解用
 
 
 class EventBus:

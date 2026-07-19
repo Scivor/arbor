@@ -6,7 +6,6 @@ ICE 咖啡认证库存数据源
 from __future__ import annotations
 
 import csv
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Optional

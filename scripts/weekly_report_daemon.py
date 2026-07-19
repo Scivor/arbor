@@ -25,7 +25,6 @@ import argparse
 import logging
 import os
 import sys
-import threading
 import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -37,7 +36,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 from reports.pipeline import run, PipelineConfig
 from reports.exporters import export_report
-from reports.history import save_report_summary, load_last_week_summary, compute_prediction_review
+from reports.history import save_report_summary
 
 logger = logging.getLogger("weekly_daemon")
 
@@ -207,7 +206,8 @@ def _next_monday_9am(hour: int, minute: int) -> datetime:
     return next_run
 
 
-def run_daemon(output_dir: Path, cron_hour: int = 9, cron_minute: int = 0) -> None:
+def run_daemon(output_dir: Path, cron_hour: int = 9, cron_minute: int = 0,
+               output_format: str = "both") -> None:
     """
     守护模式：每周一早上生成报告。
     """
@@ -223,7 +223,7 @@ def run_daemon(output_dir: Path, cron_hour: int = 9, cron_minute: int = 0) -> No
         time.sleep(sleep_seconds)
 
         try:
-            generate_weekly_report(output_dir, forecast_offset=1, output_format=args.format)
+            generate_weekly_report(output_dir, forecast_offset=1, output_format=output_format)
         except Exception as e:
             logger.error("Report generation failed: %s", e, exc_info=True)
 
@@ -292,7 +292,8 @@ def main(argv=None) -> int:
 
     # Daemon mode
     try:
-        run_daemon(output_dir, cron_hour=args.cron_hour, cron_minute=args.cron_minute)
+        run_daemon(output_dir, cron_hour=args.cron_hour, cron_minute=args.cron_minute,
+                   output_format=args.format)
     except KeyboardInterrupt:
         logger.info("Daemon stopped by user.")
         return 0

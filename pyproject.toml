@@ -87,3 +87,13 @@ src = ["."]
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py 的 re-export 是刻意的（包公共 API 汇总出口）
+"__init__.py" = ["F401"]
+# scripts/* 的 sys.path 引导是刻意的（脚本直接运行时先定位项目根再 import）
+"scripts/*" = ["E402"]
+# models/* 同样有 sys.path 引导（模型可独立脚本化运行）
+"models/*" = ["E402"]
+# tests/test_agent.py 先 stub langchain 模块再 import 被测对象，顺序是刻意的
+"tests/test_agent.py" = ["E402"]

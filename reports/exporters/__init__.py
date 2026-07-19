@@ -168,8 +168,8 @@ def export_report(
 
 
 # Re-export convenience functions for direct imports
-from reports.exporters.text_exporter import export_text
-from reports.exporters.json_exporter import export_json
+from reports.exporters.text_exporter import export_text  # noqa: E402 — 注册代码之后的刻意 re-export
+from reports.exporters.json_exporter import export_json  # noqa: E402 — 注册代码之后的刻意 re-export
 
 __all__ = [
     "ExporterPlugin",

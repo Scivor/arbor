@@ -9,14 +9,13 @@ from typing import Optional, List, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from core.types.event import CoffeeEvent
-    from core.events.bus import EventBus
 
 
 class BaseDomainScanner(ABC):
     """
     扫描器基类
     所有域扫描器 (Supply / Finance / Policy) 继承此类
-    
+
     职责:
     1. 统一接口: scan_all() -> list[CoffeeEvent]
     2. 公共功能: 缓存、节流、错误处理
@@ -43,7 +42,7 @@ class BaseDomainScanner(ABC):
         """
         执行该域的全量扫描
         子类必须实现
-        
+
         Returns:
             产生的 CoffeeEvent 列表
         """
@@ -79,9 +78,9 @@ class BaseMonitor(ABC):
     """
     单数据源监测器基类
     比 BaseDomainScanner 更细粒度 — 一个域可有多个 Monitor
-    
+
     示例:
-        SupplyDomainScanner 
+        SupplyDomainScanner
             ├── ONIMonitor
             ├── COTMonitor
             ├── ICECoffeeMonitor

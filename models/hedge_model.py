@@ -24,7 +24,7 @@ if str(_proj_root) not in _sys.path:
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Literal
+from typing import Optional
 from dataclasses import dataclass
 
 from models.features import FeatureEngine, ManualScaler
@@ -114,8 +114,8 @@ class SimpleRidgeRegression:
         # 闭式解: (X'X + alpha*I)^-1 X'y
         XtX = X.T @ X
         Xty = X.T @ y
-        I = np.eye(d)
-        self.weights = np.linalg.solve(XtX + self.alpha * I, Xty)
+        identity = np.eye(d)
+        self.weights = np.linalg.solve(XtX + self.alpha * identity, Xty)
         self.intercept = np.mean(y - X @ self.weights)
 
     def predict(self, X: np.ndarray) -> np.ndarray:
@@ -293,7 +293,6 @@ class HedgeModel:
     def _evaluate(self, X_test, y_dir_test, y_ret_test) -> dict:
         # 分类
         clf_pred = self._clf.predict(X_test)
-        clf_proba = self._clf.predict_proba(X_test)[:, 1]
 
         clf_acc = np.mean(clf_pred == y_dir_test)
 
@@ -377,11 +376,6 @@ class HedgeModel:
         rsi = latest.get('rsi_14', 50)
         vol = latest.get('volatility_20d', 0.02)
         price_rank = latest.get('price_rank_60d', 0.5)
-
-        signals = {
-            'direction': dir_output,
-            'return': ret_output,
-        }
 
         # ─── 套保比率逻辑 ────────────────────────────────
         base_ratio = 0.65  # 基准 65%

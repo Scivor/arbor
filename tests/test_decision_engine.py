@@ -7,7 +7,7 @@ import pytest
 from datetime import datetime
 
 from core.events.bus import EventBus, reset_event_bus
-from core.state.engine import DecisionEngine, AdjustmentSummary, compute_hedge_from_events
+from core.state.engine import DecisionEngine, compute_hedge_from_events
 from core.types.enums import Domain, EventType, HedgeSignal
 from core.types.event import CoffeeEvent
 

@@ -9,8 +9,7 @@ Vibe-Trading 风格的数据源抽象:
 """
 
 from __future__ import annotations
-from typing import Protocol, Optional, runtime_checkable
-from abc import abstractmethod
+from typing import Protocol, Optional
 import logging
 
 logger = logging.getLogger(__name__)

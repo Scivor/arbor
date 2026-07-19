@@ -11,7 +11,6 @@ Google News RSS 政策新闻源
 from __future__ import annotations
 
 import logging
-import re
 import requests
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field

@@ -8,15 +8,14 @@ Arbor 系统 Facade — 三域扫描 + 决策引擎 + 事件总线
     system.start()
 """
 
-from dataclasses import dataclass
 from datetime import datetime
 import time
 import threading
 from typing import Optional
 
-from core.types.enums import Domain, HedgeSignal
+from core.types.enums import Domain
 from core.types.state import HedgeState
-from core.events import EventBus, get_event_bus
+from core.events import get_event_bus
 from core.state import DecisionEngine
 from sources.climate.noaa_oni import ONISource
 from sources.cot.cftc_cot import COTSource
@@ -237,7 +236,7 @@ class CoffeeSystem:
     def publish_policy_event(self, event_type, severity: int,
                             value: float, narrative: str, source: str = "Manual"):
         """手动发布政策事件"""
-        from core.types.enums import EventType, Domain
+        from core.types.enums import Domain
         from core.types.event import CoffeeEvent
         event = CoffeeEvent(
             event_type=event_type,

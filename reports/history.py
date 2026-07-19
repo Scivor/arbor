@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field, asdict
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 from typing import Optional
 
@@ -79,7 +79,6 @@ def save_report_summary(report) -> Path:
     Extract a lightweight summary from a PredictionReport and save to disk.
     Returns the path written.
     """
-    from reports.models import PredictionReport
 
     m = report.market
     h = report.hedge_advice
@@ -106,8 +105,8 @@ def save_report_summary(report) -> Path:
         dominant_scenario_min=dominant.price_min if dominant else 0.0,
         dominant_scenario_max=dominant.price_max if dominant else 0.0,
         outlook=report.outlook,
-        support_levels=[{"price": l.price, "label": l.label} for l in report.support_levels],
-        resistance_levels=[{"price": l.price, "label": l.label} for l in report.resistance_levels],
+        support_levels=[{"price": lvl.price, "label": lvl.label} for lvl in report.support_levels],
+        resistance_levels=[{"price": lvl.price, "label": lvl.label} for lvl in report.resistance_levels],
         drivers=[{"param_name": p.param_name, "signal": p.signal,
                   "weight": p.weight, "category": p.category}
                  for p in (report.bullish_params + report.bearish_params)],

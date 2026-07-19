@@ -11,7 +11,7 @@ import time
 
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
-from core.types.market import PriceData, FXData
+from core.types.market import PriceData
 from core.types.constants import Thresholds
 
 
@@ -158,7 +158,7 @@ class PriceSource:
 
             # 30日高低（用 chart 历史数据）
             highs_all = [h for h in quote.get('high', []) if h is not None]
-            lows_all  = [l for l in quote.get('low',  []) if l is not None]
+            lows_all  = [x for x in quote.get('low',  []) if x is not None]
             high_30d  = max(highs_all) if highs_all else current
             low_30d   = min(lows_all)  if lows_all  else current
 
@@ -259,7 +259,7 @@ class PriceSource:
         return events
 
 # Backward compatibility: FXSource moved to sources.fx.yfinance
-from sources.fx.yfinance import FXSource  # noqa: F401
+from sources.fx.yfinance import FXSource  # noqa: F401, E402 — 兼容别名，刻意放在主实现之后
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AKShare — Chinese market fallback for coffee futures

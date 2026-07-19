@@ -16,10 +16,9 @@ Sherlock 等价:
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
+from collections import Counter, deque
 import logging
-
-logger = logging.getLogger(__name__)
 
 from core.types.enums import Domain, EventType, HedgeSignal
 from core.types.event import CoffeeEvent
@@ -29,7 +28,11 @@ from core.events.bus import EventBus, get_event_bus
 from core.state.signals import signal_from_ratio, signal_descriptions
 from core.regime_config import get_regime_loader
 from core.cost import LandedCostCalculator
-from collections import Counter, deque
+
+if TYPE_CHECKING:
+    from models.ml_advisor import MLSignal  # noqa: F401 — 仅注解用，避免跨层运行时依赖
+
+logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -536,7 +539,6 @@ class DecisionEngine:
 
                 # Sherlock 等价: QueryNotify.update() → CLIHandler.on_event()
                 # 这里通过 EventBus 广播 adjustment 事件，CLI Handler 负责打印
-                sign = "+" if adjustment > 0 else ""
                 source = config.get('source', '?')
                 # Publish a meta-event so Handlers can display the adjustment
                 self.bus.publish_adjustment(adj, source=source)

@@ -24,8 +24,11 @@ if str(_proj_root) not in _sys.path:
 
 import numpy as np
 import pandas as pd
-from typing import Optional, Literal
+from typing import Optional, TYPE_CHECKING
 from dataclasses import dataclass
+
+if TYPE_CHECKING:
+    from timesfm.timesfm_torch import TimesFmTorch  # noqa: F401 — 仅注解用，运行时条件导入
 
 # ─── 全局模型缓存（避免重复加载）───────────────────────────
 
@@ -105,7 +108,7 @@ def _get_timesfm_model(use_mps: bool = True) -> tuple:
         return _TimesFM_MODEL, _TimesFM_DEVICE, {0.1: 0, 0.3: 2, 0.5: 4, 0.7: 6, 0.9: 8}
 
     try:
-        import timesfm
+        import timesfm  # noqa: F401 — import 本身即可用性探测（_have_timesfm）
         _have_timesfm = True
     except ImportError:
         _have_timesfm = False
@@ -286,7 +289,7 @@ class TimesFMAdapter:
 
     def print_forecast(self, fc: QuantileForecast, last_price: float):
         """打印预测结果"""
-        print(f'TimesFM 1.0-200M Forecast')
+        print('TimesFM 1.0-200M Forecast')
         print(f'Last price: {last_price:.2f}')
         print()
         print(f'{"H":>3} {"Point":>7} {"P10":>7} {"P30":>7} {"P50":>7} {"P70":>7} {"P90":>7} {"Trend":>8}')
@@ -395,9 +398,8 @@ class EnhancedHedgeModel:
 
         # 用最近 512 天数据生成 TimesFM 预测
         prices = df['price'].values[-512:]
-        last_price = prices[-1]
 
-        fc = self.timesfm.forecast(prices, horizon=20)
+        self.timesfm.forecast(prices, horizon=20)
         features = self.timesfm.get_uncertainty_features(prices)
 
         # 将 TimesFM 特征添加到 df 的最后一行

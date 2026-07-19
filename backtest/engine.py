@@ -21,17 +21,14 @@ backtest/engine.py
 
 from __future__ import annotations
 from dataclasses import dataclass
-from datetime import datetime
 import socket
 import pandas as pd
-import numpy as np
 
 from backtest.models import HedgeAction, ExitReason, HedgeRecord
 from core.state.engine import DecisionEngine
 from core.events.bus import EventBus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
-from core.types.constants import HedgeDefaults
 
 
 @dataclass
@@ -317,7 +314,6 @@ class CoffeeBacktestEngine:
 
         no_hedge_net = self._no_hedge_cost
         static_net = self._static_cost - self._static_pnl
-        event_net = self._event_cost - self._event_pnl
 
         def make_stats(name, cost, pnl, trades_list) -> BacktestStats:
             net = cost - pnl

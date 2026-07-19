@@ -20,9 +20,8 @@ Deployment:
 
 from __future__ import annotations
 
-import os
 import re
-from datetime import date, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
@@ -34,12 +33,12 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from web.track_record import build_track_record_html
+
 # ── Paths ────────────────────────────────────────────────────────────────────
 WEB_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = WEB_DIR / "static" / "reports"
 TEMPLATES_DIR = WEB_DIR / "templates"
-
-from web.track_record import build_track_record_html
 
 app = FastAPI(title="Arbor", version="3.0")
 
@@ -306,10 +305,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
     """Root path shows the latest report directly — no nav bar."""
+    lang = request.query_params.get("lang", "zh")
     latest = _latest_report_date()
     if not latest:
         return templates.TemplateResponse(request, "empty.html", {"lang": lang})
-    lang = request.query_params.get("lang", "zh")
     return _serve_report_page(latest, is_latest=True, lang=lang)
 
 

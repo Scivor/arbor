@@ -26,12 +26,16 @@ _proj_root = Path(__file__).parent.parent
 if str(_proj_root) not in sys.path:
     sys.path.insert(0, str(_proj_root))
 
-import numpy as np
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 import logging
+
+if TYPE_CHECKING:
+    import pandas as pd  # noqa: F401 — 仅注解用，运行时函数内惰性导入
+    from core.events import EventBus  # noqa: F401 — 仅注解用
+    from core.state import DecisionEngine  # noqa: F401 — 仅注解用
 
 logger = logging.getLogger(__name__)
 

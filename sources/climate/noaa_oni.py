@@ -15,10 +15,8 @@ Phase 判定:
 from __future__ import annotations
 import requests
 import pandas as pd
-import numpy as np
 from datetime import datetime
 from typing import Optional
-import io
 
 
 # NOAA ONI 列名对应 12 个 3 月滑动窗口

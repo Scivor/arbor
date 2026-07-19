@@ -26,15 +26,11 @@ from __future__ import annotations
 import os
 import csv
 import json
-import io
-import re
 import threading
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Optional, Callable
-from enum import Enum
+from typing import Optional
 
-from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 
 
@@ -162,7 +158,6 @@ class CLIHandler(HedgeHandler):
         if event.severity < 3 and not self.print_all:
             return
 
-        cls = CLIHandler
         num = self._count()
         sym = self._severity_symbol(event.severity)
         color = self._severity_color(event.severity)

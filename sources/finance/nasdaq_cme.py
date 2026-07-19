@@ -13,7 +13,7 @@ Free tier: 50 calls/day — sufficient for daily report generation.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
 
 import requests

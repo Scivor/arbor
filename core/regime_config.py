@@ -18,17 +18,15 @@ Sherlock SiteInformation + SitesInformation 的 coffee 版本
 from __future__ import annotations
 
 import os
-import re
-import json
 import yaml
 import requests
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Optional, Callable, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 from enum import Enum
 
 if TYPE_CHECKING:
-    from core.types.enums import EventType
+    pass
 
 
 # ============================================================
@@ -607,7 +605,6 @@ class RegimeConfigLoader:
         等价于 Sherlock 的最终 results_total 构建逻辑.
         """
         from core.types.enums import Domain, EventType
-        from core.types.event import CoffeeEvent
 
         detections = self.detect_all(market_data, regime_names)
         events = []

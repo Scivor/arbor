@@ -31,7 +31,7 @@ def test_persistence_wired_once_across_instances(tmp_path, monkeypatch):
     monkeypatch.setattr(cs, "DecisionEngine", _DummyEngine)
     monkeypatch.setattr("core.persistence.DecisionDB", lambda *a, **k: db)
 
-    s1 = cs.CoffeeSystem()
+    cs.CoffeeSystem()  # 第一个实例仅触发初始化（副作用即被测对象）
     s2 = cs.CoffeeSystem()
     assert s2._db is db  # 后来的实例共享同一个持久化连接
 

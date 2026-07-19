@@ -23,7 +23,6 @@ import tempfile
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from datetime import datetime, timedelta
 
 from reports.formatters import (
@@ -293,7 +292,6 @@ def _build_price_chart(report, lang: str = "zh") -> str:
     OLIVE     = "#504e49"
     STONE     = "#6b6a64"
     GOLD      = "#C5A572"
-    NEAR_BLK  = "#141413"
 
     kami_style = mpf.make_mpf_style(
         base_mpf_style="default",
@@ -811,10 +809,6 @@ def build_report_html(report, lang: str = "zh") -> str:
 
     # ── Scenarios ──
     scenario_rows = _build_scenario_rows(report, lang)
-
-    # ── Levels ──
-    support_rows = _build_level_rows(report.support_levels, color="#1B365D")
-    resistance_rows = _build_level_rows(report.resistance_levels, color="#504e49")
 
     # ── Drivers ──
     bull_rows = _build_driver_rows(report.bullish_params)

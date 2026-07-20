@@ -1314,7 +1314,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         prov.add("hedge_ratio", f"{report.hedge_advice.ratio:.0%}",
                  "Algorithm (Arbor)", "",
                  latency="实时", reliability="C",
-                 notes="基于RSI+情景概率+ML信号的规则引擎，非投资建议")
+                 notes="三域事件按类型半衰期衰减、归入14个因子簇加权评分，非投资建议")
 
     if china_import and china_import.fx_rate is not None:
         prov.add("usd_cny", f"{china_import.fx_rate:.4f}",

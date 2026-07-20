@@ -211,7 +211,14 @@ class DecisionEngine:
                     self._cfg = loader.scoring
                 logger.info("[DecisionEngine] 已加载 %d 条评分规则", len(self._rules))
             except Exception as e:
-                logger.warning("[DecisionEngine] YAML 加载失败，评分规则为空: %s", e)
+                logger.error("[DecisionEngine] YAML 加载失败，评分规则为空: %s", e)
+            # 规则表为空 = 引擎对所有事件永久失聪，比率恒为中性基准。
+            # 不抛异常（引擎失聪不像周报印错数那样直接对外），但必须响亮。
+            if not self._rules:
+                logger.error(
+                    "[DecisionEngine] 评分规则表为空，引擎将对所有事件失聪 —— "
+                    "检查 config/regimes.yaml 的 adjustment_rules"
+                )
 
         # ── 事件窗口 —— 比率是它的纯函数 ─────────────────────────────────────
         # maxlen 覆盖最长半衰期（policy 365d）下仍有意义的事件量

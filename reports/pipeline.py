@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -1057,9 +1057,11 @@ def run(config: PipelineConfig) -> PredictionReport:
         logger.warning(f"kelly shadow failed: {e}")
 
     # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
-    # 到库成本用套保比率折算，而比率要等 Step 6 LLM 点评并入评分后才终态化，
-    # 故本步骤延后到那之后再执行，避免到库成本用改写前的旧比率算出来。
-    china_import = None
+    # 汇率/政策事件不依赖套保比率，且 Step 6 的 LLM 点评上下文
+    # （_build_context）要读到这三者才不会跳过对应描述，故仍在此处早取一次，
+    # 用初版 hedge 算到库成本。到库成本会在 Step 6 最终比率算出后原地刷新
+    # （见下方"收尾"注释），届时不重复 fetch 汇率/政策事件，避免多打网络请求。
+    china_import = fetch_china_import_snapshot(market, hedge)
 
     # ── Step 3: Compute forecast week ────────────────────────────
     today = date.today()
@@ -1133,7 +1135,7 @@ def run(config: PipelineConfig) -> PredictionReport:
                  notes="30日价格目标，基于历史模式外推")
 
     # hedge_ratio / china_import 三个 prov 条目延后到 Step 6 最终比率算出后再记
-    # （与 fetch_china_import_snapshot 一起移动，理由见 Step 3b 注释）。
+    # （china_import 本身已在 Step 3b 早取，这里只是等到库成本刷新完再落账）。
 
     if reference_class:
         prov.add("reference_class",
@@ -1223,9 +1225,21 @@ def run(config: PipelineConfig) -> PredictionReport:
             gather_report_events(report.market, report.scenarios, report.llm_direction),
         ) or report.hedge_advice
 
-    # ── Step 3b（延后执行）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
-    china_import = fetch_china_import_snapshot(report.market, report.hedge_advice)
-    report.china_import = china_import
+    # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
+    # 只重算到库成本本身（纯本地计算，不联网）；汇率/政策事件/ICO/GFEX 沿用
+    # 上面早取的那份，不重复调用 fetch_china_import_snapshot。
+    if china_import is not None and china_import.fx_rate is not None and report.market is not None:
+        try:
+            from core.cost.landed_cost import LandedCostCalculator
+            landed = LandedCostCalculator().calculate(
+                cyp_price_usd_lb=report.market.current,
+                fx_rate_usd_cny=china_import.fx_rate,
+                hedge_ratio=report.hedge_advice.ratio if report.hedge_advice else 0.0,
+            )
+            china_import = replace(china_import, landed=landed)
+            report.china_import = china_import
+        except Exception as e:
+            logger.warning(f"到库成本按最终套保比率重算失败: {e}")
 
     if report.hedge_advice:
         prov.add("hedge_ratio", f"{report.hedge_advice.ratio:.0%}",

@@ -924,8 +924,16 @@ def compute_hedge_advice(
 
     loader = get_regime_loader()
     loader.load()
+    rules = loader.event_rules()
+    # 规则表为空 → 所有事件被过滤 → ratio 恰好落在中性 0.65，
+    # 印出来和一个正常的中性判断毫无区别。周报宁可缺这一板块，也不能印错数。
+    if not rules:
+        raise RuntimeError(
+            "评分规则表加载失败：config/regimes.yaml 的 adjustment_rules 为空，"
+            "无法计算套保比率（继续计算会得到看似正常的中性 0.65）"
+        )
     breakdown = compute_score(
-        events, loader.event_rules(), now or datetime.now(), loader.scoring
+        events, rules, now or datetime.now(), loader.scoring
     )
     ratio = breakdown.ratio
 

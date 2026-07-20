@@ -333,3 +333,21 @@ def test_live_scan_false_does_no_scanning(monkeypatch, tmp_path):
         None, [], llm_direction=None, now=NOW, live_scan=False
     )
     assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]
+
+
+# ── 规则表为空必须响亮失败 ────────────────────────────────────────────────
+
+def test_compute_hedge_advice_raises_on_empty_rules(monkeypatch):
+    """规则表为空 → 抛异常，而不是静默印出看似正常的中性 0.65。"""
+    from reports.pipeline import compute_hedge_advice
+
+    loader = type("L", (), {
+        "load": lambda self: None,
+        "event_rules": lambda self: {},
+        "scoring": None,
+    })()
+    monkeypatch.setattr("reports.pipeline.get_regime_loader", lambda: loader)
+
+    market = type("M", (), {"rsi_14": 30.0, "current": 300.0})()
+    with pytest.raises(RuntimeError, match="规则表加载失败"):
+        compute_hedge_advice(market, [_Scenario("下跌", 0.6)], [], now=NOW)

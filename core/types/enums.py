@@ -38,6 +38,11 @@ class EventType(Enum):
     SEASONAL_WINDOW_OPEN = "seasonal_window_open"
     ML_MODEL_UPDATE = "ml_model_update"
     PRODUCTION_UPDATE = "production_update"  # USDA PSD 产量/供需数据修订
+    LLM_COMMENTARY = "llm_commentary"          # AI 分析师点评方向（评分因子）
+
+    # === REPORT-SIDE 报告侧因子 ===
+    SCENARIO_DOMINANT = "scenario_dominant"    # 主导情景方向 x 概率
+    RSI_EXTREME = "rsi_extreme"                # RSI 超买/超卖
 
     # === FINANCE DOMAIN ===
     FX_USD_CNY_THRESHOLD = "fx_usd_cny_threshold"

@@ -11,9 +11,11 @@ import logging
 import math
 import warnings
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Optional
 
+from core.types.enums import Domain, EventType
+from core.types.event import CoffeeEvent
 from reports.formatters import (
     format_confidence as _fmt_confidence,
     format_oni as _fmt_oni,
@@ -715,6 +717,30 @@ def compute_drivers(
         ))
 
     return bullish, bearish
+
+
+# ── 报告侧评分因子 —— 产出事件，由 compute_score 统一定价 ────────────────────
+
+_LLM_DIRECTION_BIAS = {"下跌": 0.08, "上涨": -0.08}
+
+
+def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
+    """
+    AI 分析师点评方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
+    看跌 → 正贡献（增套保）；看涨 → 负贡献。
+    """
+    bias = _LLM_DIRECTION_BIAS.get(direction)
+    if bias is None:
+        return None
+    return CoffeeEvent(
+        event_type=EventType.LLM_COMMENTARY,
+        domain=Domain.FINANCE,
+        timestamp=datetime.now(),
+        severity=3,
+        value=bias,
+        narrative=f"AI 分析师点评方向: {direction}",
+        source="llm_analyst",
+    )
 
 
 def compute_hedge_advice(

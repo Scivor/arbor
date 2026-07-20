@@ -205,3 +205,25 @@ def test_llm_driver_attribution_e2e(tmp_path, monkeypatch):
     attr = compute_attribution(last, last.current_price * 0.97)
     verdicts = {v["param_name"]: v["verdict"] for v in attr["verdicts"]}
     assert verdicts["AI 分析师点评"] == "应验"
+
+
+# ── LLM 点评作为评分因子 ────────────────────────────────────────────────────
+
+def test_llm_commentary_event_type_exists():
+    from core.types.enums import EventType
+    assert EventType.LLM_COMMENTARY
+    assert EventType.SCENARIO_DOMINANT
+    assert EventType.RSI_EXTREME
+
+
+def test_llm_direction_maps_to_signed_contribution():
+    """看跌 → 正贡献（增套保）；看涨 → 负贡献。"""
+    from reports.pipeline import llm_commentary_event
+
+    bear = llm_commentary_event("下跌")
+    bull = llm_commentary_event("上涨")
+    flat = llm_commentary_event("横盘")
+
+    assert bear.value > 0
+    assert bull.value < 0
+    assert flat is None          # 中性不产生事件

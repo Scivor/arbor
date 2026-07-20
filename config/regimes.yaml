@@ -733,6 +733,24 @@ adjustment_rules:
     cluster: supply_fundamental
     half_life_days: 180
 
+  LLM_COMMENTARY:
+    adjustment: 1.0        # 贡献由 value 承载
+    min_severity: 1
+    cluster: llm
+    half_life_days: 7
+
+  SCENARIO_DOMINANT:
+    adjustment: 1.0        # 贡献由 value 承载
+    min_severity: 1
+    cluster: scenario
+    half_life_days: 7
+
+  RSI_EXTREME:
+    adjustment: 1.0        # 贡献由 value 承载
+    min_severity: 1
+    cluster: technical
+    half_life_days: 3
+
 
 # ============================================================
 # SCORING — 评分全局参数

@@ -527,6 +527,7 @@ class RegimeConfigLoader:
     @property
     def scoring(self) -> ScoringConfig:
         """评分全局参数；YAML 无 scoring 块时返回默认值。"""
+        self.load()
         return self._scoring or ScoringConfig()
 
     def event_rules(self) -> dict[EventType, EventRule]:

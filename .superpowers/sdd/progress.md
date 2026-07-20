@@ -12,7 +12,8 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
 ## 任务
 
 - [x] Task 1: scoring.py 纯函数核心 — complete (commits 2cc0de1..9532edd, review clean)
-- [ ] Task 2: regime_config 扩展
+- [x] Task 2: regime_config 扩展 — complete (commits 9040d96..2035cf7, review clean)
+      含 Step 0 解环：core/state/__init__.py 惰性导出 engine (PEP 562 __getattr__)
 - [ ] Task 3: regimes.yaml 填充
 - [ ] Task 4: DecisionEngine 薄壳
 - [ ] Task 5: 回测同路径
@@ -31,3 +32,7 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
 - Task 1 review FYI：第二个 commit 除了删 epsilon，还把
   `test_ratio_keeps_gradient_at_extremes` 的采样点从 5.0/6.0 改为 3.0/4.0 并
   多加了两条边界断言。无害且更强，但比"只修那一条过严断言"的最小改动略宽。
+- `core/regime_config.py:527` `loader.scoring` property 未先调 `self.load()`，
+  与同级 property（`adjustment_rules` / `settings`）不一致。若成为 loader 上的
+  首个调用会静默返回 ScoringConfig() 默认值而非 YAML 实际值 —— 静默错而非报错。
+  当前及计划中的所有调用点都先调了 load()，暂无实际影响。一行可修。

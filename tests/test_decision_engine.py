@@ -6,13 +6,14 @@ DecisionEngine 单元测试
 import pytest
 from datetime import datetime, timedelta
 
+import core.state.engine as engine_mod
 from core.events.bus import EventBus, reset_event_bus
 from core.state.engine import (
     AdjustmentSummary,
     DecisionEngine,
     compute_hedge_from_events,
 )
-from core.state.scoring import EventRule
+from core.state.scoring import EventRule, ScoringConfig, compute_score
 from core.types.enums import Domain, EventType, HedgeSignal
 from core.types.event import CoffeeEvent
 
@@ -234,3 +235,65 @@ def test_order_invariance_through_bus():
         return e.get_state().hedge_ratio
 
     assert run(events) == pytest.approx(run(list(reversed(events))))
+
+
+def test_adjustment_isolates_new_event_from_prior_decay(engine, monkeypatch):
+    """
+    I3 回归测试：handle() 记录的 adjustment 必须只归因新事件自身的效应，
+    不能把两次重算之间「历史事件的衰减」也算进去。
+
+    构造：t0 发 FROST_CONFIRMED，假时钟推进 180 天后再发 ICE_INVENTORY_SPIKE。
+    修复前 old_ratio 直接复用上次 handler 里算的 self._breakdown.ratio
+    （即发 FROST 那一刻的比率），而 new_ratio 是 180 天后算的 —— 两者时间基准
+    不一致，FROST 在这 180 天里的衰减会被错记成 SPIKE 的 adjustment。
+
+    handle() 内部直接调用 datetime.now()（core.state.engine 里 `from datetime
+    import datetime` 之后的名字），所以要 patch core.state.engine.datetime。
+    CoffeeEvent 用的是 core.types.event 自己 import 的 datetime，与本测试无关，
+    只需要一个支持 .now() 的替身即可。
+    """
+    class _FakeClock:
+        def __init__(self, t):
+            self.t = t
+
+        def now(self):
+            return self.t
+
+    t0 = datetime(2024, 1, 1, 12, 0, 0)
+    clock = _FakeClock(t0)
+    monkeypatch.setattr(engine_mod, "datetime", clock)
+
+    frost = CoffeeEvent(
+        event_type=EventType.FROST_CONFIRMED,
+        domain=Domain.SUPPLY,
+        timestamp=t0,
+        severity=4,
+        value=0.0,
+        narrative="frost",
+        source="test",
+    )
+    engine.bus.publish(frost)
+
+    clock.t = t0 + timedelta(days=180)
+    spike = CoffeeEvent(
+        event_type=EventType.ICE_INVENTORY_SPIKE,
+        domain=Domain.SUPPLY,
+        timestamp=clock.t,
+        severity=2,
+        value=0.0,
+        narrative="spike",
+        source="test",
+    )
+    engine.bus.publish(spike)
+
+    last_adj = engine._adjustments[-1]
+    assert last_adj.event_type == EventType.ICE_INVENTORY_SPIKE
+
+    # 期望值现算：同一时刻 t0+180d 下，「有 SPIKE」与「无 SPIKE」两种窗口的比率之差。
+    baseline = compute_score([frost], TEST_RULES, clock.t, ScoringConfig()).ratio
+    with_spike = compute_score([frost, spike], TEST_RULES, clock.t, ScoringConfig()).ratio
+    expected_adjustment = with_spike - baseline
+
+    assert last_adj.adjustment == pytest.approx(expected_adjustment, abs=0.001)
+    # SPIKE 自身只值约 -0.04；若 FROST 的衰减被错误归因进来，会明显偏大（修复前约 -0.179）。
+    assert abs(last_adj.adjustment) < 0.10

@@ -5,14 +5,14 @@ backtest/engine.py
 三种策略对比:
 1. 无套保: 0% 始终持有现货敞口
 2. 静态套保: 65% 固定，每月滚动（平旧仓开当月新仓）
-3. 事件驱动: 基于 DecisionEngine 动态调整比率，每月滚动
+3. 事件驱动: 基于评分纯函数动态调整比率，每月滚动
 
 新增方法 (V3.0):
 - run_event_driven_with_engine(price_df, events_df):
-    使用 DecisionEngine（显式注入 YAML 规则表）替代手动硬编码事件检测。
-    遍历 price_df 每一行，按 events_df 时间戳发布 CoffeeEvent，
-    记录 engine.get_state().hedge_ratio 作为当前比率。
-    核心类比: Sherlock QueryNotify.update() → DecisionEngine.bus.publish_adjustment
+    使用 core.state.scoring 的评分纯函数替代手动硬编码事件检测。
+    遍历 price_df 每一行，累积该时刻之前的 CoffeeEvent，
+    以该 bar 的时间戳调 compute_hedge_from_events() 得到当前比率
+    —— 与实盘同一条路径，衰减基准随回测时间推进。
 - run(events_df=None): 当 events_df 提供时，自动路由到 run_event_driven_with_engine()
 
 核心指标: 净成本/吨 = (累计采购成本 - 期货盈亏) / 总采购量
@@ -25,10 +25,9 @@ import socket
 import pandas as pd
 
 from backtest.models import HedgeAction, ExitReason, HedgeRecord
-from core.state.engine import DecisionEngine
-from core.events.bus import EventBus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
+from core.types.constants import HedgeDefaults
 
 
 @dataclass
@@ -373,14 +372,12 @@ class CoffeeBacktestEngine:
         events_df: pd.DataFrame | list[dict],
     ) -> dict[str, BacktestStats]:
         """
-        Event-driven backtest using DecisionEngine instead of hardcoded logic.
+        Event-driven backtest —— 每根 bar 调与实盘同一个评分纯函数
+        compute_hedge_from_events(accumulated, now=bar_ts)，而非硬编码逻辑。
 
         Sherlock analogy:
-          Sherlock QueryStatus.errorCode + QueryNotify.update()
-          → DecisionEngine.bus.publish_adjustment()
+          Sherlock QueryStatus.errorCode → 事件严重度
           回测中的每个历史事件 = Sherlock 检测到的 site error
-          DecisionEngine._make_handler 处理每个事件并更新比率
-          = Sherlock QueryNotify.update()
 
         Args:
             price_df: DataFrame with index=timestamp, columns=['price', optional 'oni'/'phase']
@@ -408,19 +405,16 @@ class CoffeeBacktestEngine:
                 ts = pd.Timestamp(ev['timestamp'])
                 events_by_ts.setdefault(ts, []).append(ev)
 
-            # Create a fresh EventBus + DecisionEngine
-            # 规则表显式注入：get_regime_loader() 走本地 config/regimes.yaml，
-            # 不触发远程拉取，因此子进程里不会因网络 I/O 挂起。
-            from core.regime_config import get_regime_loader
-            loader = get_regime_loader()
-            loader.load()
-            bus = EventBus()
-            engine = DecisionEngine(
-                bus=bus, rules=loader.event_rules(), cfg=loader.scoring
-            )
+            # ── 事件驱动策略：按 bar 调用与实盘同一个评分纯函数 ──────────────
+            # 无状态评分不需要跨 bar 持有引擎实例，因此也不存在
+            # 旧实现里 bus.publish 触发 handler 的线程死锁问题。
+            # compute_hedge_from_events 内部走 get_regime_loader()：本地
+            # config/regimes.yaml 存在时 local_only=True，不触发远程拉取，
+            # 因此子进程里不会因网络 I/O 挂起。
+            from core.state.engine import compute_hedge_from_events
 
-            # Snapshot engine's initial ratio (should be DEFAULT_HEDGE_RATIO = 0.65)
-            event_ratio = engine.get_state().hedge_ratio
+            accumulated: list[CoffeeEvent] = []
+            event_ratio = HedgeDefaults.DEFAULT_HEDGE_RATIO
 
             cfg = self.cfg
             prices = price_df
@@ -474,12 +468,12 @@ class CoffeeBacktestEngine:
                         narrative=narrative,
                         source='backtest',
                     )
-                    # Call engine handler directly instead of bus.publish()
-                    # to bypass threading deadlock in DecisionEngine handlers
-                    engine._make_handler(et)(coffee_event)
+                    accumulated.append(coffee_event)
 
-                # Read updated ratio from DecisionEngine
-                event_ratio = engine.get_state().hedge_ratio
+                # 每根 bar 用该 bar 的时间戳重算 —— 衰减随回测时间推进
+                event_ratio = compute_hedge_from_events(
+                    accumulated, now=ts.to_pydatetime()
+                )
                 event_ratio = max(cfg.min_hedge_ratio, min(cfg.max_hedge_ratio, event_ratio))
 
                 # ─── 月初: 采购 + 套保 ───

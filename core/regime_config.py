@@ -25,6 +25,9 @@ from datetime import datetime
 from typing import Optional, TYPE_CHECKING
 from enum import Enum
 
+from core.state.scoring import EventRule, ScoringConfig
+from core.types.enums import EventType
+
 if TYPE_CHECKING:
     pass
 
@@ -246,9 +249,11 @@ class HedgeAdjustmentRule:
     """
     adjustment: float          # 调整量 (正=增套保，负=减)
     min_severity: int = 3      # 最低 severity 才生效
-    cooldown_seconds: int = 600  # 同事件冷却时间
-    multiplier_sev4: float = 1.5  # severity >= 4 的额外乘数
+    cooldown_seconds: int = 600  # 同事件冷却时间（评分重构后仅供旧路径参考）
+    multiplier_sev4: float = 1.5  # severity >= 4 的额外乘数（同上）
     reason: str = ""           # 调整原因描述
+    cluster: str = "misc"      # 所属因子簇 —— 簇内递减求和防重复计数
+    half_life_days: float = 30.0  # 信息寿命 —— 贡献衰减一半所需天数
 
     # 回退默认值 (当 YAML 中没有定义时)
     DEFAULT = None  # None → 表示未定义，调用方应使用 DecisionEngine 硬编码回退
@@ -289,6 +294,7 @@ class RegimeConfigLoader:
     _regimes: Optional[dict[str, RegimeInformation]] = field(default=None, init=False)
     _settings: dict = field(default_factory=dict, init=False)
     _adjustment_rules: Optional[dict[str, HedgeAdjustmentRule]] = field(default=None, init=False)
+    _scoring: Optional[ScoringConfig] = field(default=None, init=False)
     _loaded: bool = field(default=False, init=False)
 
     def __post_init__(self):
@@ -430,7 +436,20 @@ class RegimeConfigLoader:
                     cooldown_seconds=cfg.get("cooldown_seconds", 600),
                     multiplier_sev4=cfg.get("multiplier_sev4", 1.5),
                     reason=cfg.get("reason", ""),
+                    cluster=cfg.get("cluster", "misc"),
+                    half_life_days=float(cfg.get("half_life_days", 30.0)),
                 )
+
+        # ── 解析 scoring 块 — 评分全局参数 ──────────────────────────────────
+        sc = raw.get("scoring", {}) or {}
+        default = ScoringConfig()
+        self._scoring = ScoringConfig(
+            baseline=float(sc.get("baseline", default.baseline)),
+            span_up=float(sc.get("span_up", default.span_up)),
+            span_down=float(sc.get("span_down", default.span_down)),
+            tanh_k=float(sc.get("tanh_k", default.tanh_k)),
+            rank_decay=float(sc.get("rank_decay", default.rank_decay)),
+        )
 
     def _default_config(self) -> dict:
         """硬编码默认配置 — Sherlock 的等价位: 当 data.json 全部失效时的回退"""
@@ -504,6 +523,28 @@ class RegimeConfigLoader:
         """
         self.load()
         return self._adjustment_rules.get(event_type_name)
+
+    @property
+    def scoring(self) -> ScoringConfig:
+        """评分全局参数；YAML 无 scoring 块时返回默认值。"""
+        return self._scoring or ScoringConfig()
+
+    def event_rules(self) -> dict[EventType, EventRule]:
+        """
+        产出 core.state.scoring.compute_score 直接可用的规则表。
+        非 EventType 成员的键（如 regime 名 DROUGHT_ONI）静默跳过。
+        """
+        out: dict[EventType, EventRule] = {}
+        for name, rule in self.adjustment_rules.items():
+            if name not in EventType.__members__:
+                continue
+            out[EventType[name]] = EventRule(
+                adjustment=rule.adjustment,
+                cluster=rule.cluster,
+                half_life_days=rule.half_life_days,
+                min_severity=rule.min_severity,
+            )
+        return out
 
     def get_adjustment_for_event(self, event_type_name: str,
                                   severity: int,

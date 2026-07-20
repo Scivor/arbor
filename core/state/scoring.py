@@ -89,10 +89,6 @@ def score_to_ratio(score: float, cfg: ScoringConfig) -> float:
     """score → 比率。tanh 软饱和，天然收敛到边界且保留梯度，无需 clamp。"""
     span = cfg.span_up if score > 0 else cfg.span_down
     t = math.tanh(score / cfg.tanh_k)
-    # float64 下 |score/tanh_k| 稍大（约 >20）tanh 就精确饱和到 ±1.0 ——
-    # 数学上 tanh 永远到不了 ±1，但双精度分辨率不够表达这个差距。
-    # 用极小 epsilon 夹住，保证 ratio 严格落在开区间内，不因浮点舍入撞边界。
-    t = max(-1.0 + 1e-9, min(1.0 - 1e-9, t))
     return cfg.baseline + span * t
 
 

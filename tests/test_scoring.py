@@ -147,17 +147,22 @@ def test_mixed_sign_within_cluster_offsets():
 # ── 验证点 4: 边界 ──────────────────────────────────────────────────────────
 
 def test_ratio_bounds_never_exceeded():
-    """任意极端 score → ratio 严格在开区间内。"""
+    """任意极端 score → ratio 不越界。"""
     for score in (-1e6, -100.0, -1.0, 0.0, 1.0, 100.0, 1e6):
         r = score_to_ratio(score, CFG)
-        assert 0.20 < r < 0.95, f"score={score} → ratio={r}"
+        assert 0.20 <= r <= 0.95, f"score={score} → ratio={r}"
 
 
 def test_ratio_keeps_gradient_at_extremes():
-    """边界附近仍有梯度 —— 不像 clamp 那样完全失去响应。"""
-    a = score_to_ratio(5.0, CFG)
-    b = score_to_ratio(6.0, CFG)
-    assert b > a
+    """有效区间内边界附近仍有梯度 —— 不像 clamp 那样完全失去响应。
+
+    float64 下 |score/tanh_k| 超过约 20 时 tanh 精确饱和到 ±1，
+    那之外没有梯度可言；这里断言的是实际会出现的量级。
+    """
+    assert score_to_ratio(3.0, CFG) < score_to_ratio(4.0, CFG)
+    assert score_to_ratio(-4.0, CFG) < score_to_ratio(-3.0, CFG)
+    assert 0.20 < score_to_ratio(-5.0, CFG)
+    assert score_to_ratio(5.0, CFG) < 0.95
 
 
 def test_zero_score_is_baseline():

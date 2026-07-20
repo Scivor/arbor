@@ -249,8 +249,8 @@ class HedgeAdjustmentRule:
     """
     adjustment: float          # 调整量 (正=增套保，负=减)
     min_severity: int = 3      # 最低 severity 才生效
-    cooldown_seconds: int = 600  # 同事件冷却时间（评分重构后仅供旧路径参考）
-    multiplier_sev4: float = 1.5  # severity >= 4 的额外乘数（同上）
+    cooldown_seconds: int = 600  # 同事件冷却时间；现由 reports.pipeline._dedupe_events 用作去重窗口
+    multiplier_sev4: float = 1.5  # severity >= 4 的额外乘数（评分重构后仅供旧路径 get_adjustment_for_event 参考）
     reason: str = ""           # 调整原因描述
     cluster: str = "misc"      # 所属因子簇 —— 簇内递减求和防重复计数
     half_life_days: float = 30.0  # 信息寿命 —— 贡献衰减一半所需天数

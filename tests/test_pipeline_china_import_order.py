@@ -125,7 +125,7 @@ def test_llm_prompt_contains_china_import_context(synthetic_pipeline):
     （即本次要修的那个回归），report.china_import 在生成点评时仍是 None，
     这些内容就不会出现在 prompt 里 —— 这正是本测试要抓的退化。
     """
-    report = run(PipelineConfig(ticker="KC=F", use_demo_data=False))
+    report = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
 
     assert report.china_import is not None
     assert _CapturingLLM.calls, "ChatOpenAI.invoke 应该至少被调用一次（zh 点评）"
@@ -148,7 +148,7 @@ def test_landed_cost_refreshed_with_final_hedge_ratio(synthetic_pipeline):
     report.china_import.landed 必须与「用 report.hedge_advice.ratio 重新计算」
     的结果一致，而不是早取阶段那份临时值。
     """
-    report = run(PipelineConfig(ticker="KC=F", use_demo_data=False))
+    report = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
 
     assert report.hedge_advice is not None
     assert report.china_import is not None

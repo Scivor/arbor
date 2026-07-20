@@ -56,6 +56,7 @@ class PipelineConfig:
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
     forecast_week_offset: int = 0     # 0 = current week, 1 = next week, etc.
     shrink_w: float = 0.0             # 参考类概率收缩权重（0.0=关闭；>0 时 p'=w·p+(1−w)·p_base）
+    live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -788,20 +789,34 @@ def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
 
 
 def _dedupe_events(
-    events: list[CoffeeEvent], window_hours: float = 1.0
+    events: list[CoffeeEvent],
+    rules: Optional[dict] = None,
+    fallback_window_hours: float = 1.0,
 ) -> list[CoffeeEvent]:
     """
-    去重判据：event_type 相同、且 timestamp 相差在 window_hours 之内，
+    去重判据：event_type 相同、且 timestamp 相差在该类型的去重窗口之内，
     视为同一个现实事件的两份副本（出报时的新鲜扫描 vs DB 里的衰减尾巴），
     保留较新的那一份。
+
+    去重窗口按事件类型取 rules（loader.adjustment_rules）里对应
+    HedgeAdjustmentRule.cooldown_seconds —— 它是配置对"这类事件正常重复
+    触发间隔"的声明，语义上恰好对应去重窗口；取不到该类型规则时回退
+    fallback_window_hours。
 
     只按 (类型, 时间邻近) 判定 —— narrative / source 在两条路径上必然不同
     （扫描器写自己的措辞，DB 行是历史快照），不能参与判据。
     """
+    rules = rules or {}
+    fallback_window = fallback_window_hours * 3600.0
+
+    def _window_seconds(event_type) -> float:
+        rule = rules.get(event_type.name)
+        return float(rule.cooldown_seconds) if rule is not None else fallback_window
+
     kept: list[CoffeeEvent] = []
-    window = window_hours * 3600.0
     # 先按时间倒序 —— 于是每组重复中最先被 kept 收下的就是最新的那条
     for ev in sorted(events, key=lambda e: e.timestamp, reverse=True):
+        window = _window_seconds(ev.event_type)
         if any(
             k.event_type == ev.event_type
             and abs((k.timestamp - ev.timestamp).total_seconds()) <= window
@@ -904,7 +919,14 @@ def gather_report_events(
         except (ValueError, KeyError, TypeError) as e:
             logger.debug("历史事件行解析失败，跳过该行: %s", e)
 
-    return _dedupe_events(events)
+    # 去重窗口按事件类型取 cooldown_seconds；规则表加载失败则整体回退默认 1 小时
+    try:
+        rules = get_regime_loader().adjustment_rules
+    except Exception as e:
+        logger.warning("去重规则表加载失败，去重窗口回退默认 1 小时: %s", e)
+        rules = None
+
+    return _dedupe_events(events, rules)
 
 
 def compute_hedge_advice(
@@ -1081,7 +1103,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
-    report_events = gather_report_events(market, scenarios, llm_direction=None)
+    report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
     hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 

@@ -11,7 +11,18 @@ from sources.data_registry import DataSourceRegistry, get_registry
 
 
 @pytest.fixture
-def registry():
+def registry(monkeypatch):
+    # PriceSource / FXSource 构造时会自举一次带指数退避重试的网络请求
+    # （sources.coffee.yfinance_price._bootstrap_last_price /
+    #   sources.fx.yfinance._bootstrap_last_rate）。网络被 conftest 挡住后
+    # 请求本身瞬间失败，但重试之间的 sleep 仍会真实等待，与本测试要验证的
+    # is_available() 结构无关，故禁用自举。
+    monkeypatch.setattr(
+        "sources.coffee.yfinance_price.PriceSource._bootstrap_last_price", lambda self: None
+    )
+    monkeypatch.setattr(
+        "sources.fx.yfinance.FXSource._bootstrap_last_rate", lambda self: None
+    )
     return DataSourceRegistry()
 
 

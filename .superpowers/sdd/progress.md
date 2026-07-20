@@ -23,7 +23,8 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
 - [x] Task 5: 回测同路径 — complete (commit 3bb43fa, review clean)
       Critical C1 已关闭：回测比率区间 0.65→0.92（修复前恒为 0.65）
 - [x] Task 6: 三个新 EventType + LLM 接线 — complete (commit 191822d, review clean)
-- [ ] Task 7: 周报接入
+- [x] Task 7: 周报接入 — complete (commits b41523b..78d9484, review clean)
+      修了 review 的 3 个 Important + 修复轮自身引入的 china_import 上下文回归
 - [ ] Task 8: 文档同步
 
 ## 环境备注
@@ -51,3 +52,12 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
   `config/regimes.yaml` 存在时才 pin `local_only=True`，文件缺失会回落到
   `requests.get(MANIFEST_URL)`。属既有代码、非本分支引入，实盘路径同样如此。
   若要硬保证，需在回测/测试上下文显式构造 `RegimeConfigLoader(local_only=True)`。
+- Task 7 review Minor（未修，留待分诊）：
+  * `gather_report_events(now=...)` 未传递给 scenario/rsi/llm 三个构造函数，
+    它们各自调 `datetime.now()`。生产无影响（run() 从不传 now），但违背
+    scoring.py 的「时间由调用方传入」约束，回测报告路径时会踩到。
+  * DB 载入的事件一律硬编码 `domain=Domain.SUPPLY`（如 CHINA_TARIFF_CHANGE
+    被重建成 SUPPLY）。compute_score 不看 domain 所以当前无评分影响。
+- 端到端验证副作用：Task 7 期间真实联网出过一期报告，在
+  `~/.arbor/reports/weekly_summary_2026-07-20.json` 留下记录（hedge_ratio 0.81），
+  并调用了 2 次 DeepSeek API。**待用户决定是否删除。**

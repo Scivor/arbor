@@ -61,3 +61,17 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
 - 端到端验证副作用：Task 7 期间真实联网出过一期报告，在
   `~/.arbor/reports/weekly_summary_2026-07-20.json` 留下记录（hedge_ratio 0.81），
   并调用了 2 次 DeepSeek API。**待用户决定是否删除。**
+
+## 最终全分支 review 后的修复（已完成）
+
+- 三域全量扫描接入 gather_report_events（spec §2.4 的缺失前半截），每域独立降级
+- 去重窗口按事件类型取 cooldown_seconds（此前是死的 1 小时，会吃掉合法重复）
+- 规则表为空 → compute_hedge_advice 抛错（此前静默退化成恰好 0.65）
+- loader.scoring 补 self.load()
+- 溯源表方法学说明订正为「14 个因子簇加权评分」
+- 补 DB 行解析测试（真实 SQLite 行 / 未知类型跳过 / 坏行不连累后续 / 去重生效）
+- tests/conftest.py 阻断 socket：全量测试 233s → 3.7s，揪出 4 个偷偷联网的测试
+
+## 合并前状态：可合并
+
+全量 294 passed / 1 failed（既有失败，main 上即红）；ruff 全绿。

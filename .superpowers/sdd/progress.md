@@ -25,7 +25,7 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
 - [x] Task 6: 三个新 EventType + LLM 接线 — complete (commit 191822d, review clean)
 - [x] Task 7: 周报接入 — complete (commits b41523b..78d9484, review clean)
       修了 review 的 3 个 Important + 修复轮自身引入的 china_import 上下文回归
-- [ ] Task 8: 文档同步
+- [x] Task 8: 文档同步 — complete (commit 349b08f)
 
 ## 环境备注
 

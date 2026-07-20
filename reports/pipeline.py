@@ -820,10 +820,18 @@ def gather_report_events(
 
         db = DecisionDB()
         df = db.get_events(start=(now - timedelta(days=365)).isoformat(), limit=2000)
-        for row in df.to_dict("records"):
-            name = str(row.get("event_type", "")).strip().upper()
-            if name not in EventType.__members__:
-                continue
+        records = df.to_dict("records")
+    except Exception as e:
+        logger.warning("历史事件加载失败，仅用报告侧因子评分: %s", e)
+        records = []
+
+    # 逐行独立容错 —— 单行坏数据（如非法 timestamp）只跳过自己，
+    # 不能让 except 吞掉整个循环、丢失其后所有行的衰减尾巴。
+    for row in records:
+        name = str(row.get("event_type", "")).strip().upper()
+        if name not in EventType.__members__:
+            continue
+        try:
             events.append(CoffeeEvent(
                 event_type=EventType[name],
                 domain=Domain.SUPPLY,
@@ -835,8 +843,8 @@ def gather_report_events(
                 narrative=str(row.get("narrative") or ""),
                 source=str(row.get("source") or "db"),
             ))
-    except Exception as e:
-        logger.warning("历史事件加载失败，仅用报告侧因子评分: %s", e)
+        except (ValueError, KeyError, TypeError) as e:
+            logger.debug("历史事件行解析失败，跳过该行: %s", e)
 
     return events
 
@@ -1049,7 +1057,9 @@ def run(config: PipelineConfig) -> PredictionReport:
         logger.warning(f"kelly shadow failed: {e}")
 
     # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
-    china_import = fetch_china_import_snapshot(market, hedge)
+    # 到库成本用套保比率折算，而比率要等 Step 6 LLM 点评并入评分后才终态化，
+    # 故本步骤延后到那之后再执行，避免到库成本用改写前的旧比率算出来。
+    china_import = None
 
     # ── Step 3: Compute forecast week ────────────────────────────
     today = date.today()
@@ -1122,31 +1132,8 @@ def run(config: PipelineConfig) -> PredictionReport:
                  "Internal Model", "", latency="实时", reliability="C",
                  notes="30日价格目标，基于历史模式外推")
 
-    if hedge:
-        prov.add("hedge_ratio", f"{hedge.ratio:.0%}",
-                 "Algorithm (Arbor)", "",
-                 latency="实时", reliability="C",
-                 notes="基于RSI+情景概率+ML信号的规则引擎，非投资建议")
-
-    if china_import and china_import.fx_rate is not None:
-        prov.add("usd_cny", f"{china_import.fx_rate:.4f}",
-                 "Yahoo Finance", "https://finance.yahoo.com/quote/USDCNY=X",
-                 latency="~15 min", reliability="B",
-                 notes="USD/CNY 即期汇率，用于到库成本换算")
-
-    if china_import and china_import.ico_spot:
-        s = china_import.ico_spot
-        prov.add("ico_icip", f"{s['icip']:.2f} ¢/lb",
-                 "ICO I-CIP", "https://icocoffee.org/documents/I-CIP.pdf",
-                 latency="日更", reliability="A-",
-                 notes=f"国际咖啡组织综合现货指标（{s.get('date', '')}）")
-
-    if china_import and china_import.gfex:
-        g = china_import.gfex
-        prov.add("gfex_coffee", f"{g['close']:.0f} 元/吨",
-                 "GFEX/akshare", "",
-                 latency="日更", reliability="B",
-                 notes=f"广期所咖啡期货 {g.get('contract', '')}")
+    # hedge_ratio / china_import 三个 prov 条目延后到 Step 6 最终比率算出后再记
+    # （与 fetch_china_import_snapshot 一起移动，理由见 Step 3b 注释）。
 
     if reference_class:
         prov.add("reference_class",
@@ -1235,6 +1222,36 @@ def run(config: PipelineConfig) -> PredictionReport:
             report.scenarios,
             gather_report_events(report.market, report.scenarios, report.llm_direction),
         ) or report.hedge_advice
+
+    # ── Step 3b（延后执行）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
+    china_import = fetch_china_import_snapshot(report.market, report.hedge_advice)
+    report.china_import = china_import
+
+    if report.hedge_advice:
+        prov.add("hedge_ratio", f"{report.hedge_advice.ratio:.0%}",
+                 "Algorithm (Arbor)", "",
+                 latency="实时", reliability="C",
+                 notes="基于RSI+情景概率+ML信号的规则引擎，非投资建议")
+
+    if china_import and china_import.fx_rate is not None:
+        prov.add("usd_cny", f"{china_import.fx_rate:.4f}",
+                 "Yahoo Finance", "https://finance.yahoo.com/quote/USDCNY=X",
+                 latency="~15 min", reliability="B",
+                 notes="USD/CNY 即期汇率，用于到库成本换算")
+
+    if china_import and china_import.ico_spot:
+        s = china_import.ico_spot
+        prov.add("ico_icip", f"{s['icip']:.2f} ¢/lb",
+                 "ICO I-CIP", "https://icocoffee.org/documents/I-CIP.pdf",
+                 latency="日更", reliability="A-",
+                 notes=f"国际咖啡组织综合现货指标（{s.get('date', '')}）")
+
+    if china_import and china_import.gfex:
+        g = china_import.gfex
+        prov.add("gfex_coffee", f"{g['close']:.0f} 元/吨",
+                 "GFEX/akshare", "",
+                 latency="日更", reliability="B",
+                 notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
     if report.llm_commentary:
         prov.add("ai_commentary", "AI 分析师点评",

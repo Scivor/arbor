@@ -62,11 +62,12 @@ def test_generate_commentary_success(fake_key, monkeypatch):
     # base_url 按 provider=deepseek 决定
     assert _FakeLLM.last_kwargs["base_url"] == "https://api.deepseek.com"
 
-    # user prompt 含报告关键数值（demo: 现价 293.70 / ONI -0.39 / 套保 65%）
+    # user prompt 含报告关键数值（demo: 现价 293.70 / ONI -0.39）
+    # 注：hedge_advice 已不再喂给 prompt（避免 AI 点评自己的方向又反过来
+    # 改写该比率造成的循环论证），故不再断言套保比率出现在 user_msg 中。
     user_msg = _FakeLLM.last_messages[1][1]
     assert "293.70" in user_msg
     assert "-0.39" in user_msg
-    assert "65%" in user_msg
 
 
 def test_generate_commentary_direction_marker(fake_key, monkeypatch):

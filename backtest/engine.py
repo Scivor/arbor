@@ -419,11 +419,6 @@ class CoffeeBacktestEngine:
                 bus=bus, rules=loader.event_rules(), cfg=loader.scoring
             )
 
-            # NOTE: If bus.publish() deadlocks here due to the engine's own
-            # handler subscribing to the bus, the subprocess timeout in
-            # do_model_backtest() will kill it. This is a known threading
-            # issue — events still drive the engine via direct call below.
-
             # Snapshot engine's initial ratio (should be DEFAULT_HEDGE_RATIO = 0.65)
             event_ratio = engine.get_state().hedge_ratio
 

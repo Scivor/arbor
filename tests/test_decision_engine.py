@@ -143,7 +143,7 @@ def test_compute_hedge_from_events_pure():
 
 # ── 无状态评分重构后的行为 ──────────────────────────────────────────────────
 
-def _event(bus_engine, event_type, severity=4, days_ago=0.0):
+def _event(event_type, severity=4, days_ago=0.0):
     return CoffeeEvent(
         event_type=event_type,
         domain=Domain.SUPPLY,
@@ -171,7 +171,7 @@ def test_ml_signal_is_idempotent(engine):
 
 def test_ratio_decays_without_new_events(engine):
     """棘轮效应回归测试：事件变旧后比率自行回落至基线。"""
-    engine.bus.publish(_event(engine, EventType.FROST_CONFIRMED, severity=4))
+    engine.bus.publish(_event(EventType.FROST_CONFIRMED, severity=4))
     hot = engine.get_state().hedge_ratio
 
     # 半年后（FROST 半衰期 90d → 贡献剩 1/4）已明显回落
@@ -181,23 +181,42 @@ def test_ratio_decays_without_new_events(engine):
     # 一年后贡献剩约 6%，比率基本回到 baseline
     a_year = engine.recompute(now=datetime.now() + timedelta(days=365))
     assert a_year < half_year
-    assert a_year == pytest.approx(0.65, abs=0.05)
+    assert a_year == pytest.approx(0.6644, abs=0.001)
 
 
 def test_ratio_never_hits_hard_bounds(engine):
     """极端事件洪流也不越界、不卡死。"""
     for _ in range(50):
-        engine.bus.publish(_event(engine, EventType.EXPORT_BAN, severity=5))
+        engine.bus.publish(_event(EventType.EXPORT_BAN, severity=5))
     r = engine.get_state().hedge_ratio
     assert 0.20 < r < 0.95
 
 
 def test_breakdown_exposes_clusters(engine):
-    engine.bus.publish(_event(engine, EventType.FROST_CONFIRMED, severity=4))
-    engine.bus.publish(_event(engine, EventType.CHINA_TARIFF_CHANGE, severity=3))
+    engine.bus.publish(_event(EventType.FROST_CONFIRMED, severity=4))
+    engine.bus.publish(_event(EventType.CHINA_TARIFF_CHANGE, severity=3))
     clusters = {c.cluster for c in engine.get_breakdown().clusters}
     assert "brazil_supply" in clusters
     assert "policy" in clusters
+
+
+def test_get_state_tracks_recompute(engine):
+    """I2 回归：recompute 后 get_state 必须与 get_breakdown 一致。"""
+    engine.bus.publish(_event(EventType.FROST_CONFIRMED, severity=4))
+    engine.recompute(now=datetime.now() + timedelta(days=180))
+    assert engine.get_state().hedge_ratio == pytest.approx(engine.get_breakdown().ratio)
+
+
+def test_low_confidence_ml_retracts_previous_signal(engine):
+    """I4 回归：低置信度信号必须撤销先前的高置信度 bias，而非只把展示字段置零。"""
+    from models.ml_advisor import MLSignal
+
+    clean = engine.get_state().hedge_ratio
+    engine.update_ml_signal(MLSignal.BEARISH, confidence=0.8, bias=0.10)
+    assert engine.get_state().hedge_ratio > clean
+    engine.update_ml_signal(MLSignal.NEUTRAL, confidence=0.2, bias=0.0)
+    assert engine.get_state().hedge_ratio == pytest.approx(clean)
+    assert not any(c.cluster == "ml" for c in engine.get_breakdown().clusters)
 
 
 def test_order_invariance_through_bus():

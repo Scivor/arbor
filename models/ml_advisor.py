@@ -34,7 +34,6 @@ import logging
 
 if TYPE_CHECKING:
     import pandas as pd  # noqa: F401 — 仅注解用，运行时函数内惰性导入
-    from core.events import EventBus  # noqa: F401 — 仅注解用
     from core.state import DecisionEngine  # noqa: F401 — 仅注解用
 
 logger = logging.getLogger(__name__)
@@ -319,7 +318,7 @@ class MLAdvisor:
     ML 顾问 — 连接到 DecisionEngine 的包装类
 
     用法:
-        advisor = MLAdvisor(engine, bus)
+        advisor = MLAdvisor(engine)
         advisor.run()        # 立即计算并注入信号
 
         # 或者由 Scheduler 定期调用
@@ -329,10 +328,8 @@ class MLAdvisor:
     def __init__(
         self,
         engine: 'DecisionEngine',
-        bus: Optional['EventBus'] = None,
     ):
         self.engine = engine
-        self.bus = bus
         self._last_advice: Optional[MLAdvice] = None
 
     def run(self) -> MLAdvice:

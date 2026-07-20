@@ -191,6 +191,10 @@ class DecisionEngine:
         """
         self.bus = bus or get_event_bus()
         self._lock = __import__('threading').RLock()
+        # 独立于 _lock：串行化整个 update_ml_signal（包括锁外的 publish），
+        # 避免两次调用交错成"A清、B清、A发、B发"导致窗口留下重复 ML 事件。
+        # 不能复用 _lock 包 publish —— publish 会重入 handler 再抢 _lock，死锁。
+        self._ml_lock = __import__('threading').Lock()
 
         # ── 评分规则：YAML 是单一事实源，但可被显式注入覆盖 ──────────────────
         if rules is not None:
@@ -245,51 +249,68 @@ class DecisionEngine:
         复利叠加；现在 score 每次全量重算，同一信号重复注入是幂等的。
 
         confidence <= 0.3 忽略；0.3–0.6 半权重；>= 0.6 全权重。
+
+        忽略不是"什么都不做"：窗口里若还留着此前高置信度信号的
+        ML_MODEL_UPDATE 事件，必须先清掉再重算，否则展示字段（ml_bias）
+        显示已撤销，但 breakdown/比率里那条旧事件仍在生效，两者矛盾。
+
+        _ml_lock 把方法体整体（含锁外的 publish）串行化，见 __init__ 注释。
         """
-        self._ml_signal = signal
-        self._ml_confidence = confidence
+        with self._ml_lock:
+            self._ml_signal = signal
+            self._ml_confidence = confidence
 
-        if confidence <= 0.3:
-            self._ml_bias = 0.0
-            logger.debug("[DecisionEngine] ML %s 被忽略 (confidence=%.2f)",
-                         signal.value, confidence)
-            return
+            with self._lock:
+                # 同一时刻的旧 ML 事件先出窗口 —— 保证幂等，也是撤销
+                # 先前信号的前提（必须在 confidence<=0.3 判断之前做，
+                # 否则低置信度分支永远碰不到这段清理逻辑）
+                self._events = deque(
+                    (e for e in self._events if e.event_type != EventType.ML_MODEL_UPDATE),
+                    maxlen=self._events.maxlen,
+                )
 
-        weight = 1.0 if confidence >= 0.6 else 0.5
-        self._ml_bias = bias * weight
+                if confidence <= 0.3:
+                    self._ml_bias = 0.0
+                    self._recompute_locked(datetime.now())
+                    self._record_state(f"ML {signal.value} 置信度过低，撤销此前信号")
+                    logger.debug("[DecisionEngine] ML %s 被忽略 (confidence=%.2f)",
+                                 signal.value, confidence)
+                    return
 
-        with self._lock:
-            # 同一时刻的旧 ML 事件先出窗口 —— 保证幂等
-            self._events = deque(
-                (e for e in self._events if e.event_type != EventType.ML_MODEL_UPDATE),
-                maxlen=self._events.maxlen,
-            )
+                weight = 1.0 if confidence >= 0.6 else 0.5
+                self._ml_bias = bias * weight
 
-        # 注意：publish 必须在锁外，否则 handler 重入会死锁
-        self.bus.publish(CoffeeEvent(
-            event_type=EventType.ML_MODEL_UPDATE,
-            domain=Domain.FINANCE,
-            timestamp=datetime.now(),
-            severity=3,
-            value=self._ml_bias,
-            narrative=f"ML {signal.value} bias {bias:+.0%} x {weight:.0%} weight",
-            source="ml_advisor",
-        ))
+            # 注意：publish 必须在锁外，否则 handler 重入会死锁
+            self.bus.publish(CoffeeEvent(
+                event_type=EventType.ML_MODEL_UPDATE,
+                domain=Domain.FINANCE,
+                timestamp=datetime.now(),
+                severity=3,
+                value=self._ml_bias,
+                narrative=f"ML {signal.value} bias {bias:+.0%} x {weight:.0%} weight",
+                source="ml_advisor",
+            ))
 
     def _make_handler(self, event_type: EventType) -> Callable:
         """事件到达 → 收入窗口 → 全量重算。"""
         def handle(event: CoffeeEvent):
+            # old_ratio 必须与 new_ratio 用同一个 now 重算：不能直接复用
+            # self._breakdown.ratio（上次重算时刻的值），否则两次重算之间
+            # 流逝的时间会让历史事件多衰减一截，那截衰减会被错误算成
+            # 本次事件的 adjustment（把别的事件的衰减归因到这条事件上）。
+            now = datetime.now()
             with self._lock:
-                old_ratio = self._breakdown.ratio
+                old_ratio = self._recompute_locked(now)  # 当前窗口（未含新事件）在 now 的基准比率
                 self._events.append(event)
-                new_ratio = self._recompute_locked(datetime.now())
+                new_ratio = self._recompute_locked(now)  # 同一个 now，纳入新事件后的比率
 
                 if abs(new_ratio - old_ratio) < 0.005:
+                    self._record_state(f"{event.event_type.value}: 变化过小 (<0.005) 未记录调整")
                     return
 
                 rule = self._rules.get(event_type)
                 adj = HedgeAdjustment(
-                    timestamp=datetime.now(),
+                    timestamp=now,
                     event_type=event_type,
                     adjustment=new_ratio - old_ratio,
                     old_ratio=old_ratio,
@@ -318,7 +339,11 @@ class DecisionEngine:
         因为衰减是时间的函数，即使没有新事件，比率也会随时间回落。
         """
         with self._lock:
-            return self._recompute_locked(now or datetime.now())
+            ratio = self._recompute_locked(now or datetime.now())
+            # 必须记一次状态，否则 get_state() 仍返回上一次 handler 写入的
+            # 旧值，与刚更新的 _breakdown 不一致（棘轮效应在读接口上"复活"）。
+            self._record_state("周期性衰减重算")
+            return ratio
 
     def get_breakdown(self) -> ScoreBreakdown:
         """逐簇归因 —— reports/ 直接读取，无需反查 adjustment 日志。"""

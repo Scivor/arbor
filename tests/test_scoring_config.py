@@ -104,3 +104,49 @@ def test_event_rules_maps_to_enum(tmp_path):
     assert rules[EventType.FROST_WARNING].half_life_days == 90.0
     # DROUGHT_ONI 是 regime 名而非 EventType 成员 —— 静默跳过
     assert len(rules) == 1
+
+
+# ── 真实配置检查 ────────────────────────────────────────────────────────────
+
+def test_real_config_every_rule_has_cluster_and_half_life():
+    """config/regimes.yaml 中每条规则都必须显式指定簇与半衰期。"""
+    from core.regime_config import get_regime_loader
+
+    loader = get_regime_loader()
+    loader.load()
+    missing = [
+        name for name, rule in loader.adjustment_rules.items()
+        if rule.cluster == "misc"
+    ]
+    assert not missing, f"以下规则未指定 cluster: {missing}"
+
+
+def test_real_config_covers_all_scored_event_types():
+    """所有参与评分的 EventType 都在 YAML 里有规则。"""
+    from core.regime_config import get_regime_loader
+
+    loader = get_regime_loader()
+    loader.load()
+    rules = loader.event_rules()
+    required = {
+        EventType.FROST_WARNING, EventType.FROST_CONFIRMED,
+        EventType.PRICE_30D_EXTREME_UP, EventType.PRICE_30D_EXTREME_DOWN,
+        EventType.ML_MODEL_UPDATE, EventType.PRODUCTION_UPDATE,
+        EventType.CHINA_TARIFF_CHANGE, EventType.EXPORT_BAN,
+    }
+    assert required <= set(rules), f"缺失: {required - set(rules)}"
+
+
+def test_real_config_cluster_names_are_known():
+    """簇名必须属于 spec 定义的 13 个（misc 不允许出现）。"""
+    from core.regime_config import get_regime_loader
+
+    KNOWN = {
+        "brazil_supply", "colombia_supply", "climate", "inventory",
+        "positioning", "price", "fx", "macro", "supply_fundamental",
+        "policy", "ml", "llm", "scenario", "technical",
+    }
+    loader = get_regime_loader()
+    loader.load()
+    for name, rule in loader.adjustment_rules.items():
+        assert rule.cluster in KNOWN, f"{name} 的簇名未知: {rule.cluster}"

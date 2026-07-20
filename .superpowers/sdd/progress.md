@@ -22,7 +22,7 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
          → 贡献归零 → 比率恒为 0.65（等同静态套保）。**Task 5 必须关闭**。
 - [x] Task 5: 回测同路径 — complete (commit 3bb43fa, review clean)
       Critical C1 已关闭：回测比率区间 0.65→0.92（修复前恒为 0.65）
-- [ ] Task 6: 三个新 EventType + LLM 接线
+- [x] Task 6: 三个新 EventType + LLM 接线 — complete (commit 191822d, review clean)
 - [ ] Task 7: 周报接入
 - [ ] Task 8: 文档同步
 

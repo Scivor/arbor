@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+from core.regime_config import get_regime_loader
+from core.state.scoring import compute_score
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from reports.formatters import (
@@ -743,46 +745,138 @@ def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
     )
 
 
+_SCENARIO_DIRECTION_SIGN = {"下跌": 1.0, "上涨": -1.0, "横盘": 0.0}
+
+
+def scenario_event(dominant) -> CoffeeEvent:
+    """
+    主导情景 → SCENARIO_DOMINANT 事件。
+    下跌 → 正贡献（增套保），上涨 → 负，横盘 → 0。幅度随概率线性缩放。
+    """
+    sign = _SCENARIO_DIRECTION_SIGN.get(dominant.direction, 0.0)
+    return CoffeeEvent(
+        event_type=EventType.SCENARIO_DOMINANT,
+        domain=Domain.FINANCE,
+        timestamp=datetime.now(),
+        severity=3,
+        value=sign * 0.20 * dominant.probability,
+        narrative=f"主导情景 {dominant.direction} (概率 {dominant.probability:.0%})",
+        source="pipeline",
+    )
+
+
+def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
+    """
+    RSI 极值 → RSI_EXTREME 事件。35–65 之间不产生事件。
+    超卖 → 正贡献（提升套保锁定成本），超热 → 负贡献（保留敞口）。
+    """
+    if 35.0 <= rsi <= 65.0:
+        return None
+    if rsi < 35.0:
+        value, label = 0.10, "超卖"
+    else:
+        value, label = -0.10, "超热"
+    return CoffeeEvent(
+        event_type=EventType.RSI_EXTREME,
+        domain=Domain.FINANCE,
+        timestamp=datetime.now(),
+        severity=3,
+        value=value,
+        narrative=f"RSI={_fmt_rsi(rsi)} {label}",
+        source="pipeline",
+    )
+
+
+def gather_report_events(
+    market: Optional[MarketSnapshot],
+    scenarios: list[Scenario],
+    llm_direction: Optional[str],
+    now: Optional[datetime] = None,
+) -> list[CoffeeEvent]:
+    """
+    汇集周报评分所需的全部事件。
+
+    半衰期最长 365 天（policy 簇），仅靠出报时的新鲜扫描不够，
+    因此并入 DB 中一年内的历史事件作为衰减尾巴。
+    """
+    now = now or datetime.now()
+    events: list[CoffeeEvent] = []
+
+    # 报告侧因子
+    if scenarios:
+        events.append(scenario_event(max(scenarios, key=lambda s: s.probability)))
+    if market and market.rsi_14 is not None:
+        ev = rsi_event(market.rsi_14)
+        if ev:
+            events.append(ev)
+    if llm_direction:
+        ev = llm_commentary_event(llm_direction)
+        if ev:
+            events.append(ev)
+
+    # 历史衰减尾巴 —— DB 失败时静默降级为「只用报告侧因子」
+    try:
+        from core.persistence.database import DecisionDB
+
+        db = DecisionDB()
+        df = db.get_events(start=(now - timedelta(days=365)).isoformat(), limit=2000)
+        for row in df.to_dict("records"):
+            name = str(row.get("event_type", "")).strip().upper()
+            if name not in EventType.__members__:
+                continue
+            events.append(CoffeeEvent(
+                event_type=EventType[name],
+                domain=Domain.SUPPLY,
+                timestamp=datetime.fromisoformat(row["timestamp"]),
+                severity=int(row.get("severity") or 3),
+                # events 表无 value 列 —— value-carrying 簇（scenario/technical/llm/ml）
+                # 的历史事件贡献恒为 0；非 value-carrying 簇由规则 adjustment 定价，不受影响。
+                value=0.0,
+                narrative=str(row.get("narrative") or ""),
+                source=str(row.get("source") or "db"),
+            ))
+    except Exception as e:
+        logger.warning("历史事件加载失败，仅用报告侧因子评分: %s", e)
+
+    return events
+
+
 def compute_hedge_advice(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
+    events: list[CoffeeEvent],
+    now: Optional[datetime] = None,
 ) -> Optional[HedgeAdvice]:
     """
-    Derive hedge advice from market + scenario analysis.
+    由统一评分引擎决定套保比率 —— 与 CLI / 回测同一条路径。
+
+    events 已包含 scenario / technical / llm 三个报告侧因子，
+    以及三域扫描与历史衰减尾巴中的全部市场事件。
     """
     if not market or not scenarios:
         return None
 
-    dominant = max(scenarios, key=lambda s: s.probability)
-    rsi = market.rsi_14 or 50
+    loader = get_regime_loader()
+    loader.load()
+    breakdown = compute_score(
+        events, loader.event_rules(), now or datetime.now(), loader.scoring
+    )
+    ratio = breakdown.ratio
 
-    # Dominant direction determines base ratio
-    dom_dir = dominant.direction if dominant else "横盘"
-    if dom_dir == "下跌":
-        base_ratio = 0.75   # 下跌趋势 → 高套保
-    elif dom_dir == "上涨":
-        base_ratio = 0.45   # 上涨趋势 → 低套保
-    else:
-        base_ratio = 0.65   # 横盘 → 中性
-
-    # RSI adjustment
-    if rsi < 35:
-        ratio = min(base_ratio + 0.10, 0.90)
+    if ratio >= 0.75:
         action = "套保偏紧"
-        reason = f"RSI={_fmt_rsi(rsi)} 极端超卖，提升套保锁定成本"
-    elif rsi > 65:
-        ratio = max(base_ratio - 0.10, 0.40)
+    elif ratio <= 0.55:
         action = "套保偏松"
-        reason = f"RSI={_fmt_rsi(rsi)} 偏热，降低套保保留敞口"
     else:
-        ratio = base_ratio
         action = "维持中性"
-        reason = f"跟随情景 '{dominant.label}' {int(base_ratio*100)}% 套保"
+
+    top = max(breakdown.clusters, key=lambda c: abs(c.score), default=None)
+    driver = f"主导因子: {top.cluster} ({top.score:+.2f})" if top else "无活跃因子"
 
     return HedgeAdvice(
         ratio=round(ratio, 2),
         signal=action,
-        narrative=f"[{action}] {reason} | 合约: KC=F (Sep 26)",
+        narrative=f"[{action}] {driver} | 合约: KC=F (Sep 26)",
         trigger_above=None,
         trigger_below=None,
     )
@@ -913,7 +1007,8 @@ def run(config: PipelineConfig) -> PredictionReport:
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
-    hedge = compute_hedge_advice(market, scenarios)
+    report_events = gather_report_events(market, scenarios, llm_direction=None)
+    hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
     # ── Step 3c: 参考类基础概率（超级预测 Phase 2；失败降级 None）────
@@ -1132,6 +1227,14 @@ def run(config: PipelineConfig) -> PredictionReport:
         _attach_llm_commentary(report)
     except Exception as e:
         logger.warning(f"generate_commentary failed: {e}")
+
+    # LLM 方向此时才可用 —— 并入评分后重算，使点评真正参与定价
+    if report.llm_direction:
+        report.hedge_advice = compute_hedge_advice(
+            report.market,
+            report.scenarios,
+            gather_report_events(report.market, report.scenarios, report.llm_direction),
+        ) or report.hedge_advice
 
     if report.llm_commentary:
         prov.add("ai_commentary", "AI 分析师点评",

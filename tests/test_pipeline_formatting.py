@@ -2,7 +2,13 @@ import pytest
 
 from reports.formatters import format_confidence, format_number, format_oni, format_percent, format_range
 from reports.models import ClimateSnapshot, MarketSnapshot, MLSnapshot, Scenario
-from reports.pipeline import compute_drivers, compute_hedge_advice, compute_outlook_and_risks
+from reports.pipeline import (
+    compute_drivers,
+    compute_hedge_advice,
+    compute_outlook_and_risks,
+    rsi_event,
+    scenario_event,
+)
 from reports.exporters.html_to_pdf import build_report_html
 from reports.models import PredictionReport
 
@@ -68,10 +74,15 @@ def test_compute_hedge_advice_formats_rsi_with_single_decimal():
         Scenario(label="看跌", direction="下跌", price_min=300.0, price_max=320.0, probability=0.6, rationale=[]),
     ]
 
-    hedge = compute_hedge_advice(market, scenarios)
+    # RSI 单位小数格式化已下沉到 RSI_EXTREME 事件的 narrative
+    assert "RSI=32.3" in rsi_event(market.rsi_14).narrative
+
+    # 套保建议 narrative 改为展示评分引擎的主导因子簇
+    events = [scenario_event(scenarios[0]), rsi_event(market.rsi_14)]
+    hedge = compute_hedge_advice(market, scenarios, events)
 
     assert hedge is not None
-    assert "RSI=32.3" in hedge.narrative
+    assert "主导因子:" in hedge.narrative
 
 
 @pytest.mark.unit

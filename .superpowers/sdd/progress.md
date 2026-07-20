@@ -18,9 +18,10 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
       40 条规则，控制方独立验证：无重复 key / 无缺字段 / 原字段完好
 - [x] Task 4: DecisionEngine 薄壳 — complete (commits 5f46bf3..182915b, review clean)
       修了 review 的 I2/I3/I4/I5 + M6-M9。ML bias 双重施加 bug 已结构性消失。
-      ⚠ 遗留 Critical C1：backtest 事件驱动策略按 datetime.now() 给历史事件计龄
+      (已由 Task 5 关闭) 遗留 Critical C1：backtest 事件驱动策略按 datetime.now() 给历史事件计龄
          → 贡献归零 → 比率恒为 0.65（等同静态套保）。**Task 5 必须关闭**。
-- [ ] Task 5: 回测同路径
+- [x] Task 5: 回测同路径 — complete (commit 3bb43fa, review clean)
+      Critical C1 已关闭：回测比率区间 0.65→0.92（修复前恒为 0.65）
 - [ ] Task 6: 三个新 EventType + LLM 接线
 - [ ] Task 7: 周报接入
 - [ ] Task 8: 文档同步
@@ -46,3 +47,7 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
   Task 8 文档同步时一并订正。
 - 计划 Task 3 Step 4 原文有误（称 PRICE_30D_EXTREME_UP/DOWN 缺失，实际已存在）。
   实现者已正确规避，未产生重复 key。
+- 「回测零网络」是**偶然**而非结构性保证：`get_regime_loader()` 仅在
+  `config/regimes.yaml` 存在时才 pin `local_only=True`，文件缺失会回落到
+  `requests.get(MANIFEST_URL)`。属既有代码、非本分支引入，实盘路径同样如此。
+  若要硬保证，需在回测/测试上下文显式构造 `RegimeConfigLoader(local_only=True)`。

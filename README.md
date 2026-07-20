@@ -16,7 +16,9 @@
     金融域: KC=F价格 / USD/CNY / Polymarket概率
     政策域: 关税 / 贸易战 / LDC地位 / 政策新闻
          ↓
-  Decision Engine → 动态套保比率 (0%~100%)
+  评分引擎 (core/state/scoring.py) → 动态套保比率 (20%~95%)
+    事件按类型半衰期衰减 → 14 个因子簇内递减求和 → tanh 软饱和
+    CLI / 周报 / 回测共用同一个纯函数
 
 周报流水线 (reports/)
     市场快照 / 情景分析 / ML预测 / 套保建议
@@ -70,7 +72,8 @@ arbor/
 ├── coffee_system.py       # CoffeeSystem 事件驱动引擎 facade
 ├── cli/
 │   └── coffee_cli.py      # 交互 CLI + --demo/--paper/--agent
-├── core/                  # 核心: EventBus / DecisionEngine / types / persistence / paper_trading / cost / notify
+├── core/                  # 核心: EventBus / DecisionEngine + scoring (评分纯函数)
+│                          #   types / persistence / paper_trading / cost / notify
 ├── sources/               # 数据源 (fetch-only) + data_registry.py (Registry + Fallback 链)
 │   ├── coffee/            # KC=F 价格 (yfinance) + kc_history.py (日线历史缓存)
 │   ├── fx/                # USD/CNY 汇率

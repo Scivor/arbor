@@ -1,6 +1,6 @@
 # Arbor — Handoff Summary
-**最后更新**: 2026-05-29
-**状态**: Paper Trading 已完成，Agent Swarm MVP 已补，CLI 已拆分，测试覆盖核心模块
+**最后更新**: 2026-07-20
+**状态**: Paper Trading 已完成，Agent Swarm MVP 已补，CLI 已拆分，测试覆盖核心模块；套保比率已统一为无状态因子评分（周报/CLI/回测同源）
 
 ---
 

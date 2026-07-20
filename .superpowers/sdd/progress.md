@@ -16,7 +16,10 @@ use_yaml=False 会导致规则表为空；而 loader 在 local_only=False 时会
       含 Step 0 解环：core/state/__init__.py 惰性导出 engine (PEP 562 __getattr__)
 - [x] Task 3: regimes.yaml 填充 — complete (commit 5f2cc5b, review clean)
       40 条规则，控制方独立验证：无重复 key / 无缺字段 / 原字段完好
-- [ ] Task 4: DecisionEngine 薄壳
+- [x] Task 4: DecisionEngine 薄壳 — complete (commits 5f46bf3..182915b, review clean)
+      修了 review 的 I2/I3/I4/I5 + M6-M9。ML bias 双重施加 bug 已结构性消失。
+      ⚠ 遗留 Critical C1：backtest 事件驱动策略按 datetime.now() 给历史事件计龄
+         → 贡献归零 → 比率恒为 0.65（等同静态套保）。**Task 5 必须关闭**。
 - [ ] Task 5: 回测同路径
 - [ ] Task 6: 三个新 EventType + LLM 接线
 - [ ] Task 7: 周报接入

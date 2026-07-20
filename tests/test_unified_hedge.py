@@ -117,7 +117,9 @@ def test_gather_report_events_falls_back_when_db_unavailable(monkeypatch):
     market = type("M", (), {"rsi_14": 30.0})()
     scenarios = [_Scenario("下跌", 0.6)]
 
-    events = gather_report_events(market, scenarios, llm_direction="下跌", now=NOW)
+    events = gather_report_events(
+        market, scenarios, llm_direction="下跌", now=NOW, live_scan=False
+    )
 
     # 报告侧三个因子（情景 + RSI + LLM 方向）都应在，历史尾巴为空但不报错。
     event_types = {e.event_type for e in events}
@@ -125,3 +127,209 @@ def test_gather_report_events_falls_back_when_db_unavailable(monkeypatch):
     assert EventType.RSI_EXTREME in event_types
     assert EventType.LLM_COMMENTARY in event_types
     assert len(events) == 3
+
+
+# ── DB 行解析 —— 周报能否「看见关税」的那条路径 ──────────────────────────
+
+def _make_db(tmp_path, rows):
+    """在临时 SQLite 上建真实 events 表并塞入 rows。返回 DecisionDB 工厂。"""
+    import sqlite3
+
+    from core.persistence.database import DecisionDB
+
+    path = tmp_path / "decisions.db"
+    db = DecisionDB(path)
+    conn = sqlite3.connect(str(path))
+    conn.executemany(
+        "INSERT INTO events (timestamp, event_type, severity, narrative, source)"
+        " VALUES (?, ?, ?, ?, ?)",
+        rows,
+    )
+    conn.commit()
+    conn.close()
+    db.close()
+    return lambda *a, **kw: DecisionDB(path)
+
+
+def _gather_with_db(monkeypatch, tmp_path, rows, **kwargs):
+    from reports.pipeline import gather_report_events
+
+    monkeypatch.setattr(
+        "core.persistence.database.DecisionDB", _make_db(tmp_path, rows)
+    )
+    return gather_report_events(
+        None, [], llm_direction=None, now=NOW, live_scan=False, **kwargs
+    )
+
+
+def test_db_rows_parsed_into_events(monkeypatch, tmp_path):
+    """真实 DB 行 → CoffeeEvent：类型名大小写映射、severity、timestamp 解析。"""
+    events = _gather_with_db(monkeypatch, tmp_path, [
+        ("2026-07-19T08:00:00", "china_tariff_change", 4, "美国对巴西咖啡加征关税", "ustr"),
+    ])
+
+    assert len(events) == 1
+    ev = events[0]
+    assert ev.event_type == EventType.CHINA_TARIFF_CHANGE      # 小写 → 大写映射
+    assert ev.severity == 4
+    assert ev.timestamp == datetime(2026, 7, 19, 8, 0, 0)
+    assert ev.narrative == "美国对巴西咖啡加征关税"
+
+
+def test_db_unknown_event_type_skipped(monkeypatch, tmp_path):
+    """不认识的 event_type 静默跳过，不抛错、不影响其他行。"""
+    events = _gather_with_db(monkeypatch, tmp_path, [
+        ("2026-07-19T08:00:00", "NOT_A_REAL_EVENT", 4, "x", "s"),
+        ("2026-07-19T09:00:00", "CHINA_TARIFF_CHANGE", 3, "y", "s"),
+    ])
+
+    assert [e.event_type for e in events] == [EventType.CHINA_TARIFF_CHANGE]
+
+
+def test_db_bad_row_does_not_drop_following_rows(monkeypatch, tmp_path):
+    """单行坏数据（非法 timestamp）只跳过自己，其后的行仍被加载。"""
+    events = _gather_with_db(monkeypatch, tmp_path, [
+        ("not-a-timestamp", "CHINA_TARIFF_CHANGE", 3, "坏行", "s"),
+        ("2026-07-18T09:00:00", "FROST_CONFIRMED", 4, "好行", "s"),
+    ])
+
+    assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]
+
+
+# ── 三域扫描 ─────────────────────────────────────────────────────────────
+
+def _fake_scanner(events, boom=False):
+    class _S:
+        def __init__(self, bus=None, **kw):
+            pass
+
+        def scan_all(self):
+            if boom:
+                raise RuntimeError("scanner exploded")
+            return events
+    return _S
+
+
+def _patch_scanners(monkeypatch, supply, finance, policy):
+    monkeypatch.setattr("domains.supply.scanner.SupplyDomainScanner", supply)
+    monkeypatch.setattr("domains.finance.scanner.FinanceDomainScanner", finance)
+    monkeypatch.setattr("domains.policy.scanner.PolicyDomainScanner", policy)
+
+
+def _ev(event_type, ts, narrative="fresh"):
+    return CoffeeEvent(
+        event_type=event_type,
+        domain=Domain.SUPPLY,
+        timestamp=ts,
+        severity=3,
+        value=0.0,
+        narrative=narrative,
+        source="scanner",
+    )
+
+
+def test_live_scan_merges_with_db_and_dedupes(monkeypatch, tmp_path):
+    """
+    三域扫描的事件与 DB 事件都出现在结果里；
+    同类型且时间相差 <1h 的重复只保留较新的那条（新鲜扫描）。
+    """
+    from reports.pipeline import gather_report_events
+
+    _patch_scanners(
+        monkeypatch,
+        # 与 DB 里的 CHINA_TARIFF_CHANGE 只差 30 分钟 —— 同一个现实事件
+        _fake_scanner([_ev(EventType.CHINA_TARIFF_CHANGE, datetime(2026, 7, 19, 8, 30))]),
+        _fake_scanner([_ev(EventType.RSI_EXTREME, datetime(2026, 7, 20, 10, 0))]),
+        _fake_scanner([]),
+    )
+    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+        ("2026-07-19T08:00:00", "CHINA_TARIFF_CHANGE", 4, "db 版本", "db"),
+        ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "只在 db 里", "db"),
+    ]))
+
+    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    by_type = {e.event_type: e for e in events}
+
+    assert set(by_type) == {
+        EventType.CHINA_TARIFF_CHANGE,   # 扫描 ∩ DB，去重后剩一条
+        EventType.RSI_EXTREME,     # 只在扫描里
+        EventType.FROST_CONFIRMED,     # 只在 DB 里
+    }
+    # 去重保留较新的那条 = 新鲜扫描版本
+    assert by_type[EventType.CHINA_TARIFF_CHANGE].source == "scanner"
+
+
+def test_live_scan_far_apart_same_type_not_deduped(monkeypatch, tmp_path):
+    """同类型但相差远超 1 小时 → 是两个不同的现实事件，都要保留。"""
+    from reports.pipeline import gather_report_events
+
+    _patch_scanners(
+        monkeypatch,
+        _fake_scanner([_ev(EventType.CHINA_TARIFF_CHANGE, datetime(2026, 7, 20, 9, 0))]),
+        _fake_scanner([]),
+        _fake_scanner([]),
+    )
+    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+        ("2026-06-01T08:00:00", "CHINA_TARIFF_CHANGE", 4, "上一轮关税", "db"),
+    ]))
+
+    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    assert len(events) == 2
+
+
+def test_one_domain_failure_does_not_affect_others(monkeypatch, tmp_path):
+    """单域扫描失败只丢那个域 —— 另外两个域与 DB 尾巴照常。"""
+    from reports.pipeline import gather_report_events
+
+    _patch_scanners(
+        monkeypatch,
+        _fake_scanner(None, boom=True),   # supply 炸
+        _fake_scanner([_ev(EventType.RSI_EXTREME, datetime(2026, 7, 20, 10, 0))]),
+        _fake_scanner([_ev(EventType.CHINA_TARIFF_CHANGE, datetime(2026, 7, 20, 10, 0))]),
+    )
+    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+        ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
+    ]))
+
+    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    assert {e.event_type for e in events} == {
+        EventType.RSI_EXTREME, EventType.CHINA_TARIFF_CHANGE, EventType.FROST_CONFIRMED,
+    }
+
+
+def test_all_domains_failing_still_returns_db_tail(monkeypatch, tmp_path):
+    """三个域全炸也不能让周报生成挂掉。"""
+    from reports.pipeline import gather_report_events
+
+    _patch_scanners(
+        monkeypatch,
+        _fake_scanner(None, boom=True),
+        _fake_scanner(None, boom=True),
+        _fake_scanner(None, boom=True),
+    )
+    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+        ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
+    ]))
+
+    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]
+
+
+def test_live_scan_false_does_no_scanning(monkeypatch, tmp_path):
+    """live_scan=False 时绝不触碰扫描器（离线 / 测试场景）。"""
+    from reports.pipeline import gather_report_events
+
+    _patch_scanners(
+        monkeypatch,
+        _fake_scanner(None, boom=True),
+        _fake_scanner(None, boom=True),
+        _fake_scanner(None, boom=True),
+    )
+    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+        ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
+    ]))
+
+    events = gather_report_events(
+        None, [], llm_direction=None, now=NOW, live_scan=False
+    )
+    assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]

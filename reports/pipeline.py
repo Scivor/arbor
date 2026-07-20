@@ -787,17 +787,71 @@ def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
     )
 
 
+def _dedupe_events(
+    events: list[CoffeeEvent], window_hours: float = 1.0
+) -> list[CoffeeEvent]:
+    """
+    去重判据：event_type 相同、且 timestamp 相差在 window_hours 之内，
+    视为同一个现实事件的两份副本（出报时的新鲜扫描 vs DB 里的衰减尾巴），
+    保留较新的那一份。
+
+    只按 (类型, 时间邻近) 判定 —— narrative / source 在两条路径上必然不同
+    （扫描器写自己的措辞，DB 行是历史快照），不能参与判据。
+    """
+    kept: list[CoffeeEvent] = []
+    window = window_hours * 3600.0
+    # 先按时间倒序 —— 于是每组重复中最先被 kept 收下的就是最新的那条
+    for ev in sorted(events, key=lambda e: e.timestamp, reverse=True):
+        if any(
+            k.event_type == ev.event_type
+            and abs((k.timestamp - ev.timestamp).total_seconds()) <= window
+            for k in kept
+        ):
+            continue
+        kept.append(ev)
+    return kept
+
+
+def _scan_live_events() -> list[CoffeeEvent]:
+    """
+    出报时的三域全量扫描。
+
+    每个域独立 try/except —— 任一域失败只丢那个域，既不拖垮整篇周报，
+    也不连累另外两个域。扫描器一律挂在独立 EventBus 上，避免污染全局总线。
+    """
+    from core.events import EventBus
+    from domains.finance.scanner import FinanceDomainScanner
+    from domains.policy.scanner import PolicyDomainScanner
+    from domains.supply.scanner import SupplyDomainScanner
+
+    out: list[CoffeeEvent] = []
+    for name, cls in (
+        ("supply", SupplyDomainScanner),
+        ("finance", FinanceDomainScanner),
+        ("policy", PolicyDomainScanner),
+    ):
+        try:
+            out.extend(cls(EventBus()).scan_all())
+        except Exception as e:
+            logger.warning("%s 域扫描失败，本期周报跳过该域: %s", name, e)
+    return out
+
+
 def gather_report_events(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
     llm_direction: Optional[str],
     now: Optional[datetime] = None,
+    live_scan: bool = True,
 ) -> list[CoffeeEvent]:
     """
-    汇集周报评分所需的全部事件。
+    汇集周报评分所需的全部事件 = 出报时三域全量扫描（新鲜事件）
+    ∪ DB 中一年内的历史事件（衰减尾巴）∪ 报告侧因子。
 
     半衰期最长 365 天（policy 簇），仅靠出报时的新鲜扫描不够，
-    因此并入 DB 中一年内的历史事件作为衰减尾巴。
+    因此并入 DB 的衰减尾巴；两者重叠的部分由 _dedupe_events 去重。
+
+    live_scan=False 关闭网络 I/O（测试与离线场景）。
     """
     now = now or datetime.now()
     events: list[CoffeeEvent] = []
@@ -813,6 +867,10 @@ def gather_report_events(
         ev = llm_commentary_event(llm_direction)
         if ev:
             events.append(ev)
+
+    # 出报时的新鲜事件 —— 三域全量扫描
+    if live_scan:
+        events.extend(_scan_live_events())
 
     # 历史衰减尾巴 —— DB 失败时静默降级为「只用报告侧因子」
     try:
@@ -846,7 +904,7 @@ def gather_report_events(
         except (ValueError, KeyError, TypeError) as e:
             logger.debug("历史事件行解析失败，跳过该行: %s", e)
 
-    return events
+    return _dedupe_events(events)
 
 
 def compute_hedge_advice(
@@ -1219,10 +1277,13 @@ def run(config: PipelineConfig) -> PredictionReport:
 
     # LLM 方向此时才可用 —— 并入评分后重算，使点评真正参与定价
     if report.llm_direction:
+        # 复用 Step 3 已扫描的事件（三域扫描是网络 I/O，一期周报只做一次），
+        # 只把此刻才可用的 LLM 因子并进去重算。
+        llm_ev = llm_commentary_event(report.llm_direction)
         report.hedge_advice = compute_hedge_advice(
             report.market,
             report.scenarios,
-            gather_report_events(report.market, report.scenarios, report.llm_direction),
+            report_events + ([llm_ev] if llm_ev else []),
         ) or report.hedge_advice
 
     # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──

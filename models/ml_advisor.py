@@ -337,7 +337,11 @@ class MLAdvisor:
 
     def run(self) -> MLAdvice:
         """
-        运行 ML 顾问：计算信号 → 注入 DecisionEngine → 发布事件
+        运行 ML 顾问：计算信号 → 注入 DecisionEngine
+
+        update_ml_signal 内部会发一个 ML_MODEL_UPDATE 事件（value 承载 bias），
+        由评分函数统一处理。这里不再另发一个 value=confidence 的同类型事件：
+        confidence 无方向，会被 ml 簇当成贡献计入，把 BULLISH 也算成加套保。
 
         Returns:
             MLAdvice
@@ -346,34 +350,6 @@ class MLAdvisor:
 
         # 注入 DecisionEngine
         self.engine.update_ml_signal(advice.signal, advice.confidence, advice.bias)
-
-        # 发布 ML 事件到 EventBus
-        if self.bus is not None:
-            from core.types.enums import EventType, Domain
-            from core.types.event import CoffeeEvent
-
-            event = CoffeeEvent(
-                event_type=EventType.ML_MODEL_UPDATE,
-                domain=Domain.FINANCE,
-                timestamp=datetime.now(),
-                severity=2 if advice.confidence > 0.6 else 1,
-                value=advice.confidence,
-                narrative=(
-                    f"ML 信号: {advice.signal.value.upper()} "
-                    f"(置信度 {advice.confidence:.0%}, bias {advice.bias:+.0%})"
-                    f"\n  理由: {'; '.join(advice.rationale)}"
-                ),
-                source="MLAdvisor",
-                metadata={
-                    "signal": advice.signal.value,
-                    "confidence": advice.confidence,
-                    "bias": advice.bias,
-                    "rationale": advice.rationale,
-                    "model_type": advice.model_type,
-                    "price_target_30d": advice.price_target_30d,
-                },
-            )
-            self.bus.publish(event)
 
         self._last_advice = advice
         logger.info(

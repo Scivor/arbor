@@ -9,7 +9,7 @@ backtest/engine.py
 
 新增方法 (V3.0):
 - run_event_driven_with_engine(price_df, events_df):
-    使用 DecisionEngine (use_yaml=False) 替代手动硬编码事件检测。
+    使用 DecisionEngine（显式注入 YAML 规则表）替代手动硬编码事件检测。
     遍历 price_df 每一行，按 events_df 时间戳发布 CoffeeEvent，
     记录 engine.get_state().hedge_ratio 作为当前比率。
     核心类比: Sherlock QueryNotify.update() → DecisionEngine.bus.publish_adjustment
@@ -409,12 +409,15 @@ class CoffeeBacktestEngine:
                 events_by_ts.setdefault(ts, []).append(ev)
 
             # Create a fresh EventBus + DecisionEngine
-            # use_yaml=True triggers HedgeHandler init that deadlocks in subprocess;
-            # use_yaml=False keeps the event-driven mechanism (bus.publish triggers
-            # engine handlers) while avoiding YAML-loading hangs. Events still
-            # publish to the engine and can be used for ratio decisions.
+            # 规则表显式注入：get_regime_loader() 走本地 config/regimes.yaml，
+            # 不触发远程拉取，因此子进程里不会因网络 I/O 挂起。
+            from core.regime_config import get_regime_loader
+            loader = get_regime_loader()
+            loader.load()
             bus = EventBus()
-            engine = DecisionEngine(bus=bus, use_yaml=False)
+            engine = DecisionEngine(
+                bus=bus, rules=loader.event_rules(), cfg=loader.scoring
+            )
 
             # NOTE: If bus.publish() deadlocks here due to the engine's own
             # handler subscribing to the bus, the subprocess timeout in
@@ -621,7 +624,7 @@ def _domain_for_event_type(et: EventType) -> Domain:
     Map EventType to its Domain.
 
     Mirrors the grouping in core/types/enums.py and
-    the _FALLBACK_EVENT_CONFIG keys in DecisionEngine.
+    the adjustment_rules keys in config/regimes.yaml.
     """
     # SUPPLY domain events
     supply_types = {

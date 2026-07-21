@@ -132,7 +132,9 @@ def test_html_escapes_llm_output():
     report = demo_report()
     report.llm_commentary = "点评 <script>alert(1)</script> 完"
     html = build_report_html(report, lang="zh")
-    assert "AI 分析师点评" in html
+    # 断言点评板块专属的 class，而非标题字符串 —— 「AI 分析师点评」同时是
+    # 归因板块里的驱动因子名（见 f7bc0e7），裸字符串检查会被它干扰。
+    assert 'class="outlook-box ai-commentary"' in html
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
 
@@ -140,7 +142,7 @@ def test_html_escapes_llm_output():
 def test_html_none_hides_section():
     report = demo_report()
     assert report.llm_commentary is None
-    assert "AI 分析师点评" not in build_report_html(report, lang="zh")
+    assert 'class="outlook-box ai-commentary"' not in build_report_html(report, lang="zh")
 
 
 def test_to_text_and_to_dict():

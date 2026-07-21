@@ -405,8 +405,9 @@ regimes:
 # 每个 EventType → 对应的调整参数:
 #   adjustment:  触发后的套保比率调整量 (正=增套保，负=减套保)
 #   min_severity: 生效的最低 severity 阈值
-#   cooldown_seconds: 同事件重复触发的冷却时间 (秒)
-#   multiplier_sev4+: severity >= 4 时的额外乘数
+#   cooldown_seconds: 同事件正常重复间隔 (秒)；周报去重窗口按它取
+#   cluster:     所属因子簇 —— 簇内递减求和防同一风险源重复计数
+#   half_life_days: 信息寿命 —— 贡献衰减一半所需天数
 # ============================================================
 
 adjustment_rules:
@@ -416,7 +417,6 @@ adjustment_rules:
     adjustment: 0.20
     min_severity: 3
     cooldown_seconds: 600
-    multiplier_sev4: 1.5
     cluster: brazil_supply
     half_life_days: 90
 
@@ -424,7 +424,6 @@ adjustment_rules:
     adjustment: 0.30
     min_severity: 3
     cooldown_seconds: 600
-    multiplier_sev4: 1.5
     cluster: brazil_supply
     half_life_days: 90
 
@@ -432,7 +431,6 @@ adjustment_rules:
     adjustment: 0.20
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: climate
     half_life_days: 180
 
@@ -440,7 +438,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: climate
     half_life_days: 180
 
@@ -448,7 +445,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: climate
     half_life_days: 180
 
@@ -456,7 +452,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: climate
     half_life_days: 180
 
@@ -464,7 +459,6 @@ adjustment_rules:
     adjustment: 0.25
     min_severity: 3
     cooldown_seconds: 3600
-    multiplier_sev4: 1.5
     cluster: inventory
     half_life_days: 30
 
@@ -472,7 +466,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 2
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: inventory
     half_life_days: 30
 
@@ -480,7 +473,6 @@ adjustment_rules:
     adjustment: -0.10
     min_severity: 2
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: inventory
     half_life_days: 30
 
@@ -488,7 +480,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 3
     cooldown_seconds: 604800
-    multiplier_sev4: 1.0
     cluster: positioning
     half_life_days: 14
 
@@ -496,7 +487,6 @@ adjustment_rules:
     adjustment: -0.15
     min_severity: 3
     cooldown_seconds: 604800
-    multiplier_sev4: 1.0
     cluster: positioning
     half_life_days: 14
 
@@ -504,7 +494,6 @@ adjustment_rules:
     adjustment: -0.10
     min_severity: 2
     cooldown_seconds: 604800
-    multiplier_sev4: 1.0
     cluster: positioning
     half_life_days: 14
 
@@ -512,7 +501,6 @@ adjustment_rules:
     adjustment: 0.25
     min_severity: 4
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: brazil_supply
     half_life_days: 90
 
@@ -520,7 +508,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 3
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: colombia_supply
     half_life_days: 90
 
@@ -528,7 +515,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 2
     cooldown_seconds: 2592000
-    multiplier_sev4: 1.0
     cluster: brazil_supply
     half_life_days: 90
 
@@ -536,7 +522,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 3
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: brazil_supply
     half_life_days: 90
 
@@ -545,7 +530,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 3
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: fx
     half_life_days: 7
 
@@ -553,7 +537,6 @@ adjustment_rules:
     adjustment: 0.05
     min_severity: 2
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: fx
     half_life_days: 7
 
@@ -561,7 +544,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 3
     cooldown_seconds: 300
-    multiplier_sev4: 1.5
     cluster: price
     half_life_days: 3
 
@@ -569,7 +551,6 @@ adjustment_rules:
     adjustment: -0.05
     min_severity: 3
     cooldown_seconds: 300
-    multiplier_sev4: 1.0
     cluster: price
     half_life_days: 3
 
@@ -577,7 +558,6 @@ adjustment_rules:
     adjustment: 0.20
     min_severity: 3
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: price
     half_life_days: 30
 
@@ -585,7 +565,6 @@ adjustment_rules:
     adjustment: -0.20
     min_severity: 3
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: price
     half_life_days: 30
 
@@ -593,7 +572,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 3
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: price
     half_life_days: 7
 
@@ -601,7 +579,6 @@ adjustment_rules:
     adjustment: 0.05
     min_severity: 3
     cooldown_seconds: 3600
-    multiplier_sev4: 1.0
     cluster: macro
     half_life_days: 7
 
@@ -610,7 +587,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: climate
     half_life_days: 180
 
@@ -618,7 +594,6 @@ adjustment_rules:
     adjustment: 0.05
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: climate
     half_life_days: 180
 
@@ -626,7 +601,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: policy
     half_life_days: 365
 
@@ -634,7 +608,6 @@ adjustment_rules:
     adjustment: -0.10
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -642,7 +615,6 @@ adjustment_rules:
     adjustment: -0.05
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -650,7 +622,6 @@ adjustment_rules:
     adjustment: 0.05
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -658,7 +629,6 @@ adjustment_rules:
     adjustment: 0.05
     min_severity: 2
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: fx
     half_life_days: 7
 
@@ -667,7 +637,6 @@ adjustment_rules:
     adjustment: 0.25
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -675,7 +644,6 @@ adjustment_rules:
     adjustment: 0.35
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: policy
     half_life_days: 365
 
@@ -683,7 +651,6 @@ adjustment_rules:
     adjustment: 0.30
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.5
     cluster: policy
     half_life_days: 365
 
@@ -691,7 +658,6 @@ adjustment_rules:
     adjustment: -0.10
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -699,7 +665,6 @@ adjustment_rules:
     adjustment: -0.05
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -707,7 +672,6 @@ adjustment_rules:
     adjustment: 0.10
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 
@@ -715,7 +679,6 @@ adjustment_rules:
     adjustment: 0.15
     min_severity: 1
     cooldown_seconds: 86400
-    multiplier_sev4: 1.0
     cluster: policy
     half_life_days: 365
 

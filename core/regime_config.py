@@ -250,7 +250,6 @@ class HedgeAdjustmentRule:
     adjustment: float          # 调整量 (正=增套保，负=减)
     min_severity: int = 3      # 最低 severity 才生效
     cooldown_seconds: int = 600  # 同事件冷却时间；现由 reports.pipeline._dedupe_events 用作去重窗口
-    multiplier_sev4: float = 1.5  # severity >= 4 的额外乘数（评分重构后仅供旧路径 get_adjustment_for_event 参考）
     reason: str = ""           # 调整原因描述
     cluster: str = "misc"      # 所属因子簇 —— 簇内递减求和防重复计数
     half_life_days: float = 30.0  # 信息寿命 —— 贡献衰减一半所需天数
@@ -434,7 +433,6 @@ class RegimeConfigLoader:
                     adjustment=cfg.get("adjustment", 0.0),
                     min_severity=cfg.get("min_severity", 3),
                     cooldown_seconds=cfg.get("cooldown_seconds", 600),
-                    multiplier_sev4=cfg.get("multiplier_sev4", 1.5),
                     reason=cfg.get("reason", ""),
                     cluster=cfg.get("cluster", "misc"),
                     half_life_days=float(cfg.get("half_life_days", 30.0)),
@@ -546,42 +544,6 @@ class RegimeConfigLoader:
                 min_severity=rule.min_severity,
             )
         return out
-
-    def get_adjustment_for_event(self, event_type_name: str,
-                                  severity: int,
-                                  current_time=None) -> Optional[dict]:
-        """
-        获取事件触发后的实际 adjustment 值
-
-        Returns dict with:
-          - adjustment: 实际调整量（含 multiplier）
-          - rule: HedgeAdjustmentRule
-          - blocked: bool (cooldown 中)
-          - reason: str
-        """
-        rule = self.get_adjustment_rule(event_type_name)
-        if not rule:
-            return None
-
-        # 检查 min_severity
-        if severity < rule.min_severity:
-            return None
-
-        # 计算最终 adjustment（含 severity 乘数）
-        final_adj = rule.adjustment
-        if severity >= 4:
-            final_adj *= rule.multiplier_sev4
-
-        return {
-            "adjustment": final_adj,
-            "rule": rule,
-            "blocked": False,  # cooldown 检查由调用方负责
-            "reason": rule.reason,
-        }
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # Sherlock --site / --nsfw 等价的运行时过滤
-    # ─────────────────────────────────────────────────────────────────────────
 
     # ----------------------------------------------------------
     # Sherlock --site / --nsfw 等价的运行时过滤

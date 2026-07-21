@@ -116,3 +116,46 @@ def test_event_driven_ratio_peaks_then_decays():
 
     peak = max(ratios)
     assert ratios[-1] < peak - 0.005, "比率未随 bar 时间推进而衰减回落"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# run(events_df=None) 合成路径下线: events_df 现在必填
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _minimal_config_and_prices():
+    idx = pd.date_range("2022-01-03", periods=60, freq="D")
+    price_df = pd.DataFrame(
+        {"price": [200.0 + i * 0.1 for i in range(len(idx))]}, index=idx
+    )
+    cfg = BacktestConfig(
+        start_date="2022-01-03", end_date="2022-03-03",
+        initial_equity=1_000_000.0, coffee_tons_per_month=100.0,
+        contract_size=37.5, commission_per_contract=5.0,
+        initial_hedge_ratio=0.65, max_hedge_ratio=1.0, min_hedge_ratio=0.0,
+    )
+    return cfg, price_df
+
+
+def test_run_without_events_df_raises():
+    """run(events_df=None) 的合成路径已下线 —— events_df 现在必填。"""
+    cfg, price_df = _minimal_config_and_prices()
+    engine = CoffeeBacktestEngine(cfg, price_df)
+
+    with pytest.raises(ValueError, match="events_df"):
+        engine.run()
+
+
+def test_run_with_events_df_still_returns_three_strategies():
+    """run(events_df=<data>) 仍委托 run_event_driven_with_engine，三策略结构不变。"""
+    cfg, price_df = _minimal_config_and_prices()
+    events = [
+        {"timestamp": pd.Timestamp("2022-01-20"),
+         "event_type": "FROST_CONFIRMED", "severity": 4, "value": 0.0},
+    ]
+    engine = CoffeeBacktestEngine(cfg, price_df)
+
+    stats = engine.run(events_df=events)
+
+    assert set(stats.keys()) == {"no_hedge", "static_hedge", "event_hedge"}
+    for s in stats.values():
+        assert s.net_cost_per_ton != 0 or s.total_cost == 0

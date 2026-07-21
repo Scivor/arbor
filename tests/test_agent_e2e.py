@@ -104,6 +104,7 @@ def mock_openai_server():
         thread.join(timeout=5)
 
 
+@pytest.mark.integration
 def test_analyst_e2e_tool_calling_loop(mock_openai_server, monkeypatch):
     base_url, requests_log = mock_openai_server
     monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-fake")

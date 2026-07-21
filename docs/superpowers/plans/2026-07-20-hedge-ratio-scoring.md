@@ -892,9 +892,21 @@ PRICE_30D_EXTREME_UP/DOWN、ML_MODEL_UPDATE、PRODUCTION_UPDATE。"
 
 from datetime import datetime, timedelta
 
+from core.state.scoring import EventRule
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from models.ml_advisor import MLSignal
+
+
+# 显式规则表 —— 测试不依赖 config/regimes.yaml，也不触发 loader 的远程拉取路径。
+TEST_RULES = {
+    EventType.FROST_WARNING: EventRule(0.20, "brazil_supply", 90.0, 3),
+    EventType.FROST_CONFIRMED: EventRule(0.30, "brazil_supply", 90.0, 3),
+    EventType.CHINA_TARIFF_CHANGE: EventRule(0.25, "policy", 365.0, 1),
+    EventType.EXPORT_BAN: EventRule(0.35, "policy", 365.0, 1),
+    EventType.ICE_INVENTORY_SPIKE: EventRule(-0.10, "inventory", 30.0, 2),
+    EventType.ML_MODEL_UPDATE: EventRule(1.0, "ml", 7.0, 1),
+}
 
 
 def _event(bus_engine, event_type, severity=4, days_ago=0.0):
@@ -959,7 +971,7 @@ def test_order_invariance_through_bus():
     ]
 
     def run(seq):
-        e = DecisionEngine(bus=EventBus(), use_yaml=False)
+        e = DecisionEngine(bus=EventBus(), rules=TEST_RULES)
         for ev in seq:
             e.bus.publish(ev)
         return e.get_state().hedge_ratio
@@ -969,10 +981,22 @@ def test_order_invariance_through_bus():
 
 在该文件顶部确认已 `import pytest`；若无则补上。
 
+同时把该文件既有的 `engine` fixture 从：
+
+```python
+    return DecisionEngine(bus=bus, use_yaml=False)
+```
+
+改为：
+
+```python
+    return DecisionEngine(bus=bus, rules=TEST_RULES)
+```
+
 - [ ] **Step 2: 跑测试确认失败**
 
 Run: `python -m pytest tests/test_decision_engine.py -q -k "idempotent or decays or breakdown"`
-Expected: FAIL — `AttributeError: 'DecisionEngine' object has no attribute 'recompute'`
+Expected: FAIL — `TypeError: __init__() got an unexpected keyword argument 'rules'`
 
 - [ ] **Step 3: 改 `DecisionEngine.__init__`**
 
@@ -981,19 +1005,38 @@ Expected: FAIL — `AttributeError: 'DecisionEngine' object has no attribute 're
 把 `__init__` 替换为：
 
 ```python
-    def __init__(self, bus: Optional[EventBus] = None, use_yaml: bool = True):
+    def __init__(
+        self,
+        bus: Optional[EventBus] = None,
+        rules: Optional[dict[EventType, EventRule]] = None,
+        cfg: Optional[ScoringConfig] = None,
+    ):
+        """
+        Args:
+            bus:   事件总线，默认全局单例
+            rules: 评分规则表。None → 从 config/regimes.yaml 加载。
+                   测试与回测传显式规则表，避免 loader 的远程拉取路径。
+            cfg:   评分全局参数。None → 随 rules 一并从 YAML 读取。
+
+        旧的 use_yaml 布尔参数已移除：规则表现在是显式注入的依赖，
+        而不是构造函数里的隐式副作用。
+        """
         self.bus = bus or get_event_bus()
         self._lock = __import__('threading').RLock()
 
-        # ── 评分规则：YAML 是单一事实源 ───────────────────────────────────────
-        self._rules: dict[EventType, EventRule] = {}
-        self._cfg: ScoringConfig = ScoringConfig()
-        if use_yaml:
+        # ── 评分规则：YAML 是单一事实源，但可被显式注入覆盖 ──────────────────
+        if rules is not None:
+            self._rules = rules
+            self._cfg = cfg or ScoringConfig()
+        else:
+            self._rules = {}
+            self._cfg = cfg or ScoringConfig()
             try:
                 loader = get_regime_loader()
                 loader.load()
                 self._rules = loader.event_rules()
-                self._cfg = loader.scoring
+                if cfg is None:
+                    self._cfg = loader.scoring
                 logger.info("[DecisionEngine] 已加载 %d 条评分规则", len(self._rules))
             except Exception as e:
                 logger.warning("[DecisionEngine] YAML 加载失败，评分规则为空: %s", e)
@@ -1155,7 +1198,7 @@ def compute_hedge_from_events(
 
 `ml_advisor.py:347` 附近的注入调用签名未变（仍是 `engine.update_ml_signal(signal, confidence, bias)`），无需改动。仅确认其后没有再读 `engine._hedge_ratio` 私有字段：
 
-Run: `grep -n "_hedge_ratio" models/ml_advisor.py core/paper_trading/engine.py agent/tools/system.py`
+Run: `grep -rn "_hedge_ratio\|use_yaml" models/ ml_advisor.py core/paper_trading/ agent/ coffee_system.py backtest/ 2>/dev/null`
 Expected: 无输出。若有，改为 `engine.get_state().hedge_ratio`。
 
 - [ ] **Step 8: 跑测试确认通过**
@@ -1234,7 +1277,7 @@ def test_backtest_and_live_agree():
     """同一事件列表经两条路径 → 同一比率。"""
     events = _events()
 
-    engine = DecisionEngine(bus=EventBus(), use_yaml=True)
+    engine = DecisionEngine(bus=EventBus())      # rules=None → 从 YAML 加载
     for e in events:
         engine.bus.publish(e)
     live = engine.recompute(now=NOW)
@@ -1290,6 +1333,20 @@ Expected: FAIL — `TypeError: compute_hedge_from_events() got an unexpected key
 ```
 
 确认 `HedgeDefaults` 已 import；若无则加 `from core.types.constants import HedgeDefaults`。删除文件中因此变为孤儿的 `EventBus` / `DecisionEngine` import。
+
+同时把 `backtest/engine.py:624` 附近 `_domain_for_event_type` 的 docstring 中这一行：
+
+```
+    the _FALLBACK_EVENT_CONFIG keys in DecisionEngine.
+```
+
+改为：
+
+```
+    the adjustment_rules keys in config/regimes.yaml.
+```
+
+（`_FALLBACK_EVENT_CONFIG` 已在 Task 4 删除。）
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -1524,7 +1581,7 @@ def test_report_and_engine_agree():
         CoffeeEvent(EventType.CHINA_TARIFF_CHANGE, Domain.POLICY, NOW, 3, 0.0, "t", "t"),
     ]
 
-    engine = DecisionEngine(bus=EventBus(), use_yaml=True)
+    engine = DecisionEngine(bus=EventBus())      # rules=None → 从 YAML 加载
     for e in events:
         engine.bus.publish(e)
     engine_ratio = engine.recompute(now=NOW)

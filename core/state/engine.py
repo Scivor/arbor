@@ -26,6 +26,12 @@ from core.types.state import HedgeState
 from core.types.constants import HedgeDefaults
 from core.events.bus import EventBus, get_event_bus
 from core.state.signals import signal_from_ratio, signal_descriptions
+from core.state.scoring import (
+    EventRule,
+    ScoringConfig,
+    ScoreBreakdown,
+    compute_score,
+)
 from core.regime_config import get_regime_loader
 from core.cost import LandedCostCalculator
 
@@ -155,229 +161,82 @@ class HedgeAdjustment:
 
 class DecisionEngine:
     """
-    Event-driven decision engine.
+    Event-driven decision engine —— 无状态薄壳。
 
-    Features:
-    - Event-triggered: immediately adjusts hedge ratio on events
-    - Diminishing returns: same event type within cooldown window has reduced effect
-    - Severity bonus: severity >= 4 events get multiplier (from YAML or 1.5x default)
-    - Bounds clamping: ratio stays within MIN/MAX_HEDGE_RATIO
-    - State history: keeps last 100 snapshots
-    - YAML-driven: adjustment rules loaded from config/regimes.yaml (fallback: hardcoded)
+    它只持有事件窗口；套保比率是该窗口在当前时刻的**纯函数**
+    （见 core/state/scoring.compute_score）。每有新事件到达就全量重算，
+    因此:
+      - 无棘轮效应：贡献按半衰期衰减，比率会自行回落
+      - 无路径依赖：同一组事件换顺序得到同一比率
+      - 重复注入幂等：不存在可累加的状态
+
+    评分规则的单一事实源是 config/regimes.yaml；测试与回测可显式注入。
     """
 
-    # ─────────────────────────────────────────────────────────────────────────
-    # Hardcoded fallback — only used when YAML rules are unavailable
-    # These values MATCH config/regimes.yaml adjustment_rules
-    # ─────────────────────────────────────────────────────────────────────────
-    _FALLBACK_EVENT_CONFIG: dict[EventType, dict] = {
-        # === SUPPLY DOMAIN ===
-        EventType.FROST_WARNING: dict(
-            adjustment=0.20, min_severity=3, cooldown=600, multiplier=1.5,
-            reason="Frost warning"
-        ),
-        EventType.FROST_CONFIRMED: dict(
-            adjustment=0.30, min_severity=3, cooldown=600, multiplier=1.5,
-            reason="Frost confirmed"
-        ),
-        EventType.EL_NINO_CONFIRMED: dict(
-            adjustment=0.20, min_severity=2, cooldown=86400, multiplier=1.5,
-            reason="El Nino confirmed"
-        ),
-        EventType.LA_NINA_CONFIRMED: dict(
-            adjustment=0.10, min_severity=2, cooldown=86400, multiplier=1.5,
-            reason="La Nina confirmed"
-        ),
-        EventType.ONI_THRESHOLD_CROSS: dict(
-            adjustment=0.15, min_severity=2, cooldown=86400, multiplier=1.5,
-            reason="ONI threshold crossed"
-        ),
-        EventType.ICE_INVENTORY_CRITICAL: dict(
-            adjustment=0.25, min_severity=3, cooldown=3600, multiplier=1.5,
-            reason="ICE inventory critical"
-        ),
-        EventType.ICE_INVENTORY_DROP: dict(
-            adjustment=0.10, min_severity=2, cooldown=3600, multiplier=1.0,
-            reason="ICE inventory dropping"
-        ),
-        EventType.ICE_INVENTORY_SPIKE: dict(
-            adjustment=-0.10, min_severity=2, cooldown=3600, multiplier=1.0,
-            reason="ICE inventory rising"
-        ),
-        EventType.COT_SPECULATIVE_TOP: dict(
-            adjustment=0.15, min_severity=3, cooldown=604800, multiplier=1.0,
-            reason="Speculative longs at extremes"
-        ),
-        EventType.COT_SPECULATIVE_BOTTOM: dict(
-            adjustment=-0.15, min_severity=3, cooldown=604800, multiplier=1.0,
-            reason="Speculative shorts at extremes"
-        ),
-        EventType.COT_COMMERCIAL_BOTTOM: dict(
-            adjustment=-0.10, min_severity=2, cooldown=604800, multiplier=1.0,
-            reason="Commercial building longs"
-        ),
-        EventType.BRAZIL_CROP_ALERT: dict(
-            adjustment=0.25, min_severity=4, cooldown=86400, multiplier=1.5,
-            reason="Brazil crop alert"
-        ),
-        EventType.COLOMBIA_WEATHER_ALERT: dict(
-            adjustment=0.15, min_severity=3, cooldown=86400, multiplier=1.5,
-            reason="Colombia weather anomaly"
-        ),
-        EventType.SEASONAL_WINDOW_OPEN: dict(
-            adjustment=0.10, min_severity=3, cooldown=86400, multiplier=1.0,
-            reason="Seasonal frost window"
-        ),
-        EventType.HEAT_WAVE: dict(
-            adjustment=0.15, min_severity=3, cooldown=86400, multiplier=1.5,
-            reason="Extreme heat damages coffee crops"
-        ),
-        EventType.ML_MODEL_UPDATE: dict(
-            adjustment=0.0, min_severity=0, cooldown=0, multiplier=1.0,
-            reason="ML signal update (bias applied via update_ml_signal)"
-        ),
+    def __init__(
+        self,
+        bus: Optional[EventBus] = None,
+        rules: Optional[dict[EventType, EventRule]] = None,
+        cfg: Optional[ScoringConfig] = None,
+    ):
+        """
+        Args:
+            bus:   事件总线，默认全局单例
+            rules: 评分规则表。None → 从 config/regimes.yaml 加载。
+                   测试与回测传显式规则表，避免 loader 的远程拉取路径。
+            cfg:   评分全局参数。None → 随 rules 一并从 YAML 读取。
 
-        # === FINANCE DOMAIN ===
-        EventType.FX_USD_CNY_SHOCK: dict(
-            adjustment=0.15, min_severity=3, cooldown=3600, multiplier=1.0,
-            reason="USD/CNY sharp move"
-        ),
-        EventType.FX_USD_CNY_THRESHOLD: dict(
-            adjustment=0.05, min_severity=2, cooldown=3600, multiplier=1.0,
-            reason="USD/CNY key level broken"
-        ),
-        EventType.PRICE_SHOCK_UP: dict(
-            adjustment=0.10, min_severity=3, cooldown=300, multiplier=1.5,
-            reason="Intra-day price surge"
-        ),
-        EventType.PRICE_SHOCK_DOWN: dict(
-            adjustment=-0.05, min_severity=3, cooldown=300, multiplier=1.0,
-            reason="Intra-day price drop"
-        ),
-        EventType.PRICE_30D_EXTREME_UP: dict(
-            adjustment=0.20, min_severity=3, cooldown=86400, multiplier=1.5,
-            reason="30-day extreme price rise"
-        ),
-        EventType.PRICE_30D_EXTREME_DOWN: dict(
-            adjustment=-0.20, min_severity=3, cooldown=86400, multiplier=1.5,
-            reason="30-day extreme price fall"
-        ),
-        EventType.BASIS_SPIKE: dict(
-            adjustment=0.10, min_severity=3, cooldown=3600, multiplier=1.0,
-            reason="Basis anomaly"
-        ),
-        EventType.WTI_OIL_SHOCK: dict(
-            adjustment=0.05, min_severity=3, cooldown=3600, multiplier=1.0,
-            reason="WTI oil price shock"
-        ),
-
-        # === POLYMARKET SIGNALS ===
-        EventType.POLY_CLIMATE_HOT: dict(
-            adjustment=0.10, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: El Nino prob > 70%"
-        ),
-        EventType.POLY_CLIMATE_COLD: dict(
-            adjustment=0.05, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: La Nina prob > 70%"
-        ),
-        EventType.POLY_TRADE_WAR_ESCALATE: dict(
-            adjustment=0.15, min_severity=2, cooldown=86400, multiplier=1.5,
-            reason="Polymarket: trade war escalation risk up"
-        ),
-        EventType.POLY_TRADE_WAR_DEESCALATE: dict(
-            adjustment=-0.10, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: trade war de-escalation"
-        ),
-        EventType.POLY_HORMUZ_NORMAL: dict(
-            adjustment=-0.05, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: Hormuz normalising"
-        ),
-        EventType.POLY_TRUMP_VISIT_CHINA: dict(
-            adjustment=0.05, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: Trump China visit prob high"
-        ),
-        EventType.POLY_FX_VOLATILE: dict(
-            adjustment=0.05, min_severity=2, cooldown=86400, multiplier=1.0,
-            reason="Polymarket: FX volatility rising"
-        ),
-
-        # === POLICY DOMAIN ===
-        EventType.CHINA_TARIFF_CHANGE: dict(
-            adjustment=0.25, min_severity=1, cooldown=86400, multiplier=1.0,
-            reason="China tariff policy change"
-        ),
-        EventType.EXPORT_BAN: dict(
-            adjustment=0.35, min_severity=1, cooldown=86400, multiplier=1.5,
-            reason="Coffee export ban or restriction"
-        ),
-        EventType.TRADE_WAR_NEW_ROUND: dict(
-            adjustment=0.30, min_severity=1, cooldown=86400, multiplier=1.5,
-            reason="New round of trade war"
-        ),
-        EventType.TRADE_WAR_DEESCALATION: dict(
-            adjustment=-0.10, min_severity=1, cooldown=86400, multiplier=1.0,
-            reason="Trade war de-escalation"
-        ),
-        EventType.LDC_STATUS_GAINED: dict(
-            adjustment=-0.05, min_severity=1, cooldown=86400, multiplier=1.0,
-            reason="New LDC origin confirmed"
-        ),
-        EventType.LDC_STATUS_LOST: dict(
-            adjustment=0.10, min_severity=1, cooldown=86400, multiplier=1.0,
-            reason="LDC status lost"
-        ),
-        EventType.PESTICIDE_STANDARD_CHANGE: dict(
-            adjustment=0.15, min_severity=1, cooldown=86400, multiplier=1.0,
-            reason="MRL standards tightened"
-        ),
-    }
-
-    def __init__(self, bus: Optional[EventBus] = None, use_yaml: bool = True):
+        旧的 use_yaml 布尔参数已移除：规则表现在是显式注入的依赖，
+        而不是构造函数里的隐式副作用。
+        """
         self.bus = bus or get_event_bus()
-
-        # ── YAML-driven adjustment rules (Sherlock data.json 的等价) ──────────
-        self._loader = None
-        self._use_yaml = use_yaml
-        if use_yaml:
-            try:
-                self._loader = get_regime_loader()
-                self._loader.load()
-                yaml_rules = self._loader.adjustment_rules
-                if not yaml_rules:
-                    print("[DecisionEngine] YAML adjustment_rules 为空，使用硬编码回退")
-                    self._use_yaml = False
-                else:
-                    print(f"[DecisionEngine] 已加载 {len(yaml_rules)} 条 YAML adjustment rules")
-            except Exception as e:
-                print(f"[DecisionEngine] YAML 加载失败，使用硬编码回退: {e}")
-                self._use_yaml = False
-
-        # State
-        self._hedge_ratio: float = HedgeDefaults.DEFAULT_HEDGE_RATIO
-        self._state_history: list[HedgeState] = []
-        self._adjustments: deque[HedgeAdjustment] = deque(maxlen=100)  # bounded, auto-evicts oldest
         self._lock = __import__('threading').RLock()
+        # 独立于 _lock：串行化整个 update_ml_signal（包括锁外的 publish），
+        # 避免两次调用交错成"A清、B清、A发、B发"导致窗口留下重复 ML 事件。
+        # 不能复用 _lock 包 publish —— publish 会重入 handler 再抢 _lock，死锁。
+        self._ml_lock = __import__('threading').Lock()
 
-        # ML bias — applied as additive adjustment to event-driven ratio
-        # Updated by MLAdvisor.run() via update_ml_signal()
-        # BULLISH: bias < 0 (reduce hedge, price will rise)
-        # BEARISH:  bias > 0 (increase hedge, price will fall)
+        # ── 评分规则：YAML 是单一事实源，但可被显式注入覆盖 ──────────────────
+        if rules is not None:
+            self._rules = rules
+            self._cfg = cfg or ScoringConfig()
+        else:
+            self._rules = {}
+            self._cfg = cfg or ScoringConfig()
+            try:
+                loader = get_regime_loader()
+                loader.load()
+                self._rules = loader.event_rules()
+                if cfg is None:
+                    self._cfg = loader.scoring
+                logger.info("[DecisionEngine] 已加载 %d 条评分规则", len(self._rules))
+            except Exception as e:
+                logger.error("[DecisionEngine] YAML 加载失败，评分规则为空: %s", e)
+            # 规则表为空 = 引擎对所有事件永久失聪，比率恒为中性基准。
+            # 不抛异常（引擎失聪不像周报印错数那样直接对外），但必须响亮。
+            if not self._rules:
+                logger.error(
+                    "[DecisionEngine] 评分规则表为空，引擎将对所有事件失聪 —— "
+                    "检查 config/regimes.yaml 的 adjustment_rules"
+                )
+
+        # ── 事件窗口 —— 比率是它的纯函数 ─────────────────────────────────────
+        # maxlen 覆盖最长半衰期（policy 365d）下仍有意义的事件量
+        self._events: deque[CoffeeEvent] = deque(maxlen=2000)
+        self._breakdown: ScoreBreakdown = compute_score(
+            [], self._rules, datetime.now(), self._cfg
+        )
+
+        # ML 信号仅作展示字段；其对比率的影响完全经由 ML_MODEL_UPDATE 事件
         self._ml_bias: float = 0.0
         self._ml_confidence: float = 0.0
 
-        # Register all event handlers
-        all_event_types = set(self._FALLBACK_EVENT_CONFIG.keys())
-        if self._use_yaml and self._loader:
-            yaml_ets = {
-                EventType[k] for k in self._loader.adjustment_rules.keys()
-                if k in EventType.__members__
-            }
-            all_event_types.update(yaml_ets)
+        self._state_history: list[HedgeState] = []
+        self._adjustments: deque[HedgeAdjustment] = deque(maxlen=100)
 
-        for event_type in all_event_types:
+        for event_type in self._rules:
             self.bus.subscribe(event_type, self._make_handler(event_type))
 
-        # Record initial state
         self._record_state("System initialised")
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -391,159 +250,112 @@ class DecisionEngine:
         bias: float,
     ) -> None:
         """
-        Inject ML model signal into the decision engine.
+        注入 ML 信号 —— 发一个 ML_MODEL_UPDATE 事件，由评分函数统一处理。
 
-        This is called periodically by MLAdvisor.run() (via Scheduler).
-        The ML bias is applied on top of the event-driven hedge ratio,
-        creating a hybrid rule-based + ML system.
+        不再直接修改比率。旧实现 (ratio += bias) 在周期性调用下会把同一信号
+        复利叠加；现在 score 每次全量重算，同一信号重复注入是幂等的。
 
-        Args:
-            signal: MLSignal.BULLISH / NEUTRAL / BEARISH
-            confidence: 0.0–1.0, how strongly the model believes the signal
-            bias: Suggested ratio adjustment (positive=increase hedge, negative=decrease)
+        confidence <= 0.3 忽略；0.3–0.6 半权重；>= 0.6 全权重。
 
-        Note:
-            The bias is only applied when confidence > 0.3.
-            High-confidence ML signals (> 0.6) get full bias weight.
-            Medium-confidence signals (0.3–0.6) get 50% weight.
+        忽略不是"什么都不做"：窗口里若还留着此前高置信度信号的
+        ML_MODEL_UPDATE 事件，必须先清掉再重算，否则展示字段（ml_bias）
+        显示已撤销，但 breakdown/比率里那条旧事件仍在生效，两者矛盾。
+
+        _ml_lock 把方法体整体（含锁外的 publish）串行化，见 __init__ 注释。
         """
-        with self._lock:
-            old_ratio = self._hedge_ratio
+        with self._ml_lock:
             self._ml_signal = signal
             self._ml_confidence = confidence
 
-            if confidence <= 0.3:
-                # Low confidence: ignore ML signal
-                self._ml_bias = 0.0
-                logger.debug(
-                    "[DecisionEngine] ML signal %s ignored (confidence=%.0f < 0.3)",
-                    signal.value, confidence
+            with self._lock:
+                # 同一时刻的旧 ML 事件先出窗口 —— 保证幂等，也是撤销
+                # 先前信号的前提（必须在 confidence<=0.3 判断之前做，
+                # 否则低置信度分支永远碰不到这段清理逻辑）
+                self._events = deque(
+                    (e for e in self._events if e.event_type != EventType.ML_MODEL_UPDATE),
+                    maxlen=self._events.maxlen,
                 )
-                return
 
-            # Confidence-weighted bias
-            if confidence >= 0.6:
-                weight = 1.0
-            else:
-                weight = 0.5  # 0.3–0.6: 50% weight
+                if confidence <= 0.3:
+                    self._ml_bias = 0.0
+                    self._recompute_locked(datetime.now())
+                    self._record_state(f"ML {signal.value} 置信度过低，撤销此前信号")
+                    logger.debug("[DecisionEngine] ML %s 被忽略 (confidence=%.2f)",
+                                 signal.value, confidence)
+                    return
 
-            self._ml_bias = bias * weight
+                weight = 1.0 if confidence >= 0.6 else 0.5
+                self._ml_bias = bias * weight
 
-            # Apply bias: new_ratio = event_ratio + ml_bias (clamped)
-            raw_ratio = self._hedge_ratio + self._ml_bias
-            new_ratio = max(
-                HedgeDefaults.MIN_HEDGE_RATIO,
-                min(HedgeDefaults.MAX_HEDGE_RATIO, raw_ratio),
-            )
+            # 注意：publish 必须在锁外，否则 handler 重入会死锁
+            self.bus.publish(CoffeeEvent(
+                event_type=EventType.ML_MODEL_UPDATE,
+                domain=Domain.FINANCE,
+                timestamp=datetime.now(),
+                severity=3,
+                value=self._ml_bias,
+                narrative=f"ML {signal.value} bias {bias:+.0%} x {weight:.0%} weight",
+                source="ml_advisor",
+            ))
 
-            if abs(new_ratio - old_ratio) >= 0.005:
-                adj_record = HedgeAdjustment(
-                    timestamp=datetime.now(),
-                    event_type=EventType.ML_MODEL_UPDATE,
+    def _make_handler(self, event_type: EventType) -> Callable:
+        """事件到达 → 收入窗口 → 全量重算。"""
+        def handle(event: CoffeeEvent):
+            # old_ratio 必须与 new_ratio 用同一个 now 重算：不能直接复用
+            # self._breakdown.ratio（上次重算时刻的值），否则两次重算之间
+            # 流逝的时间会让历史事件多衰减一截，那截衰减会被错误算成
+            # 本次事件的 adjustment（把别的事件的衰减归因到这条事件上）。
+            now = datetime.now()
+            with self._lock:
+                old_ratio = self._recompute_locked(now)  # 当前窗口（未含新事件）在 now 的基准比率
+                self._events.append(event)
+                new_ratio = self._recompute_locked(now)  # 同一个 now，纳入新事件后的比率
+
+                if abs(new_ratio - old_ratio) < 0.005:
+                    self._record_state(f"{event.event_type.value}: 变化过小 (<0.005) 未记录调整")
+                    return
+
+                rule = self._rules.get(event_type)
+                adj = HedgeAdjustment(
+                    timestamp=now,
+                    event_type=event_type,
                     adjustment=new_ratio - old_ratio,
                     old_ratio=old_ratio,
                     new_ratio=new_ratio,
-                    reason=f"ML {signal.value} bias {bias:+.0%} × {weight:.0%} weight",
-                    severity=int(confidence * 5),
-                    value=confidence,
-                )
-                self._adjustments.append(adj_record)
-                self._hedge_ratio = new_ratio
-                self._record_state(
-                    f"ML signal {signal.value} (conf={confidence:.0%}, bias={bias:+.0%}) "
-                    f"→ ratio {old_ratio:.0%} → {new_ratio:.0%}"
-                )
-                logger.info(
-                    "[DecisionEngine] ML update: %s conf=%.0f bias=%+.0f "
-                    "→ ratio %.0%% → %.0%%",
-                    signal.value, confidence, bias, old_ratio, new_ratio
-                )
-
-    def _get_config(self, event_type: EventType) -> dict:
-        """
-        获取 event_type 的 adjustment config
-        优先从 YAML 读取，回退到硬编码
-        """
-        et_name = event_type.name
-
-        if self._use_yaml and self._loader:
-            rule = self._loader.get_adjustment_rule(et_name)
-            if rule:
-                return {
-                    "adjustment": rule.adjustment,
-                    "min_severity": rule.min_severity,
-                    "cooldown": rule.cooldown_seconds,
-                    "multiplier": rule.multiplier_sev4,
-                    "reason": rule.reason,
-                    "source": "yaml",
-                }
-
-        return {
-            **self._FALLBACK_EVENT_CONFIG.get(event_type, {}),
-            "source": "fallback",
-        }
-
-    def _make_handler(self, event_type: EventType) -> Callable:
-        """Create an event handler for the given event type."""
-        def handle(event: CoffeeEvent):
-            config = self._get_config(event_type)
-            if event.severity < config.get('min_severity', 3):
-                return
-
-            with self._lock:
-                now = datetime.now()
-                old_ratio = self._hedge_ratio
-                adjustment = config['adjustment']
-                cooldown = config.get('cooldown', 600)
-
-                # Severity bonus
-                if event.severity >= 4:
-                    adjustment *= config.get('multiplier', 1.5)
-
-                # Cooldown: same event within cooldown window → halve effect
-                # Use same 'now' for both timestamp comparison and adj.timestamp
-                recent_same = [
-                    a for a in self._adjustments
-                    if a.event_type == event_type
-                    and (now - a.timestamp).total_seconds() < cooldown
-                ]
-                if recent_same:
-                    adjustment *= 0.5
-
-                # Clamp to bounds
-                new_ratio = max(
-                    HedgeDefaults.MIN_HEDGE_RATIO,
-                    min(HedgeDefaults.MAX_HEDGE_RATIO,
-                        self._hedge_ratio + adjustment)
-                )
-
-                # Ignore tiny changes
-                if abs(new_ratio - old_ratio) < 0.01:
-                    return
-
-                self._hedge_ratio = new_ratio
-
-                reason = config.get('reason', event_type.value)
-                adj = HedgeAdjustment(
-                    timestamp=datetime.now(),
-                    event_type=event_type,
-                    adjustment=adjustment,
-                    old_ratio=old_ratio,
-                    new_ratio=new_ratio,
-                    reason=reason,
+                    reason=rule.cluster if rule else event_type.value,
                     severity=event.severity,
                     value=event.value,
                 )
                 self._adjustments.append(adj)
-                self._record_state(f"{event.event_type.value}: {reason}")
+                self._record_state(f"{event.event_type.value}: {adj.reason}")
 
-                # Sherlock 等价: QueryNotify.update() → CLIHandler.on_event()
-                # 这里通过 EventBus 广播 adjustment 事件，CLI Handler 负责打印
-                source = config.get('source', '?')
-                # Publish a meta-event so Handlers can display the adjustment
-                self.bus.publish_adjustment(adj, source=source)
+            # Sherlock 等价: QueryNotify.update() → CLIHandler.on_event()
+            # 必须在锁外广播：handler 可能回调进本引擎，持锁会死锁
+            self.bus.publish_adjustment(adj, source="scoring")
 
         return handle
+
+    def _recompute_locked(self, now: datetime) -> float:
+        """在已持锁的前提下全量重算。返回新比率。"""
+        self._breakdown = compute_score(list(self._events), self._rules, now, self._cfg)
+        return self._breakdown.ratio
+
+    def recompute(self, now: Optional[datetime] = None) -> float:
+        """
+        以指定时刻全量重算比率（不传则用当前时间）。
+        因为衰减是时间的函数，即使没有新事件，比率也会随时间回落。
+        """
+        with self._lock:
+            ratio = self._recompute_locked(now or datetime.now())
+            # 必须记一次状态，否则 get_state() 仍返回上一次 handler 写入的
+            # 旧值，与刚更新的 _breakdown 不一致（棘轮效应在读接口上"复活"）。
+            self._record_state("周期性衰减重算")
+            return ratio
+
+    def get_breakdown(self) -> ScoreBreakdown:
+        """逐簇归因 —— reports/ 直接读取，无需反查 adjustment 日志。"""
+        with self._lock:
+            return self._breakdown
 
     def _record_state(self, narrative: str):
         """Record current state snapshot."""
@@ -557,8 +369,8 @@ class DecisionEngine:
         dominant = max(domain_counts, key=domain_counts.get) if recent else Domain.SUPPLY
 
         state = HedgeState(
-            hedge_ratio=self._hedge_ratio,
-            signal=signal_from_ratio(self._hedge_ratio),
+            hedge_ratio=self._breakdown.ratio,
+            signal=signal_from_ratio(self._breakdown.ratio),
             dominant_domain=dominant,
             event_count_24h=len(recent),
             critical_count_24h=len(critical),
@@ -723,15 +535,18 @@ class DecisionEngine:
 # Standalone pure function API (stateless, for backtesting)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def compute_hedge_from_events(events: list[CoffeeEvent],
-                              current_ratio: float = 0.65) -> float:
+def compute_hedge_from_events(
+    events: list[CoffeeEvent],
+    now: Optional[datetime] = None,
+) -> float:
     """
-    Compute hedge ratio from a list of events (stateless version).
-    Used for backtesting or one-off calculations.
+    从事件列表算比率（无状态版本，回测与一次性计算用）。
 
-    Note: use_yaml=False to avoid any network I/O during backtesting.
+    与实盘走同一个 compute_score —— 因此回测结果可信。
+    旧签名的 current_ratio 参数已移除：无状态后比率完全由事件决定。
     """
-    engine = DecisionEngine(use_yaml=False)
-    for event in events:
-        engine.bus.publish(event)
-    return engine.get_state().hedge_ratio
+    loader = get_regime_loader()
+    loader.load()
+    return compute_score(
+        events, loader.event_rules(), now or datetime.now(), loader.scoring
+    ).ratio

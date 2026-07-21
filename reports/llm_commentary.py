@@ -78,9 +78,6 @@ def _build_context(report) -> str:
     if report.bearish_params:
         lines.append("利空: " + "、".join(p.param_name for p in report.bearish_params[:3]))
 
-    if report.hedge_advice:
-        lines.append(f"当前套保建议: {report.hedge_advice.ratio:.0%}（{report.hedge_advice.signal}）")
-
     if report.ml_snapshot:
         ml = report.ml_snapshot
         lines.append(f"ML 信号: {ml.signal}（置信度 {ml.confidence:.0%}，{ml.model_type}）")

@@ -5,15 +5,15 @@ backtest/engine.py
 三种策略对比:
 1. 无套保: 0% 始终持有现货敞口
 2. 静态套保: 65% 固定，每月滚动（平旧仓开当月新仓）
-3. 事件驱动: 基于 DecisionEngine 动态调整比率，每月滚动
+3. 事件驱动: 基于评分纯函数动态调整比率，每月滚动
 
 新增方法 (V3.0):
 - run_event_driven_with_engine(price_df, events_df):
-    使用 DecisionEngine (use_yaml=False) 替代手动硬编码事件检测。
-    遍历 price_df 每一行，按 events_df 时间戳发布 CoffeeEvent，
-    记录 engine.get_state().hedge_ratio 作为当前比率。
-    核心类比: Sherlock QueryNotify.update() → DecisionEngine.bus.publish_adjustment
-- run(events_df=None): 当 events_df 提供时，自动路由到 run_event_driven_with_engine()
+    使用 core.state.scoring 的评分纯函数替代手动硬编码事件检测。
+    遍历 price_df 每一行，累积该时刻之前的 CoffeeEvent，
+    以该 bar 的时间戳调 compute_hedge_from_events() 得到当前比率
+    —— 与实盘同一条路径，衰减基准随回测时间推进。
+- run(events_df): 必填，委托给 run_event_driven_with_engine()
 
 核心指标: 净成本/吨 = (累计采购成本 - 期货盈亏) / 总采购量
 节省% = (无套保净成本 - 策略净成本) / 无套保净成本
@@ -25,10 +25,9 @@ import socket
 import pandas as pd
 
 from backtest.models import HedgeAction, ExitReason, HedgeRecord
-from core.state.engine import DecisionEngine
-from core.events.bus import EventBus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
+from core.types.constants import HedgeDefaults
 
 
 @dataclass
@@ -60,9 +59,6 @@ class BacktestStats:
 
 
 class CoffeeBacktestEngine:
-    FROST_START = 6  # 6月霜冻风险季
-    FROST_END = 8
-
     def __init__(self, config: BacktestConfig, price_df: pd.DataFrame):
         self.cfg = config
         self._df = price_df.copy()
@@ -91,221 +87,22 @@ class CoffeeBacktestEngine:
         Run backtest with three strategies.
 
         Args:
-            events_df: Optional DataFrame with columns [timestamp, event_type, severity, value].
-                       When provided, the event-driven strategy uses DecisionEngine instead of
-                       hardcoded _generate_events / _calculate_ratio logic.
+            events_df: DataFrame or list of dicts with columns
+                       [timestamp, event_type, severity, value]. Required —
+                       the event-driven strategy is computed by
+                       run_event_driven_with_engine() via the same scoring
+                       pure function used in live trading. Obtain real
+                       events from DecisionDB.get_events() or a domain
+                       scanner's output.
         """
-        if events_df is not None:
-            return self.run_event_driven_with_engine(self._df, events_df)
-
-        cfg = self.cfg
-        prices = self._df
-
-        static_entry = 0.0
-        static_contracts = 0
-        event_entry = 0.0
-        event_contracts = 0
-        event_ratio = cfg.initial_hedge_ratio
-
-        for ts, row in prices.iterrows():
-            price = row['price']       # cents/lb
-            oni = float(row.get('oni', 0) or 0)
-            phase = row.get('phase', 'NEUTRAL')
-            month = ts.month
-            is_month_start = (month != self._last_month)
-
-            # ─── 月初: 采购 + 套保 ───
-            if is_month_start:
-                tons = cfg.coffee_tons_per_month
-                cost_per_ton = price * 2204.62 / 100  # cents/lb → USD/ton
-                monthly_cost = tons * cost_per_ton
-
-                # 1. 无套保
-                self._no_hedge_cost += monthly_cost
-
-                # 2. 静态套保 (65%)
-                self._static_cost += monthly_cost
-                new_static_contracts = int(tons * cfg.initial_hedge_ratio / cfg.contract_size)
-                if new_static_contracts > 0:
-                    # 平旧仓
-                    if static_contracts > 0 and static_entry > 0:
-                        pnl = (price - static_entry) * static_contracts * 2204.62 / 10000
-                        self._static_pnl += pnl
-                        self._static_trades.append(HedgeRecord(
-                            entry_time=ts, exit_time=ts,
-                            entry_price=static_entry, exit_price=price,
-                            size=static_contracts * cfg.contract_size,
-                            hedge_ratio=cfg.initial_hedge_ratio,
-                            action=HedgeAction.CLOSE_HEDGE,
-                            pnl=pnl, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                            holding_days=0, commission=0,
-                            narrative='Monthly roll - close',
-                        ))
-                    # 开新仓
-                    static_entry = price
-                    static_contracts = new_static_contracts
-                    self._static_trades.append(HedgeRecord(
-                        entry_time=ts, exit_time=ts,
-                        entry_price=price, exit_price=price,
-                        size=static_contracts * cfg.contract_size,
-                        hedge_ratio=cfg.initial_hedge_ratio,
-                        action=HedgeAction.BUY_HEDGE,
-                        pnl=0, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                        holding_days=0, commission=new_static_contracts * cfg.commission_per_contract,
-                        narrative=f'Monthly roll - open {new_static_contracts} contracts',
-                    ))
-                    self._equity -= new_static_contracts * cfg.commission_per_contract
-
-                # 3. 事件驱动
-                self._event_cost += monthly_cost
-                new_event_contracts = int(tons * event_ratio / cfg.contract_size)
-                if new_event_contracts > 0:
-                    # 平旧仓
-                    if event_contracts > 0 and event_entry > 0:
-                        pnl = (price - event_entry) * event_contracts * 2204.62 / 10000
-                        self._event_pnl += pnl
-                        self._event_trades.append(HedgeRecord(
-                            entry_time=ts, exit_time=ts,
-                            entry_price=event_entry, exit_price=price,
-                            size=event_contracts * cfg.contract_size,
-                            hedge_ratio=event_ratio,
-                            action=HedgeAction.CLOSE_HEDGE,
-                            pnl=pnl, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                            holding_days=0, commission=0,
-                            narrative='Monthly roll - close',
-                        ))
-                    # 开新仓
-                    event_entry = price
-                    event_contracts = new_event_contracts
-                    self._event_trades.append(HedgeRecord(
-                        entry_time=ts, exit_time=ts,
-                        entry_price=price, exit_price=price,
-                        size=event_contracts * cfg.contract_size,
-                        hedge_ratio=event_ratio,
-                        action=HedgeAction.BUY_HEDGE,
-                        pnl=0, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                        holding_days=0, commission=new_event_contracts * cfg.commission_per_contract,
-                        narrative=f'Monthly roll - open {new_event_contracts} contracts @ {price:.2f}',
-                    ))
-                    self._equity -= new_event_contracts * cfg.commission_per_contract
-
-                self._last_month = month
-
-            # ─── 每日盯市 ───
-            if static_contracts > 0 and static_entry > 0:
-                self._static_pnl = (price - static_entry) * static_contracts * 2204.62 / 10000
-
-            if event_contracts > 0 and event_entry > 0:
-                self._event_pnl = (price - event_entry) * event_contracts * 2204.62 / 10000
-
-            # ─── 事件 + 决策 (仅影响事件驱动) ───
-            events = self._generate_events(ts, price, oni, phase, row)
-            new_ratio = self._calculate_ratio(price, oni, phase, events, ts)
-            new_ratio = max(cfg.min_hedge_ratio, min(cfg.max_hedge_ratio, new_ratio))
-
-            if abs(new_ratio - event_ratio) >= 0.05:
-                event_ratio = new_ratio
-                # 下个月会按新比率开仓
-
-            # ─── 权益记录 ───
-            self._static_equity_curve.append({
-                'timestamp': ts, 'price': price,
-                'equity': self._equity + self._static_pnl,
-                'hedge_pnl': self._static_pnl,
-            })
-            self._event_equity_curve.append({
-                'timestamp': ts, 'price': price,
-                'equity': self._equity + self._event_pnl,
-                'hedge_ratio': event_ratio,
-                'hedge_pnl': self._event_pnl,
-            })
-
-        # 回测结束平仓
-        final_price = prices.iloc[-1]['price']
-        final_ts = prices.index[-1]
-
-        if static_contracts > 0:
-            pnl = (final_price - static_entry) * static_contracts * 2204.62 / 10000
-            self._static_pnl += pnl
-            self._static_trades.append(HedgeRecord(
-                entry_time=final_ts, exit_time=final_ts,
-                entry_price=static_entry, exit_price=final_price,
-                size=static_contracts * cfg.contract_size,
-                hedge_ratio=0.0, action=HedgeAction.CLOSE_HEDGE,
-                pnl=pnl, pnl_pct=0, exit_reason=ExitReason.END_OF_BACKTEST,
-                holding_days=0, commission=0, narrative='Backtest end',
-            ))
-
-        if event_contracts > 0:
-            pnl = (final_price - event_entry) * event_contracts * 2204.62 / 10000
-            self._event_pnl += pnl
-            self._event_trades.append(HedgeRecord(
-                entry_time=final_ts, exit_time=final_ts,
-                entry_price=event_entry, exit_price=final_price,
-                size=event_contracts * cfg.contract_size,
-                hedge_ratio=0.0, action=HedgeAction.CLOSE_HEDGE,
-                pnl=pnl, pnl_pct=0, exit_reason=ExitReason.END_OF_BACKTEST,
-                holding_days=0, commission=0, narrative='Backtest end',
-            ))
-
-        return self._compute_stats()
-
-    def _generate_events(self, ts, price, oni, phase, row) -> list[dict]:
-        events = []
-        month = ts.month
-
-        if phase == 'EL_NINO':
-            events.append({'type': 'el_nino', 'sev': 3})
-        elif phase == 'LA_NINA':
-            events.append({'type': 'la_nina', 'sev': 4})
-
-        if self.FROST_START <= month <= self.FROST_END:
-            events.append({'type': 'frost_risk', 'sev': 2})
-
-        chg = float(row.get('change_1d', 0) or 0)
-        if chg < -0.05:
-            events.append({'type': 'price_down', 'sev': 4 if chg < -0.10 else 3})
-        elif chg > 0.05:
-            events.append({'type': 'price_up', 'sev': 1})
-
-        rank = float(row.get('price_rank', 0.5) or 0.5)
-        if rank < 0.15:
-            events.append({'type': 'price_very_low', 'sev': 3})
-        elif rank > 0.90:
-            events.append({'type': 'price_very_high', 'sev': 3})
-
-        vol = float(row.get('volatility_20d', 0) or 0)
-        if vol > 0.40:
-            events.append({'type': 'high_vol', 'sev': 2})
-
-        return events
-
-    def _calculate_ratio(self, price, oni, phase, events, ts) -> float:
-        cfg = self.cfg
-        ratio = cfg.initial_hedge_ratio
-
-        if phase == 'EL_NINO':
-            ratio += 0.10
-        elif phase == 'LA_NINA':
-            ratio += 0.15
-
-        for e in events:
-            sev = e.get('sev', 0)
-            t = e['type']
-            if t == 'frost_risk':
-                ratio = min(cfg.max_hedge_ratio, ratio + 0.10 * sev / 5)
-            elif t == 'price_down':
-                ratio = min(cfg.max_hedge_ratio, ratio + 0.10 * sev / 5)
-            elif t == 'price_up':
-                ratio = max(cfg.min_hedge_ratio, ratio - 0.05 * sev / 5)
-            elif t == 'price_very_low':
-                ratio = min(cfg.max_hedge_ratio, ratio + 0.10)
-            elif t == 'price_very_high':
-                ratio = max(cfg.min_hedge_ratio, ratio - 0.10)
-            elif t == 'high_vol':
-                ratio = min(cfg.max_hedge_ratio, ratio + 0.05)
-
-        return ratio
+        if events_df is None:
+            raise ValueError(
+                "run() requires events_df — the synthetic hardcoded-event "
+                "path has been removed. Pass a DataFrame/list of dicts with "
+                "columns [timestamp, event_type, severity, value], e.g. from "
+                "DecisionDB.get_events() or a domain scanner's output."
+            )
+        return self.run_event_driven_with_engine(self._df, events_df)
 
     def _compute_stats(self) -> dict[str, BacktestStats]:
         cfg = self.cfg
@@ -373,14 +170,12 @@ class CoffeeBacktestEngine:
         events_df: pd.DataFrame | list[dict],
     ) -> dict[str, BacktestStats]:
         """
-        Event-driven backtest using DecisionEngine instead of hardcoded logic.
+        Event-driven backtest —— 每根 bar 调与实盘同一个评分纯函数
+        compute_hedge_from_events(accumulated, now=bar_ts)，而非硬编码逻辑。
 
         Sherlock analogy:
-          Sherlock QueryStatus.errorCode + QueryNotify.update()
-          → DecisionEngine.bus.publish_adjustment()
+          Sherlock QueryStatus.errorCode → 事件严重度
           回测中的每个历史事件 = Sherlock 检测到的 site error
-          DecisionEngine._make_handler 处理每个事件并更新比率
-          = Sherlock QueryNotify.update()
 
         Args:
             price_df: DataFrame with index=timestamp, columns=['price', optional 'oni'/'phase']
@@ -408,21 +203,16 @@ class CoffeeBacktestEngine:
                 ts = pd.Timestamp(ev['timestamp'])
                 events_by_ts.setdefault(ts, []).append(ev)
 
-            # Create a fresh EventBus + DecisionEngine
-            # use_yaml=True triggers HedgeHandler init that deadlocks in subprocess;
-            # use_yaml=False keeps the event-driven mechanism (bus.publish triggers
-            # engine handlers) while avoiding YAML-loading hangs. Events still
-            # publish to the engine and can be used for ratio decisions.
-            bus = EventBus()
-            engine = DecisionEngine(bus=bus, use_yaml=False)
+            # ── 事件驱动策略：按 bar 调用与实盘同一个评分纯函数 ──────────────
+            # 无状态评分不需要跨 bar 持有引擎实例，因此也不存在
+            # 旧实现里 bus.publish 触发 handler 的线程死锁问题。
+            # compute_hedge_from_events 内部走 get_regime_loader()：本地
+            # config/regimes.yaml 存在时 local_only=True，不触发远程拉取，
+            # 因此子进程里不会因网络 I/O 挂起。
+            from core.state.engine import compute_hedge_from_events
 
-            # NOTE: If bus.publish() deadlocks here due to the engine's own
-            # handler subscribing to the bus, the subprocess timeout in
-            # do_model_backtest() will kill it. This is a known threading
-            # issue — events still drive the engine via direct call below.
-
-            # Snapshot engine's initial ratio (should be DEFAULT_HEDGE_RATIO = 0.65)
-            event_ratio = engine.get_state().hedge_ratio
+            accumulated: list[CoffeeEvent] = []
+            event_ratio = HedgeDefaults.DEFAULT_HEDGE_RATIO
 
             cfg = self.cfg
             prices = price_df
@@ -476,12 +266,12 @@ class CoffeeBacktestEngine:
                         narrative=narrative,
                         source='backtest',
                     )
-                    # Call engine handler directly instead of bus.publish()
-                    # to bypass threading deadlock in DecisionEngine handlers
-                    engine._make_handler(et)(coffee_event)
+                    accumulated.append(coffee_event)
 
-                # Read updated ratio from DecisionEngine
-                event_ratio = engine.get_state().hedge_ratio
+                # 每根 bar 用该 bar 的时间戳重算 —— 衰减随回测时间推进
+                event_ratio = compute_hedge_from_events(
+                    accumulated, now=ts.to_pydatetime()
+                )
                 event_ratio = max(cfg.min_hedge_ratio, min(cfg.max_hedge_ratio, event_ratio))
 
                 # ─── 月初: 采购 + 套保 ───
@@ -621,7 +411,7 @@ def _domain_for_event_type(et: EventType) -> Domain:
     Map EventType to its Domain.
 
     Mirrors the grouping in core/types/enums.py and
-    the _FALLBACK_EVENT_CONFIG keys in DecisionEngine.
+    the adjustment_rules keys in config/regimes.yaml.
     """
     # SUPPLY domain events
     supply_types = {

@@ -62,11 +62,12 @@ def test_generate_commentary_success(fake_key, monkeypatch):
     # base_url 按 provider=deepseek 决定
     assert _FakeLLM.last_kwargs["base_url"] == "https://api.deepseek.com"
 
-    # user prompt 含报告关键数值（demo: 现价 293.70 / ONI -0.39 / 套保 65%）
+    # user prompt 含报告关键数值（demo: 现价 293.70 / ONI -0.39）
+    # 注：hedge_advice 已不再喂给 prompt（避免 AI 点评自己的方向又反过来
+    # 改写该比率造成的循环论证），故不再断言套保比率出现在 user_msg 中。
     user_msg = _FakeLLM.last_messages[1][1]
     assert "293.70" in user_msg
     assert "-0.39" in user_msg
-    assert "65%" in user_msg
 
 
 def test_generate_commentary_direction_marker(fake_key, monkeypatch):
@@ -207,3 +208,25 @@ def test_llm_driver_attribution_e2e(tmp_path, monkeypatch):
     attr = compute_attribution(last, last.current_price * 0.97)
     verdicts = {v["param_name"]: v["verdict"] for v in attr["verdicts"]}
     assert verdicts["AI 分析师点评"] == "应验"
+
+
+# ── LLM 点评作为评分因子 ────────────────────────────────────────────────────
+
+def test_llm_commentary_event_type_exists():
+    from core.types.enums import EventType
+    assert EventType.LLM_COMMENTARY
+    assert EventType.SCENARIO_DOMINANT
+    assert EventType.RSI_EXTREME
+
+
+def test_llm_direction_maps_to_signed_contribution():
+    """看跌 → 正贡献（增套保）；看涨 → 负贡献。"""
+    from reports.pipeline import llm_commentary_event
+
+    bear = llm_commentary_event("下跌")
+    bull = llm_commentary_event("上涨")
+    flat = llm_commentary_event("横盘")
+
+    assert bear.value > 0
+    assert bull.value < 0
+    assert flat is None          # 中性不产生事件

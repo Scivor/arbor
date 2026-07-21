@@ -23,7 +23,8 @@ arbor/
 │   │
 │   ├── state/                   # Decision state machine
 │   │   ├── __init__.py
-│   │   ├── engine.py            # DecisionEngine (event → ratio adjustment)
+│   │   ├── engine.py            # DecisionEngine — 事件窗口薄壳，委托 scoring.compute_score
+│   │   ├── scoring.py           # 评分纯函数 — 事件集 → 比率（无 I/O 无状态）
 │   │   ├── record.py            # HedgeAdjustment dataclass (also defined in engine.py)
 │   │   └── signals.py           # HedgeSignal helpers
 │   │
@@ -226,12 +227,15 @@ The EventBus owns the event log and subscriber list. It does NOT call decision l
 ### 3. `core/state/` — Decision State Machine
 
 ```
-engine.py   → DecisionEngine: event → HedgeAdjustment
+engine.py   → DecisionEngine: 事件窗口薄壳，委托 scoring.compute_score
+scoring.py  → compute_score: 事件集 → 比率的纯函数（无 I/O，无状态）
 record.py   → HedgeAdjustment dataclass
 signals.py  → HedgeSignal helpers
 ```
 
-DecisionEngine is **pure** — it takes events and current ratio, returns new ratio. Testable without any I/O.
+比率不再是累加状态，而是当前活跃事件集在 `scoring.py` 里的**纯函数**：
+DecisionEngine 只持有事件窗口，每有新事件到达就全量重算。CLI / 周报 / 回测
+三条路径共用同一个 `compute_score`，测试无需任何 I/O。
 
 ### 4. `sources/` — Fetch-only, No Side Effects
 

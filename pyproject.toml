@@ -64,7 +64,7 @@ py-modules = ["coffee", "coffee_system"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["agent*", "backtest*", "core*", "domains*", "models*", "reports*", "scripts*", "sources*", "web*"]
+include = ["arbor*", "agent*", "backtest*", "cli*", "core*", "domains*", "models*", "reports*", "scripts*", "sources*", "web*"]
 
 [project.optional-dependencies]
 dev = [

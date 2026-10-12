@@ -1,4 +1,4 @@
-"""Paper trading module — simulated futures positions."""
-from core.paper_trading.engine import PaperTradingEngine
+"""Compatibility shim — re-exports arbor.application.paper_trading"""
+from arbor.application.paper_trading import PaperTradingEngine
 
-__all__ = ['PaperTradingEngine']
+__all__ = ["PaperTradingEngine"]

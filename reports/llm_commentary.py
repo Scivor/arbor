@@ -137,8 +137,8 @@ def generate_commentary(report, lang: str = "zh") -> Optional[tuple[str, str]]:
         (清洗后正文, direction)；无 API key 或任何异常 → None（静默，报告不含此板块）。
     """
     try:
-        from agent.agents.analyst import _load_api_key
-        api_key, provider = _load_api_key()
+        from arbor.infrastructure.secrets import load_llm_api_key
+        api_key, provider = load_llm_api_key()
     except Exception as e:
         logger.warning("llm_commentary: 读取 API key 失败: %s", e)
         return None

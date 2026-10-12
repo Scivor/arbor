@@ -5,14 +5,14 @@ agent/tools/system.py
 
 from langchain.tools import tool
 
+from agent.tools._system_access import get_coffee_system
+
 
 @tool
 def query_system_status() -> str:
     """查询咖啡套保系统的当前状态，包括套保比率、主导域、24h 事件统计、ML 信号。"""
     try:
-        from coffee import CoffeeSystem
-        system = CoffeeSystem()
-        return system.status()
+        return get_coffee_system().status()
     except Exception as e:
         return f"[query_system_status] 错误: {e}"
 
@@ -54,8 +54,7 @@ def get_recent_events(hours: int = 24, domain: str = None, min_severity: int = 1
 def scan_all_domains() -> str:
     """触发所有域（供给/金融/政策）的扫描，获取最新市场数据并发布事件。返回扫描结果摘要。"""
     try:
-        from coffee import CoffeeSystem
-        system = CoffeeSystem()
+        system = get_coffee_system()
         system.scan()
         return f"扫描完成。最新状态:\n{system.status()}"
     except Exception as e:

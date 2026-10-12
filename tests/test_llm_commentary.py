@@ -16,13 +16,13 @@ from reports.llm_commentary import generate_commentary
 @pytest.fixture
 def no_key(monkeypatch):
     """无 API key 环境"""
-    monkeypatch.setattr("agent.agents.analyst._load_api_key", lambda: (None, None))
+    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: (None, None))
 
 
 @pytest.fixture
 def fake_key(monkeypatch):
     """有 fake key"""
-    monkeypatch.setattr("agent.agents.analyst._load_api_key", lambda: ("sk-fake", "deepseek"))
+    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: ("sk-fake", "deepseek"))
 
 
 # ── 无 key → None ─────────────────────────────────────────────────────────────
@@ -34,7 +34,7 @@ def test_no_key_returns_none(no_key):
 def test_key_loader_exception_returns_none(monkeypatch):
     def _boom():
         raise RuntimeError("import failure")
-    monkeypatch.setattr("agent.agents.analyst._load_api_key", _boom)
+    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", _boom)
     assert generate_commentary(demo_report()) is None
 
 

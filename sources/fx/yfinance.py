@@ -8,29 +8,12 @@ sources/fx/yfinance.py
 import requests
 from datetime import datetime
 from typing import Optional
-import time
 
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import FXData
 from core.types.constants import Thresholds
-
-
-def _retry_get(session, url, **kwargs):
-    """带指数退避的 3 次重试 GET 请求"""
-    last_err = None
-    for attempt in range(3):
-        try:
-            resp = session.get(url, **kwargs)
-            resp.raise_for_status()
-            return resp
-        except Exception as e:
-            last_err = e
-            if attempt < 2:
-                time.sleep(2 ** attempt)
-            else:
-                raise last_err
-    return None
+from sources.http_util import retry_get as _retry_get
 
 
 class FXSource:

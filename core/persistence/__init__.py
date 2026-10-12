@@ -1,8 +1,4 @@
-"""
-core/persistence/__init__.py
-SQLite persistence for decisions, trades, equity, events, and signals.
-"""
+"""Compatibility shim — re-exports arbor.infrastructure.persistence"""
+from arbor.infrastructure.persistence import DecisionDB
 
-from core.persistence.database import DecisionDB
-
-__all__ = ['DecisionDB']
+__all__ = ["DecisionDB"]

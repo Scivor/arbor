@@ -17,35 +17,17 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from agent.tools import ALL_TOOLS
+from arbor.infrastructure.secrets import ENV_FILE, load_llm_api_key
 
 logger = logging.getLogger(__name__)
 
-# 凭据兜底文件（与 core.notify.ops_alert 同一模式；模块级常量便于测试 monkeypatch）
-_ENV_FILE = Path.home() / ".arbor" / ".env"
+# 凭据兜底文件（模块级常量便于测试 monkeypatch）
+_ENV_FILE = ENV_FILE
 
 
 def _load_api_key() -> tuple[Optional[str], Optional[str]]:
-    """
-    读取 LLM API key: 环境变量优先，~/.arbor/.env 兜底（不覆盖已存在的 env 值）。
-
-    Returns:
-        (api_key, provider): provider ∈ {"deepseek", "openai"}；未找到 → (None, None)
-    """
-    deepseek = os.getenv("DEEPSEEK_API_KEY", "")
-    openai = os.getenv("OPENAI_API_KEY", "")
-    if (not deepseek and not openai) and _ENV_FILE.exists():
-        try:
-            from dotenv import dotenv_values
-            vals = dotenv_values(_ENV_FILE)
-            deepseek = deepseek or vals.get("DEEPSEEK_API_KEY", "") or ""
-            openai = openai or vals.get("OPENAI_API_KEY", "") or ""
-        except Exception as e:
-            logger.warning(f"读取 {_ENV_FILE} 失败: {e}")
-    if deepseek:
-        return deepseek, "deepseek"
-    if openai:
-        return openai, "openai"
-    return None, None
+    """Compatibility wrapper around arbor.infrastructure.secrets.load_llm_api_key."""
+    return load_llm_api_key(env_file=_ENV_FILE)
 
 
 _SYSTEM_PROMPT = """你是一个资深咖啡大宗商品分析师，专注于阿拉比卡咖啡期货（KC=F）的进口套保策略分析。

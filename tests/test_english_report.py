@@ -102,7 +102,7 @@ class _RecLLM:
 
 
 def test_generate_commentary_en_prompt_and_return(monkeypatch):
-    monkeypatch.setattr("agent.agents.analyst._load_api_key", lambda: ("sk-fake", "deepseek"))
+    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: ("sk-fake", "deepseek"))
     monkeypatch.setattr("reports.llm_commentary.ChatOpenAI", _RecLLM)
     text, direction = generate_commentary(demo_report(), lang="en")
     assert text == "English body text"

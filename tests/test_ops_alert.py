@@ -74,7 +74,7 @@ def test_health_degraded_without_climate_and_ml():
 def test_alert_returns_false_when_unconfigured(tmp_path, monkeypatch):
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("TELEGRAM_CHAT_ID", raising=False)
-    monkeypatch.setattr("core.notify.ops_alert._ENV_FILE", tmp_path / "nonexistent.env")
+    monkeypatch.setattr("arbor.infrastructure.notify.ops_alert._ENV_FILE", tmp_path / "nonexistent.env")
     from core.notify.ops_alert import send_ops_alert
     assert send_ops_alert("test") is False  # 静默跳过，不抛异常
 

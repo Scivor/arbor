@@ -126,8 +126,13 @@ class NasdaqCMESource:
             return events
 
         if abs(data.change_pct) >= 2.0:
+            et = (
+                EventType.PRICE_SHOCK_UP
+                if data.change_pct >= 0
+                else EventType.PRICE_SHOCK_DOWN
+            )
             events.append(CoffeeEvent(
-                event_type=EventType.PRICE_SPIKE,
+                event_type=et,
                 domain=Domain.FINANCE,
                 timestamp=datetime.now(),
                 severity=min(4, int(abs(data.change_pct))),

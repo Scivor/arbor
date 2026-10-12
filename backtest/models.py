@@ -86,37 +86,14 @@ class EquitySnapshot:
     positions: int
 
 
-# ── Coffee-specific enums ──────────────────────────────────────────────────
+# ── Coffee-specific trading types (canonical: arbor.domain.trading) ─────────
+from arbor.domain.trading import HedgeAction, ExitReason, HedgeRecord  # noqa: E402
 
-class HedgeAction:
-    BUY_HEDGE   = "buy_hedge"     # Open long futures (importer hedge)
-    SELL_HEDGE  = "sell_hedge"    # Open short futures (producer hedge)
-    CLOSE_HEDGE = "close_hedge"   # Flatten position
-
-
-class ExitReason:
-    SIGNAL_CLOSE       = "signal"
-    END_OF_BACKTEST    = "end_of_backtest"
-    STOP_LOSS          = "stop_loss"
-    TAKE_PROFIT        = "take_profit"
-    RATIO_CHANGED      = "ratio_changed"
-    MANUAL_CLOSE        = "manual_close"
-    SIGNAL_OPEN        = "signal_open"
-
-
-@dataclass(frozen=True)
-class HedgeRecord:
-    """A completed coffee hedge trade (legacy format compatible with engine.py)."""
-    entry_time: pd.Timestamp
-    exit_time: pd.Timestamp
-    entry_price: float
-    exit_price: float
-    size: float            # tons
-    hedge_ratio: float
-    action: str            # HedgeAction value
-    pnl: float             # futures P&L in USD
-    pnl_pct: float
-    exit_reason: str       # ExitReason value
-    holding_days: int
-    commission: float
-    narrative: str = ""
+__all__ = [
+    "Position",
+    "TradeRecord",
+    "EquitySnapshot",
+    "HedgeAction",
+    "ExitReason",
+    "HedgeRecord",
+]

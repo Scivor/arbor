@@ -110,7 +110,7 @@ def synthetic_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr("core.persistence.database.DecisionDB", _RaisingDB)
 
     # LLM —— 假 key + 假 ChatOpenAI，捕获 prompt
-    monkeypatch.setattr("agent.agents.analyst._load_api_key", lambda: ("sk-fake", "deepseek"))
+    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: ("sk-fake", "deepseek"))
     _CapturingLLM.calls = []
     monkeypatch.setattr("reports.llm_commentary.ChatOpenAI", _CapturingLLM)
 

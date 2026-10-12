@@ -66,48 +66,20 @@ python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 
 ## 项目结构
 
+Clean Architecture 分层（详见 `ARCHITECTURE.md`）：
+
 ```
-arbor/
-├── coffee.py              # 主 CLI 入口 (委托 cli.coffee_cli)
-├── coffee_system.py       # CoffeeSystem 事件驱动引擎 facade
-├── cli/
-│   └── coffee_cli.py      # 交互 CLI + --demo/--paper/--agent
-├── core/                  # 核心: EventBus / DecisionEngine + scoring (评分纯函数)
-│                          #   types / persistence / paper_trading / cost / notify
-├── sources/               # 数据源 (fetch-only) + data_registry.py (Registry + Fallback 链)
-│   ├── coffee/            # KC=F 价格 (yfinance) + kc_history.py (日线历史缓存)
-│   ├── fx/                # USD/CNY 汇率
-│   ├── climate/           # NOAA ONI + Open-Meteo 产区天气
-│   ├── cot/               # CFTC COT (+ 手动输入)
-│   ├── inventory/         # ICE 库存
-│   ├── markets/           # Polymarket 预测市场
-│   ├── finance/           # Nasdaq CME 结算价
-│   ├── policy/            # 政策新闻 (Google News RSS)
-│   └── supply/            # USDA FAS + World Bank
-├── domains/               # 三域扫描器 (supply / finance / policy)
-├── models/                # ML 模型 (HedgeModel + TimesFM ensemble)
-├── backtest/              # 回测: engines/ (BaseEngine + CoffeeFuturesEngine)
-│                          #   engine.py (事件驱动三策略对比) / loader / metrics / models
-├── reports/               # 周报: pipeline.py (出报组装) + models.py (数据模型)
-│   ├── history.py         #   历史复盘 + Brier 校准 + 驱动归因
-│   ├── learning.py        #   有界自校准 (ml_bias / scenario_band 系数)
-│   ├── kelly.py           #   凯利仓位影子 (只读，不影响实际建议)
-│   ├── reference_class.py #   参考类基础概率
-│   ├── indicators.py      #   RSI 单一事实源
-│   └── exporters/         #   HTML+PDF / JSON / Markdown / 文本
-├── agent/                 # LLM 智能体
-│   ├── runtime.py         # AgentRuntime (--agent 模式)
-│   ├── agents/analyst.py  # CoffeeAnalyst (LangChain OpenAI Tools Agent)
-│   └── tools/             # system.py + market.py (6 个查询工具)
-├── web/                   # 周报站 (FastAPI)
-│   ├── app.py             # 路由: / /reports/ /track-record/ /api/health
-│   └── track_record.py    # 战绩页渲染 (纯字符串，无模板依赖)
-├── scripts/
-│   ├── scheduler.py       # 周报调度 (APScheduler, 每周六 03:00 CST)
-│   └── weekly_report_daemon.py
-├── deploy/                # 部署: provision.sh / systemd service / launchd plist / env 样例
-├── tests/                 # 150 个测试 (pytest)
-└── pyproject.toml
+arbor/                     # 规范包（依赖只向内）
+├── domain/                # 纯领域：types / scoring / cost / trading
+├── application/           # 用例：DecisionEngine / ports / CoffeeSystem
+├── infrastructure/        # 驱动：EventBus / SQLite / YAML / notify / secrets
+└── adapters/              # 适配器归属说明（实体仍在仓库根目录）
+
+# 根目录适配器 + 兼容 shim（旧 from core… 仍可用）
+coffee.py / coffee_system.py
+cli/  web/  agent/  reports/  domains/  sources/  models/  backtest/
+core/                      # → re-export arbor.*
+config/  scripts/  deploy/  tests/
 ```
 
 ---

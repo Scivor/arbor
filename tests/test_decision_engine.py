@@ -6,7 +6,7 @@ DecisionEngine 单元测试
 import pytest
 from datetime import datetime, timedelta
 
-import core.state.engine as engine_mod
+import arbor.application.decision.engine as engine_mod
 from core.events.bus import EventBus, reset_event_bus
 from core.state.engine import (
     AdjustmentSummary,
@@ -247,9 +247,9 @@ def test_adjustment_isolates_new_event_from_prior_decay(engine, monkeypatch):
     （即发 FROST 那一刻的比率），而 new_ratio 是 180 天后算的 —— 两者时间基准
     不一致，FROST 在这 180 天里的衰减会被错记成 SPIKE 的 adjustment。
 
-    handle() 内部直接调用 datetime.now()（core.state.engine 里 `from datetime
-    import datetime` 之后的名字），所以要 patch core.state.engine.datetime。
-    CoffeeEvent 用的是 core.types.event 自己 import 的 datetime，与本测试无关，
+    handle() 内部直接调用 datetime.now()（arbor.application.decision.engine
+    里 `from datetime import datetime` 之后的名字），所以要 patch 该模块的 datetime。
+    CoffeeEvent 用的是自己 import 的 datetime，与本测试无关，
     只需要一个支持 .now() 的替身即可。
     """
     class _FakeClock:

@@ -1,2 +1,4 @@
-"""core/cost — 到库成本计算"""
-from core.cost.landed_cost import LandedCostCalculator, LandedCostBreakdown, CostLine
+"""Compatibility shim — re-exports arbor.domain.cost"""
+from arbor.domain.cost import LandedCostCalculator, LandedCostBreakdown, CostLine
+
+__all__ = ["LandedCostCalculator", "LandedCostBreakdown", "CostLine"]

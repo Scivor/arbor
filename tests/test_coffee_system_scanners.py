@@ -4,7 +4,8 @@ CoffeeSystem 走三域扫描器 —— 与周报 _scan_live_events 同源。
 
 from unittest.mock import MagicMock
 
-import coffee_system as cs
+import arbor.application.system as sysmod
+from arbor.application.system import CoffeeSystem
 
 
 def test_scan_delegates_to_domain_scanners(monkeypatch):
@@ -12,12 +13,11 @@ def test_scan_delegates_to_domain_scanners(monkeypatch):
     bus = MagicMock()
     bus.get_event_counts.return_value = {"SUPPLY": 0, "FINANCE": 0, "POLICY": 0}
 
-    monkeypatch.setattr(cs.CoffeeSystem, "_persist_wired", True)
-    monkeypatch.setattr(cs.CoffeeSystem, "_persist_db", None)
-    monkeypatch.setattr(cs, "get_event_bus", lambda: bus)
-    monkeypatch.setattr(cs, "DecisionEngine", lambda bus: MagicMock())
+    monkeypatch.setattr(CoffeeSystem, "_persist_wired", True)
+    monkeypatch.setattr(CoffeeSystem, "_persist_db", None)
+    monkeypatch.setattr(sysmod, "get_event_bus", lambda: bus)
+    monkeypatch.setattr(sysmod, "DecisionEngine", lambda bus, **kw: MagicMock())
 
-    # 避免真实网络自举
     monkeypatch.setattr(
         "sources.coffee.yfinance_price.PriceSource._bootstrap_last_price",
         lambda self: None,
@@ -37,11 +37,11 @@ def test_scan_delegates_to_domain_scanners(monkeypatch):
     policy = MagicMock()
     policy.scan_all.return_value = []
 
-    monkeypatch.setattr(cs, "SupplyDomainScanner", lambda *a, **k: supply)
-    monkeypatch.setattr(cs, "FinanceDomainScanner", lambda *a, **k: finance)
-    monkeypatch.setattr(cs, "PolicyDomainScanner", lambda *a, **k: policy)
+    monkeypatch.setattr(sysmod, "SupplyDomainScanner", lambda *a, **k: supply)
+    monkeypatch.setattr(sysmod, "FinanceDomainScanner", lambda *a, **k: finance)
+    monkeypatch.setattr(sysmod, "PolicyDomainScanner", lambda *a, **k: policy)
 
-    system = cs.CoffeeSystem()
+    system = CoffeeSystem()
     system.scan()
 
     supply.scan_all.assert_called_once()
@@ -52,10 +52,10 @@ def test_scan_delegates_to_domain_scanners(monkeypatch):
 def test_set_inventory_uses_shared_source_and_ice_monitor(monkeypatch):
     """set_inventory 写共享 InventorySource，再经 ice_monitor 发布。"""
     bus = MagicMock()
-    monkeypatch.setattr(cs.CoffeeSystem, "_persist_wired", True)
-    monkeypatch.setattr(cs.CoffeeSystem, "_persist_db", None)
-    monkeypatch.setattr(cs, "get_event_bus", lambda: bus)
-    monkeypatch.setattr(cs, "DecisionEngine", lambda bus: MagicMock())
+    monkeypatch.setattr(CoffeeSystem, "_persist_wired", True)
+    monkeypatch.setattr(CoffeeSystem, "_persist_db", None)
+    monkeypatch.setattr(sysmod, "get_event_bus", lambda: bus)
+    monkeypatch.setattr(sysmod, "DecisionEngine", lambda bus, **kw: MagicMock())
     monkeypatch.setattr(
         "sources.coffee.yfinance_price.PriceSource._bootstrap_last_price",
         lambda self: None,
@@ -73,12 +73,12 @@ def test_set_inventory_uses_shared_source_and_ice_monitor(monkeypatch):
     finance._price_src = MagicMock()
     finance._fx_src = MagicMock()
 
-    monkeypatch.setattr(cs, "InventorySource", lambda: inv)
-    monkeypatch.setattr(cs, "SupplyDomainScanner", lambda *a, **k: supply)
-    monkeypatch.setattr(cs, "FinanceDomainScanner", lambda *a, **k: finance)
-    monkeypatch.setattr(cs, "PolicyDomainScanner", lambda *a, **k: MagicMock())
+    monkeypatch.setattr(sysmod, "InventorySource", lambda: inv)
+    monkeypatch.setattr(sysmod, "SupplyDomainScanner", lambda *a, **k: supply)
+    monkeypatch.setattr(sysmod, "FinanceDomainScanner", lambda *a, **k: finance)
+    monkeypatch.setattr(sysmod, "PolicyDomainScanner", lambda *a, **k: MagicMock())
 
-    system = cs.CoffeeSystem()
+    system = CoffeeSystem()
     system.set_inventory(180.0, pending=10.0)
 
     inv.set_inventory.assert_called_once_with(180.0, 10.0)
@@ -86,11 +86,28 @@ def test_set_inventory_uses_shared_source_and_ice_monitor(monkeypatch):
 
 
 def test_hedge_adjustment_single_definition():
-    """HedgeAdjustment 只有 core.types.state 一处定义。"""
-    from core.types.state import HedgeAdjustment as T
+    """HedgeAdjustment 只有 arbor.domain.types.state 一处定义。"""
+    from arbor.domain.types.state import HedgeAdjustment as T
+    from core.types.state import HedgeAdjustment as Shim
     from core.state.record import HedgeAdjustment as R
-    from core.state import HedgeAdjustment as S
-    from core.state import engine as eng
+    from arbor.application.decision import HedgeAdjustment as S
+    from arbor.application.decision import engine as eng
 
-    assert T is R is S
-    assert not hasattr(eng, "HedgeAdjustment") or eng.HedgeAdjustment is T
+    assert T is Shim is R is S
+    assert eng.HedgeAdjustment is T
+
+
+def test_decision_engine_has_no_sources_import():
+    """Application decision engine must not import sources (ports only)."""
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(
+        Path("arbor/application/decision/engine.py").read_text(encoding="utf-8")
+    )
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                assert not alias.name.startswith("sources"), alias.name
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            assert not node.module.startswith("sources"), node.module

@@ -129,7 +129,7 @@ class OpenMeteoSource:
             # Anomaly checks
             if w.precipitation_mm < 1.0 and "Brazil" in w.region:
                 events.append(CoffeeEvent(
-                    event_type=EventType.DROUGHT_RISK,
+                    event_type=EventType.BRAZIL_CROP_ALERT,
                     domain=Domain.SUPPLY,
                     timestamp=datetime.now(),
                     severity=3,
@@ -139,7 +139,7 @@ class OpenMeteoSource:
                 ))
             elif w.temp_max_c > 35.0:
                 events.append(CoffeeEvent(
-                    event_type=EventType.FROST_RISK,
+                    event_type=EventType.HEAT_WAVE,
                     domain=Domain.SUPPLY,
                     timestamp=datetime.now(),
                     severity=3,

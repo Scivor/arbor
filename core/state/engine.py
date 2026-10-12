@@ -22,7 +22,7 @@ import logging
 
 from core.types.enums import Domain, EventType, HedgeSignal
 from core.types.event import CoffeeEvent
-from core.types.state import HedgeState
+from core.types.state import HedgeAdjustment, HedgeState
 from core.types.constants import HedgeDefaults
 from core.events.bus import EventBus, get_event_bus
 from core.state.signals import signal_from_ratio, signal_descriptions
@@ -37,6 +37,8 @@ from core.cost import LandedCostCalculator
 
 if TYPE_CHECKING:
     from models.ml_advisor import MLSignal  # noqa: F401 — 仅注解用，避免跨层运行时依赖
+    from sources.coffee.yfinance_price import PriceSource
+    from sources.fx.yfinance import FXSource
 
 logger = logging.getLogger(__name__)
 
@@ -146,19 +148,6 @@ class AdjustmentSummary:
         return "\n".join(lines) if lines else f"{indent}(无调整记录)"
 
 
-@dataclass
-class HedgeAdjustment:
-    """Record of a hedge ratio adjustment."""
-    timestamp: datetime
-    event_type: EventType
-    adjustment: float
-    old_ratio: float
-    new_ratio: float
-    reason: str
-    severity: int
-    value: float
-
-
 class DecisionEngine:
     """
     Event-driven decision engine —— 无状态薄壳。
@@ -233,6 +222,10 @@ class DecisionEngine:
 
         self._state_history: list[HedgeState] = []
         self._adjustments: deque[HedgeAdjustment] = deque(maxlen=100)
+
+        # Lazy market sources for landed-cost display — constructed once, reused
+        self._price_source: Optional["PriceSource"] = None
+        self._fx_source: Optional["FXSource"] = None
 
         for event_type in self._rules:
             self.bus.subscribe(event_type, self._make_handler(event_type))
@@ -499,16 +492,18 @@ class DecisionEngine:
     def _get_landed_cost_breakdown(self) -> Optional[object]:
         """Fetch live price + FX and compute landed cost. Returns None on failure."""
         try:
-            from sources.coffee.yfinance_price import PriceSource
-            from sources.fx.yfinance import FXSource
+            if self._price_source is None:
+                from sources.coffee.yfinance_price import PriceSource
+                self._price_source = PriceSource()
+            if self._fx_source is None:
+                from sources.fx.yfinance import FXSource
+                self._fx_source = FXSource()
 
-            ps = PriceSource()
-            price_data = ps.fetch()
+            price_data = self._price_source.fetch()
             if price_data is None or price_data.current <= 0:
                 return None
 
-            fs = FXSource()
-            fx_data = fs.fetch()
+            fx_data = self._fx_source.fetch()
             if fx_data is None or fx_data.rate <= 0:
                 return None
 

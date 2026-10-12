@@ -4,11 +4,10 @@ Re-exports DecisionEngine, state dataclasses, and signal helpers.
 """
 from typing import TYPE_CHECKING
 
-from core.state.record import HedgeAdjustment
 from core.state.signals import HedgeSignal, signal_from_ratio, signal_descriptions
 
-# Re-export HedgeState so callers don't need to know which submodule it's in
-from core.types.state import HedgeState
+# Canonical state types live in core.types — single definition
+from core.types.state import HedgeAdjustment, HedgeState
 
 if TYPE_CHECKING:  # 类型检查器与 IDE 仍能看到这两个符号
     from core.state.engine import DecisionEngine, compute_hedge_from_events

@@ -17,10 +17,9 @@ from core.types.enums import Domain
 from core.types.state import HedgeState
 from core.events import get_event_bus
 from core.state import DecisionEngine
-from sources.climate.noaa_oni import ONISource
-from sources.cot.cftc_cot import COTSource
-from sources.coffee.yfinance_price import PriceSource, FXSource
 from sources.inventory.ice_inventory import InventorySource
+from domains.supply.scanner import SupplyDomainScanner
+from domains.finance.scanner import FinanceDomainScanner
 from domains.policy.scanner import PolicyDomainScanner
 
 
@@ -28,10 +27,12 @@ class CoffeeSystem:
     """
     Arbor 主系统
 
-    三域并行扫描:
-    - 供给域: ONI, COT, ICE库存
-    - 金融域: 价格, 汇率
-    - 政策域: 新闻自动抓取 (关税/贸易战/出口禁令/LDC/农药)
+    三域扫描（与周报同一路径）:
+    - 供给域: SupplyDomainScanner (ONI / COT / ICE / 季节窗口)
+    - 金融域: FinanceDomainScanner (价格 / 汇率，YAML 阈值)
+    - 政策域: PolicyDomainScanner (新闻自动抓取)
+
+    数据获取留在 sources/；阈值与事件发布留在 domains/。
     """
 
     DEFAULT_SCAN_INTERVAL = 300  # 5分钟
@@ -49,15 +50,19 @@ class CoffeeSystem:
         # 决策引擎
         self.engine = DecisionEngine(self.bus)
 
-        # 数据源
-        self.oni_source = ONISource()
-        self.cot_source = COTSource()
-        self.price_source = PriceSource()
-        self.fx_source = FXSource()
+        # 共享库存源：CLI set_inventory() 与供给域 ICE monitor 共用同一实例
         self.inventory_source = InventorySource()
 
-        # 政策域扫描器
+        # 三域扫描器（与 reports.pipeline._scan_live_events 同源）
+        self.supply_scanner = SupplyDomainScanner(
+            self.bus, inventory_source=self.inventory_source
+        )
+        self.finance_scanner = FinanceDomainScanner(self.bus)
         self.policy_scanner = PolicyDomainScanner(self.bus)
+
+        # 兼容旧 API：暴露金融域与库存数据源句柄（fetch / set_inventory）
+        self.price_source = self.finance_scanner._price_src
+        self.fx_source = self.finance_scanner._fx_src
 
         # 事件持久化: 总线上的每个事件写入 DecisionDB（激活 events 表）
         # 类级守卫: 全局总线是进程单例，重复构造只挂一次订阅，避免重复写入
@@ -140,60 +145,28 @@ class CoffeeSystem:
     # 扫描
     # ─────────────────────────────────────────────────────────────────────────
 
+    def _scan_domain(self, label: str, scanner) -> int:
+        """跑一个域扫描器；失败只记日志，不拖垮整次 scan。"""
+        print(f"[{label}] 扫描...")
+        try:
+            events = scanner.scan_all()
+            n = len(events) if events else 0
+            print(f"  → {n} 事件")
+            return n
+        except Exception as e:
+            print(f"  → 错误: {e}")
+            return 0
+
     def scan(self):
-        """执行一次完整扫描"""
+        """执行一次完整扫描（三域扫描器，与周报同源）"""
         now = datetime.now()
         print(f"\n{'='*65}")
         print(f"  [{now.strftime('%H:%M:%S')}] 扫描开始")
         print(f"{'='*65}")
 
-        # ONI
-        print("[供给域] ONI...")
-        try:
-            events = self.oni_source.check_and_publish(self.bus)
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
-
-        # COT
-        print("[供给域] COT...")
-        try:
-            events = self.cot_source.check_and_publish(self.bus)
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
-
-        # 价格
-        print("[金融域] KC=F 价格...")
-        try:
-            events = self.price_source.check_and_publish(self.bus)
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
-
-        # 汇率
-        print("[金融域] USD/CNY...")
-        try:
-            events = self.fx_source.check_and_publish(self.bus)
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
-
-        # 库存
-        print("[供给域] ICE 库存...")
-        try:
-            events = self.inventory_source.check_and_publish(self.bus)
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
-
-        # 政策域
-        print("[政策域] 政策新闻...")
-        try:
-            events = self.policy_scanner.scan_all()
-            print(f"  → {len(events)} 事件")
-        except Exception as e:
-            print(f"  → 错误: {e}")
+        self._scan_domain("供给域", self.supply_scanner)
+        self._scan_domain("金融域", self.finance_scanner)
+        self._scan_domain("政策域", self.policy_scanner)
 
         # 汇总
         counts = self.bus.get_event_counts(hours=24)
@@ -229,9 +202,9 @@ class CoffeeSystem:
     # ─────────────────────────────────────────────────────────────────────────
 
     def set_inventory(self, certified: float, pending: float = 0):
-        """手动设置 ICE 库存"""
+        """手动设置 ICE 库存（写入共享源，再经供给域阈值发布）"""
         self.inventory_source.set_inventory(certified, pending)
-        self.inventory_source.check_and_publish(self.bus)
+        self.supply_scanner.ice_monitor.check_and_publish()
 
     def publish_policy_event(self, event_type, severity: int,
                             value: float, narrative: str, source: str = "Manual"):

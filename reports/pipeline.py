@@ -9,15 +9,10 @@ from __future__ import annotations
 
 import logging
 import math
-import warnings
 from dataclasses import dataclass, replace
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from core.regime_config import get_regime_loader
-from core.state.scoring import compute_score
-from core.types.enums import Domain, EventType
-from core.types.event import CoffeeEvent
 from reports.formatters import (
     format_confidence as _fmt_confidence,
     format_oni as _fmt_oni,
@@ -26,7 +21,6 @@ from reports.formatters import (
     format_range as _fmt_range,
     format_rsi as _fmt_rsi,
 )
-from reports.indicators import compute_rsi
 from reports.models import (
     PredictionReport,
     MarketSnapshot,
@@ -35,9 +29,7 @@ from reports.models import (
     Scenario,
     SupportParam,
     ResistParam,
-    HedgeAdvice,
     MLSnapshot,
-    ChinaImportSnapshot,
     normalize_direction,
 )
 from reports.demo_data import demo_report
@@ -60,260 +52,16 @@ class PipelineConfig:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Data Fetchers — live sources
+# Data Fetchers — live sources (implementation in reports.fetchers)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def fetch_market_snapshot(ticker: str) -> Optional[MarketSnapshot]:
-    """
-    Fetch live market snapshot for `ticker` via PriceSource.
-    Returns None if fetch fails.
-    """
-    warnings.filterwarnings("ignore")
-    try:
-        from sources.coffee.yfinance_price import PriceSource
-        import requests
-
-        ps = PriceSource()
-        data = ps.fetch()
-        if data is None:
-            logger.warning("PriceSource.fetch() returned None")
-            return None
-
-        # Fetch 3-month history for MA60 + RSI computation
-        session = requests.Session()
-        session.headers.update({'User-Agent': 'Mozilla/5.0'})
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-        params = {'interval': '1d', 'range': '3mo'}
-        r = session.get(url, params=params, timeout=10)
-        chart = r.json()['chart']['result'][0]
-        quote = chart['indicators']['quote'][0]
-        closes = [c for c in quote['close'] if c is not None]
-        highs  = [h for h in quote['high'] if h is not None]
-        lows   = [x for x in quote['low'] if x is not None]
-
-        # RSI(14) — 单一事实源: reports/indicators.compute_rsi
-        rsi = compute_rsi(closes)
-
-        # Moving averages
-        ma20 = round(sum(closes[-20:]) / 20, 2) if len(closes) >= 20 else None
-        ma60 = round(sum(closes[-60:]) / 60, 2) if len(closes) >= 60 else None
-
-        vols = [v for v in quote['volume'] if v is not None]
-        vol_5d_avg = sum(vols[-5:]) / 5 if len(vols) >= 5 else (sum(vols) / len(vols) if vols else 1)
-        return MarketSnapshot(
-            ticker=ticker,
-            current=data.current,
-            change_1d_pct=data.change_1d_pct,
-            change_30d_pct=data.change_30d_pct,
-            high_30d=max(highs[-30:]) if len(highs) >= 30 else max(highs),
-            low_30d=min(lows[-30:]) if len(lows) >= 30 else min(lows),
-            volume_ratio=round(data.volume / vol_5d_avg, 2) if vol_5d_avg else 1.0,
-            ma20=ma20,
-            ma60=ma60,
-            rsi_14=rsi,
-            close_5d=closes[-5:],
-            vol_ratio_5d=[round(v / vol_5d_avg, 2) for v in vols[-5:]] if vols else [1.0]*5,
-            close_30d=closes[-30:] if len(closes) >= 30 else closes,
-        )
-    except Exception as e:
-        logger.warning(f"fetch_market_snapshot failed: {e}")
-        return None
-
-
-def fetch_climate_snapshot() -> Optional[ClimateSnapshot]:
-    """
-    Fetch current ONI climate snapshot via ONISource.
-    Returns None if unavailable.
-    """
-    warnings.filterwarnings("ignore")
-    try:
-        from sources.climate.noaa_oni import ONISource
-        oni = ONISource()
-        df = oni.fetch()
-        if df is None or df.empty:
-            return None
-        latest = df.iloc[-1]
-
-        return ClimateSnapshot(
-            oni_value=round(float(latest['oni']), 2),
-            oni_phase=str(latest['phase']),
-            oni_period=f"{latest['year']} {latest['season']}",
-            narrative=f"ONI = {_fmt_oni(float(latest['oni']))} ({latest['phase']})，{'La Nina' if latest['phase'] == 'LA_NINA' else 'El Nino' if latest['phase'] == 'EL_NINO' else '中性'} 阶段",
-        )
-    except Exception as e:
-        logger.warning(f"fetch_climate_snapshot failed: {e}")
-        return None
-
-
-def fetch_ml_snapshot(current_price: Optional[float] = None) -> Optional[MLSnapshot]:
-    """
-    Fetch ML model prediction via ml_advisor.
-    Returns None if models unavailable.
-    """
-    try:
-        from models.ml_advisor import get_ml_advice
-        from models.model_manager import ModelManager
-
-        advice = get_ml_advice(use_cache=True, current_price=current_price)
-        if advice.model_type == "none":
-            return None
-
-        # 尝试读取模型表现指标
-        model_accuracy = None
-        model_mae = None
-        top_features = []
-        try:
-            mgr = ModelManager()
-            if mgr.load():
-                report = mgr.meta.get('report', {})
-                model_accuracy = report.get('clf_accuracy')
-                model_mae = report.get('reg_mae')
-                # 特征重要性: 从 model 获取（如果模型已加载）
-                if mgr.model and mgr.model._fitted and mgr.model._feature_names:
-                    fi = dict(zip(mgr.model._feature_names, mgr.model._tree.feature_importance.tolist()))
-                    # 取 top 3
-                    sorted_fi = sorted(fi.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
-                    top_features = [(name, round(float(imp), 4)) for name, imp in sorted_fi]
-        except Exception:
-            pass
-
-        return MLSnapshot(
-            signal=advice.signal.value.replace("ml_", "").upper(),
-            confidence=round(advice.confidence, 2),
-            bias=round(advice.bias, 2),
-            price_target_30d=advice.price_target_30d,
-            model_type=advice.model_type,
-            rationale=advice.rationale,
-            model_accuracy=round(model_accuracy, 3) if model_accuracy else None,
-            model_mae=round(model_mae, 4) if model_mae else None,
-            top_features=top_features,
-        )
-    except Exception as e:
-        logger.warning(f"fetch_ml_snapshot failed: {e}")
-        return None
-
-
-def fetch_related_markets() -> dict:
-    """
-    Fetch same-day change for related futures markets.
-    Returns {name: change_pct}.
-    """
-    warnings.filterwarnings("ignore")
-    import requests
-    try:
-        session = requests.Session()
-        session.headers.update({'User-Agent': 'Mozilla/5.0'})
-        related = [
-            ("GC=F", "Gold"),
-            ("SB=F", "Sugar #11"),
-            ("CC=F", "Cocoa"),
-            ("CT=F", "Cotton"),
-            ("DJI", "Dow Jones"),
-        ]
-        result = {}
-        for ticker, name in related:
-            try:
-                url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
-                params = {'interval': '1d', 'range': '5d'}
-                r = session.get(url, params=params, timeout=8)
-                data = r.json()['chart']['result'][0]
-                closes = [c for c in data['indicators']['quote'][0]['close'] if c is not None]
-                if len(closes) >= 2:
-                    chg = (closes[-1] - closes[-2]) / closes[-2]
-                    result[name] = round(chg, 4)
-            except Exception:
-                pass
-        return result
-    except Exception as e:
-        logger.warning(f"fetch_related_markets failed: {e}")
-        return {}
-
-
-def fetch_china_import_snapshot(
-    market: Optional[MarketSnapshot],
-    hedge: Optional[HedgeAdvice],
-) -> Optional[ChinaImportSnapshot]:
-    """
-    组装中国进口商视角快照：USD/CNY 汇率 + 到库成本 + 政策事件扫描。
-    各环节独立降级；仅当三者全部失败时返回 None，否则尽量返回部分数据。
-    """
-    # ── 汇率 (USD/CNY) ────────────────────────────────────────────
-    fx_rate: Optional[float] = None
-    fx_source = ""
-    try:
-        from sources.fx.yfinance import FXSource
-        fx_data = FXSource().fetch()
-        if fx_data is not None:
-            fx_rate = fx_data.rate
-            fx_source = "Yahoo Finance"
-    except Exception as e:
-        logger.warning(f"fetch_china_import_snapshot FX failed: {e}")
-
-    # ── 到库成本 ──────────────────────────────────────────────────
-    landed = None
-    if fx_rate is not None and market is not None:
-        try:
-            from core.cost.landed_cost import LandedCostCalculator
-            landed = LandedCostCalculator().calculate(
-                cyp_price_usd_lb=market.current,
-                fx_rate_usd_cny=fx_rate,
-                hedge_ratio=hedge.ratio if hedge else 0.0,
-            )
-        except Exception as e:
-            logger.warning(f"fetch_china_import_snapshot landed cost failed: {e}")
-
-    # ── 政策事件扫描（独立 EventBus，避免污染全局总线）─────────────
-    policy_events: list[dict] = []
-    try:
-        from core.events import EventBus
-        from domains.policy.scanner import PolicyDomainScanner
-        events = PolicyDomainScanner(EventBus()).scan_all()
-        events.sort(key=lambda e: e.severity, reverse=True)
-        for e in events[:10]:
-            policy_events.append({
-                "event_type": e.event_type.value if hasattr(e.event_type, "value") else str(e.event_type),
-                "severity": e.severity,
-                "narrative": e.narrative,
-                "source": e.source,
-                "timestamp": e.timestamp.isoformat() if hasattr(e.timestamp, "isoformat") else str(e.timestamp),
-            })
-    except Exception as e:
-        logger.warning(f"fetch_china_import_snapshot policy scan failed: {e}")
-
-    # ── ICO I-CIP 每日现货指标 ──────────────────────────────────────
-    ico_spot = None
-    try:
-        from sources.coffee.ico_spot import ICOSpotSource
-        ico_spot = ICOSpotSource().fetch()
-    except Exception as e:
-        logger.warning(f"fetch_china_import_snapshot ICO spot failed: {e}")
-
-    # ── 广期所咖啡期货（未上市时优雅降级为 None）────────────────────
-    gfex = None
-    if fx_rate is not None and market is not None:
-        try:
-            from sources.coffee.gfex_coffee import GFEXCoffeeSource, compute_spread
-            gfex_src = GFEXCoffeeSource()
-            if gfex_src.is_available():
-                data = gfex_src.fetch()
-                data.update(compute_spread(data["close"], market.current, fx_rate))
-                gfex = data
-        except Exception as e:
-            logger.warning(f"fetch_china_import_snapshot GFEX failed: {e}")
-
-    # 仅当汇率、到库成本、政策事件三者全部失败才放弃整个板块
-    if fx_rate is None and landed is None and not policy_events:
-        return None
-
-    return ChinaImportSnapshot(
-        fx_rate=fx_rate,
-        fx_source=fx_source,
-        landed=landed,
-        policy_events=policy_events,
-        ico_spot=ico_spot,
-        gfex=gfex,
-    )
-
+from reports.fetchers import (
+    fetch_market_snapshot,
+    fetch_climate_snapshot,
+    fetch_ml_snapshot,
+    fetch_related_markets,
+    fetch_china_import_snapshot,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Analysis Engines
@@ -722,261 +470,21 @@ def compute_drivers(
     return bullish, bearish
 
 
-# ── 报告侧评分因子 —— 产出事件，由 compute_score 统一定价 ────────────────────
+# ── 报告侧评分因子 / 事件汇集 / 套保建议（implementation in reports.report_events）──
 
-_LLM_DIRECTION_BIAS = {"下跌": 0.08, "上涨": -0.08}
-
-
-def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
-    """
-    AI 分析师点评方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
-    看跌 → 正贡献（增套保）；看涨 → 负贡献。
-    """
-    bias = _LLM_DIRECTION_BIAS.get(direction)
-    if bias is None:
-        return None
-    return CoffeeEvent(
-        event_type=EventType.LLM_COMMENTARY,
-        domain=Domain.FINANCE,
-        timestamp=datetime.now(),
-        severity=3,
-        value=bias,
-        narrative=f"AI 分析师点评方向: {direction}",
-        source="llm_analyst",
-    )
-
-
-_SCENARIO_DIRECTION_SIGN = {"下跌": 1.0, "上涨": -1.0, "横盘": 0.0}
-
-
-def scenario_event(dominant) -> CoffeeEvent:
-    """
-    主导情景 → SCENARIO_DOMINANT 事件。
-    下跌 → 正贡献（增套保），上涨 → 负，横盘 → 0。幅度随概率线性缩放。
-    """
-    sign = _SCENARIO_DIRECTION_SIGN.get(dominant.direction, 0.0)
-    return CoffeeEvent(
-        event_type=EventType.SCENARIO_DOMINANT,
-        domain=Domain.FINANCE,
-        timestamp=datetime.now(),
-        severity=3,
-        value=sign * 0.20 * dominant.probability,
-        narrative=f"主导情景 {dominant.direction} (概率 {dominant.probability:.0%})",
-        source="pipeline",
-    )
-
-
-def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
-    """
-    RSI 极值 → RSI_EXTREME 事件。35–65 之间不产生事件。
-    超卖 → 正贡献（提升套保锁定成本），超热 → 负贡献（保留敞口）。
-    """
-    if 35.0 <= rsi <= 65.0:
-        return None
-    if rsi < 35.0:
-        value, label = 0.10, "超卖"
-    else:
-        value, label = -0.10, "超热"
-    return CoffeeEvent(
-        event_type=EventType.RSI_EXTREME,
-        domain=Domain.FINANCE,
-        timestamp=datetime.now(),
-        severity=3,
-        value=value,
-        narrative=f"RSI={_fmt_rsi(rsi)} {label}",
-        source="pipeline",
-    )
-
-
-def _dedupe_events(
-    events: list[CoffeeEvent],
-    rules: Optional[dict] = None,
-    fallback_window_hours: float = 1.0,
-) -> list[CoffeeEvent]:
-    """
-    去重判据：event_type 相同、且 timestamp 相差在该类型的去重窗口之内，
-    视为同一个现实事件的两份副本（出报时的新鲜扫描 vs DB 里的衰减尾巴），
-    保留较新的那一份。
-
-    去重窗口按事件类型取 rules（loader.adjustment_rules）里对应
-    HedgeAdjustmentRule.cooldown_seconds —— 它是配置对"这类事件正常重复
-    触发间隔"的声明，语义上恰好对应去重窗口；取不到该类型规则时回退
-    fallback_window_hours。
-
-    只按 (类型, 时间邻近) 判定 —— narrative / source 在两条路径上必然不同
-    （扫描器写自己的措辞，DB 行是历史快照），不能参与判据。
-    """
-    rules = rules or {}
-    fallback_window = fallback_window_hours * 3600.0
-
-    def _window_seconds(event_type) -> float:
-        rule = rules.get(event_type.name)
-        return float(rule.cooldown_seconds) if rule is not None else fallback_window
-
-    kept: list[CoffeeEvent] = []
-    # 先按时间倒序 —— 于是每组重复中最先被 kept 收下的就是最新的那条
-    for ev in sorted(events, key=lambda e: e.timestamp, reverse=True):
-        window = _window_seconds(ev.event_type)
-        if any(
-            k.event_type == ev.event_type
-            and abs((k.timestamp - ev.timestamp).total_seconds()) <= window
-            for k in kept
-        ):
-            continue
-        kept.append(ev)
-    return kept
-
-
-def _scan_live_events() -> list[CoffeeEvent]:
-    """
-    出报时的三域全量扫描。
-
-    每个域独立 try/except —— 任一域失败只丢那个域，既不拖垮整篇周报，
-    也不连累另外两个域。扫描器一律挂在独立 EventBus 上，避免污染全局总线。
-    """
-    from core.events import EventBus
-    from domains.finance.scanner import FinanceDomainScanner
-    from domains.policy.scanner import PolicyDomainScanner
-    from domains.supply.scanner import SupplyDomainScanner
-
-    out: list[CoffeeEvent] = []
-    for name, cls in (
-        ("supply", SupplyDomainScanner),
-        ("finance", FinanceDomainScanner),
-        ("policy", PolicyDomainScanner),
-    ):
-        try:
-            out.extend(cls(EventBus()).scan_all())
-        except Exception as e:
-            logger.warning("%s 域扫描失败，本期周报跳过该域: %s", name, e)
-    return out
-
-
-def gather_report_events(
-    market: Optional[MarketSnapshot],
-    scenarios: list[Scenario],
-    llm_direction: Optional[str],
-    now: Optional[datetime] = None,
-    live_scan: bool = True,
-) -> list[CoffeeEvent]:
-    """
-    汇集周报评分所需的全部事件 = 出报时三域全量扫描（新鲜事件）
-    ∪ DB 中一年内的历史事件（衰减尾巴）∪ 报告侧因子。
-
-    半衰期最长 365 天（policy 簇），仅靠出报时的新鲜扫描不够，
-    因此并入 DB 的衰减尾巴；两者重叠的部分由 _dedupe_events 去重。
-
-    live_scan=False 关闭网络 I/O（测试与离线场景）。
-    """
-    now = now or datetime.now()
-    events: list[CoffeeEvent] = []
-
-    # 报告侧因子
-    if scenarios:
-        events.append(scenario_event(max(scenarios, key=lambda s: s.probability)))
-    if market and market.rsi_14 is not None:
-        ev = rsi_event(market.rsi_14)
-        if ev:
-            events.append(ev)
-    if llm_direction:
-        ev = llm_commentary_event(llm_direction)
-        if ev:
-            events.append(ev)
-
-    # 出报时的新鲜事件 —— 三域全量扫描
-    if live_scan:
-        events.extend(_scan_live_events())
-
-    # 历史衰减尾巴 —— DB 失败时静默降级为「只用报告侧因子」
-    try:
-        from core.persistence.database import DecisionDB
-
-        db = DecisionDB()
-        df = db.get_events(start=(now - timedelta(days=365)).isoformat(), limit=2000)
-        records = df.to_dict("records")
-    except Exception as e:
-        logger.warning("历史事件加载失败，仅用报告侧因子评分: %s", e)
-        records = []
-
-    # 逐行独立容错 —— 单行坏数据（如非法 timestamp）只跳过自己，
-    # 不能让 except 吞掉整个循环、丢失其后所有行的衰减尾巴。
-    for row in records:
-        name = str(row.get("event_type", "")).strip().upper()
-        if name not in EventType.__members__:
-            continue
-        try:
-            events.append(CoffeeEvent(
-                event_type=EventType[name],
-                domain=Domain.SUPPLY,
-                timestamp=datetime.fromisoformat(row["timestamp"]),
-                severity=int(row.get("severity") or 3),
-                # events 表无 value 列 —— value-carrying 簇（scenario/technical/llm/ml）
-                # 的历史事件贡献恒为 0；非 value-carrying 簇由规则 adjustment 定价，不受影响。
-                value=0.0,
-                narrative=str(row.get("narrative") or ""),
-                source=str(row.get("source") or "db"),
-            ))
-        except (ValueError, KeyError, TypeError) as e:
-            logger.debug("历史事件行解析失败，跳过该行: %s", e)
-
-    # 去重窗口按事件类型取 cooldown_seconds；规则表加载失败则整体回退默认 1 小时
-    try:
-        rules = get_regime_loader().adjustment_rules
-    except Exception as e:
-        logger.warning("去重规则表加载失败，去重窗口回退默认 1 小时: %s", e)
-        rules = None
-
-    return _dedupe_events(events, rules)
-
-
-def compute_hedge_advice(
-    market: Optional[MarketSnapshot],
-    scenarios: list[Scenario],
-    events: list[CoffeeEvent],
-    now: Optional[datetime] = None,
-) -> Optional[HedgeAdvice]:
-    """
-    由统一评分引擎决定套保比率 —— 与 CLI / 回测同一条路径。
-
-    events 已包含 scenario / technical / llm 三个报告侧因子，
-    以及三域扫描与历史衰减尾巴中的全部市场事件。
-    """
-    if not market or not scenarios:
-        return None
-
-    loader = get_regime_loader()
-    loader.load()
-    rules = loader.event_rules()
-    # 规则表为空 → 所有事件被过滤 → ratio 恰好落在中性 0.65，
-    # 印出来和一个正常的中性判断毫无区别。周报宁可缺这一板块，也不能印错数。
-    if not rules:
-        raise RuntimeError(
-            "评分规则表加载失败：config/regimes.yaml 的 adjustment_rules 为空，"
-            "无法计算套保比率（继续计算会得到看似正常的中性 0.65）"
-        )
-    breakdown = compute_score(
-        events, rules, now or datetime.now(), loader.scoring
-    )
-    ratio = breakdown.ratio
-
-    if ratio >= 0.75:
-        action = "套保偏紧"
-    elif ratio <= 0.55:
-        action = "套保偏松"
-    else:
-        action = "维持中性"
-
-    top = max(breakdown.clusters, key=lambda c: abs(c.score), default=None)
-    driver = f"主导因子: {top.cluster} ({top.score:+.2f})" if top else "无活跃因子"
-
-    return HedgeAdvice(
-        ratio=round(ratio, 2),
-        signal=action,
-        narrative=f"[{action}] {driver} | 合约: KC=F (Sep 26)",
-        trigger_above=None,
-        trigger_below=None,
-    )
-
+from reports.report_events import (
+    llm_commentary_event,
+    scenario_event,
+    rsi_event,
+    gather_report_events,
+    compute_hedge_advice,
+)
+from reports.report_events import (  # noqa: F401 — re-export for tests / monkeypatch targets
+    _dedupe_events,
+    _scan_live_events,
+    _LLM_DIRECTION_BIAS,
+    _SCENARIO_DIRECTION_SIGN,
+)
 
 def compute_outlook_and_risks(
     market: Optional[MarketSnapshot],

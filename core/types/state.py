@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from core.types.enums import Domain, HedgeSignal
+from core.types.enums import Domain, EventType, HedgeSignal
 
 
 @dataclass
@@ -46,9 +46,12 @@ class HedgeRecommendation:
 class HedgeAdjustment:
     """
     Record of a hedge ratio adjustment triggered by an event.
+
+    Single definition used by DecisionEngine, EventBus, and notify handlers.
+    event_type is EventType (not str) so callers can use .value / .name safely.
     """
     timestamp: datetime
-    event_type: str
+    event_type: EventType
     adjustment: float
     old_ratio: float
     new_ratio: float

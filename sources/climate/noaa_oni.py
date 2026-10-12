@@ -307,7 +307,7 @@ class ONIScraper:
             severity = 4
             narrative += f" — La Niña确认 (阈值 {LA_NINA_THRESHOLD})"
             event = CoffeeEvent(
-                event_type=EventType.LA_NINA,
+                event_type=EventType.LA_NINA_CONFIRMED,
                 domain=Domain.SUPPLY,
                 timestamp=datetime.now(),
                 severity=severity,
@@ -322,7 +322,7 @@ class ONIScraper:
             severity = 4
             narrative += f" — El Niño确认 (阈值 {EL_NINO_THRESHOLD})"
             event = CoffeeEvent(
-                event_type=EventType.EL_NINO,
+                event_type=EventType.EL_NINO_CONFIRMED,
                 domain=Domain.SUPPLY,
                 timestamp=datetime.now(),
                 severity=severity,

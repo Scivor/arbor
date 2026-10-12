@@ -229,7 +229,7 @@ The EventBus owns the event log and subscriber list. It does NOT call decision l
 ```
 engine.py   → DecisionEngine: 事件窗口薄壳，委托 scoring.compute_score
 scoring.py  → compute_score: 事件集 → 比率的纯函数（无 I/O，无状态）
-record.py   → HedgeAdjustment dataclass
+record.py   → re-export HedgeAdjustment / HedgeState（定义在 core.types.state）
 signals.py  → HedgeSignal helpers
 ```
 
@@ -249,6 +249,13 @@ Each source module:
 Fallback is handled at the **Registry** level (`sources/data_registry.py`), not inside individual sources.
 
 ### 5. `domains/` — Scanner Pattern (Subdirectory Structure)
+
+**CLI / Agent 与周报共用扫描器：** `CoffeeSystem.scan()` 委托
+`SupplyDomainScanner` / `FinanceDomainScanner` / `PolicyDomainScanner`
+（与 `reports.report_events._scan_live_events` 同源）。sources 负责
+`fetch()`；阈值与 `publish` 留在 domains。库存手动输入通过注入共享
+`InventorySource` 到 `ICECoffeeMonitor` 完成。
+
 
 ```
 supply/
@@ -283,7 +290,9 @@ coffee.py → CoffeeFuturesEngine: futures margin accounting override
 
 ```
 models.py         → PredictionReport + section dataclasses
-pipeline.py       → ReportPipeline: aggregates market data → PredictionReport
+pipeline.py       → run(): 编排出报（薄协调层）
+fetchers.py       → 联网抓取（market / climate / ML / china_import）
+report_events.py  → 报告侧因子 + 三域扫描 + gather + hedge advice
 exporters/
   html_to_pdf.py  → HTML + PDF exporter
   json_exporter.py→ JSON exporter

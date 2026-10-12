@@ -346,7 +346,7 @@ def test_compute_hedge_advice_raises_on_empty_rules(monkeypatch):
         "event_rules": lambda self: {},
         "scoring": None,
     })()
-    monkeypatch.setattr("reports.pipeline.get_regime_loader", lambda: loader)
+    monkeypatch.setattr("reports.report_events.get_regime_loader", lambda: loader)
 
     market = type("M", (), {"rsi_14": 30.0, "current": 300.0})()
     with pytest.raises(RuntimeError, match="规则表加载失败"):

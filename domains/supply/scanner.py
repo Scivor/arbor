@@ -16,7 +16,12 @@ class SupplyDomainScanner(BaseDomainScanner):
     定期检查所有供给域数据源
     """
 
-    def __init__(self, bus: Optional[EventBus] = None, scan_interval: int = 300):
+    def __init__(
+        self,
+        bus: Optional[EventBus] = None,
+        scan_interval: int = 300,
+        inventory_source=None,
+    ):
         super().__init__(bus=bus, scan_interval=scan_interval)
         # 延迟导入避免循环
         from domains.supply.oni_monitor import ONIMonitor
@@ -26,7 +31,7 @@ class SupplyDomainScanner(BaseDomainScanner):
 
         self.oni_monitor = ONIMonitor(self.bus)
         self.cot_monitor = COTMonitor(self.bus)
-        self.ice_monitor = ICECoffeeMonitor(self.bus)
+        self.ice_monitor = ICECoffeeMonitor(self.bus, inventory_source=inventory_source)
         self.seasonal_monitor = SeasonalMonitor(self.bus)
 
     def scan_all(self) -> List[CoffeeEvent]:

@@ -34,7 +34,7 @@ class ICECoffeeMonitor(BaseMonitor):
 
     ICE_URL = "https://www.theice.com/marketdata/reports/"
 
-    def __init__(self, bus: Optional[EventBus] = None):
+    def __init__(self, bus: Optional[EventBus] = None, inventory_source=None):
         super().__init__(bus)
         self._last_inventory: Optional[float] = None
 
@@ -47,9 +47,12 @@ class ICECoffeeMonitor(BaseMonitor):
         self._drop_pct = self._get_drop_threshold_pct()
         self._spike_pct = self._get_spike_threshold_pct()
 
-        # Data backend: delegate to ICEInventorySource
-        from sources.inventory.ice_inventory import InventorySource as ICEInventorySource
-        self._inventory_src = ICEInventorySource()
+        # Data backend: inject shared InventorySource when facade owns set_inventory()
+        if inventory_source is not None:
+            self._inventory_src = inventory_source
+        else:
+            from sources.inventory.ice_inventory import InventorySource as ICEInventorySource
+            self._inventory_src = ICEInventorySource()
 
     def _get_threshold_bags(self, regime_name: str) -> float:
         """从 regimes.yaml 读取阈值并转换为 bags 单位"""

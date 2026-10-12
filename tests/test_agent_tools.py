@@ -17,7 +17,7 @@ from agent.tools.system import get_recent_events, query_system_status, scan_all_
 def test_query_system_status(monkeypatch):
     fake = MagicMock()
     fake.status.return_value = "套保: 65% | 信号: MEDIUM_HEDGE"
-    monkeypatch.setattr("coffee.CoffeeSystem", lambda: fake)
+    monkeypatch.setattr("agent.tools.system.get_coffee_system", lambda: fake)
     out = query_system_status.invoke({})
     assert "65%" in out
 
@@ -25,14 +25,17 @@ def test_query_system_status(monkeypatch):
 def test_scan_all_domains(monkeypatch):
     fake = MagicMock()
     fake.status.return_value = "套保: 65%"
-    monkeypatch.setattr("coffee.CoffeeSystem", lambda: fake)
+    monkeypatch.setattr("agent.tools.system.get_coffee_system", lambda: fake)
     out = scan_all_domains.invoke({})
     assert "扫描完成" in out and "65%" in out
     fake.scan.assert_called_once()
 
 
 def test_query_system_status_error(monkeypatch):
-    monkeypatch.setattr("coffee.CoffeeSystem", MagicMock(side_effect=RuntimeError("boom")))
+    monkeypatch.setattr(
+        "agent.tools.system.get_coffee_system",
+        MagicMock(side_effect=RuntimeError("boom")),
+    )
     out = query_system_status.invoke({})
     assert "错误" in out and "boom" in out
 

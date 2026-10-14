@@ -107,6 +107,26 @@ def _build_context(report) -> str:
         else:
             lines.append(f"凯利影子: {k.get('reason', '')}")
 
+    sc = getattr(report, "scenario_scorecard", None)
+    if sc and sc.get("n", 0) > 0:
+        brier = sc.get("mean_brier")
+        brier_s = f"{brier:.3f}" if brier is not None else "—"
+        skill = "有技能" if sc.get("has_skill") else "技能未证实"
+        lines.append(
+            f"情景记分: n={sc['n']} 区间覆盖 {sc.get('interval_coverage', 0):.0%} "
+            f"严格方向 {sc.get('strict_direction_rate', 0):.0%} Brier {brier_s}（{skill}）"
+        )
+
+    tilt = getattr(report, "scenario_event_tilt", None)
+    if tilt and tilt.get("active"):
+        probs = " / ".join(
+            f"{t['direction']} {t['probability']:.0%}"
+            for t in tilt.get("tilted", [])
+        )
+        lines.append(f"事件影子情景: {probs}（仅对照，不改套保）")
+        for r in (tilt.get("reasons") or [])[:3]:
+            lines.append(f"  影子依据: {r}")
+
     if report.outlook:
         lines.append(f"系统展望: {report.outlook}")
 

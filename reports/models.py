@@ -355,6 +355,8 @@ class PredictionReport:
                 for t in tilt.get("tilted", [])
             ]
             lines.append(f"  {'事件影子':>12}: " + " / ".join(parts) + "（不改套保）")
+            for r in (tilt.get("reasons") or [])[:4]:
+                lines.append(f"  {'':>12}  · {r}")
             lines.append("")
 
         # ─── 驱动因子 ───────────────────────────────────────────────

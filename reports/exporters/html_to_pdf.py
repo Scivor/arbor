@@ -126,6 +126,16 @@ _TRANSLATIONS = {
     "kelly_active": {"zh": "凯利视角: 建议 {suggested}（edge {edge}）vs 当前建议 {current}",
                      "en": "Kelly view: suggests {suggested} (edge {edge}) vs current {current}"},
     "kelly_inactive": {"zh": "凯利视角: {reason}", "en": "Kelly view: {reason}"},
+    "scorecard_note": {
+        "zh": "情景记分: n={n} 区间覆盖 {cov} 严格方向 {dir} Brier {brier}（{skill}）",
+        "en": "Scenario scorecard: n={n} interval {cov} strict dir {dir} Brier {brier} ({skill})",
+    },
+    "scorecard_skill_yes": {"zh": "有技能", "en": "skill"},
+    "scorecard_skill_no": {"zh": "技能未证实", "en": "unproven"},
+    "tilt_note": {
+        "zh": "事件影子: {probs}（不改套保）",
+        "en": "Event shadow: {probs} (hedge unchanged)",
+    },
 
     # China Import
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
@@ -411,6 +421,40 @@ def _build_reference_class_html(report, lang: str) -> str:
               down=f"{rc.get('down', 0):.0%}")
     return f"""
   <div class="rc-note">{text}{thin}</div>"""
+
+
+def _build_scorecard_html(report, lang: str) -> str:
+    """情景记分卡一行（无样本时不渲染）。"""
+    sc = getattr(report, "scenario_scorecard", None)
+    if not sc or not sc.get("n"):
+        return ""
+    brier = sc.get("mean_brier")
+    brier_s = f"{brier:.3f}" if brier is not None else "—"
+    skill = _t("scorecard_skill_yes" if sc.get("has_skill") else "scorecard_skill_no", lang)
+    text = _t("scorecard_note", lang,
+              n=sc["n"],
+              cov=f"{sc.get('interval_coverage', 0):.0%}",
+              dir=f"{sc.get('strict_direction_rate', 0):.0%}",
+              brier=brier_s, skill=skill)
+    return f"""
+  <div class="rc-note">{text}</div>"""
+
+
+def _build_event_tilt_html(report, lang: str) -> str:
+    """事件/市场/期限结构影子倾斜（active 时渲染；不改套保）。"""
+    tilt = getattr(report, "scenario_event_tilt", None)
+    if not tilt or not tilt.get("active"):
+        return ""
+    probs = " / ".join(
+        f"{t['direction']} {_fmt_percent(t['probability'], decimals=0, scale=100)}"
+        for t in tilt.get("tilted", [])
+    )
+    reasons = "".join(
+        f"<li>{_html.escape(str(r))}</li>" for r in (tilt.get("reasons") or [])[:4]
+    )
+    reason_block = f"<ul class='tilt-reasons'>{reasons}</ul>" if reasons else ""
+    return f"""
+  <div class="kelly-note">{_t("tilt_note", lang, probs=probs)}{reason_block}</div>"""
 
 
 def _scenario_accent(direction: str) -> str:
@@ -1649,6 +1693,8 @@ def build_report_html(report, lang: str = "zh") -> str:
     {scenario_rows}
   </div>
   {_build_reference_class_html(report, lang)}
+  {_build_scorecard_html(report, lang)}
+  {_build_event_tilt_html(report, lang)}
   {hedge_html}
   {_build_kelly_html(report, lang)}
 </div>

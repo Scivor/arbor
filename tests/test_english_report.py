@@ -22,6 +22,7 @@ _ZH_LABELS = [
     "市场快照", "情景分析", "套保建议", "核心观点", "风险提示",
     "生成时间", "凯利视角", "参考类", "月均", "日变动", "内外盘价差",
     "样本稀薄", "方向准确率", "模型表现", "套保比率调整", "30日价格目标",
+    "情景记分", "事件影子", "影子依据", "技能未证实",
 ]
 
 
@@ -41,6 +42,20 @@ def _report_full():
                               "n_analogs": 12, "years": 5}
     report.kelly_shadow = {"edge": 0.4, "suggested_ratio": 0.85,
                            "active": True, "reason": "测试"}
+    report.scenario_scorecard = {
+        "n": 10, "interval_coverage": 0.7, "strict_direction_rate": 0.4,
+        "mean_brier": 0.22, "has_skill": True,
+    }
+    report.scenario_event_tilt = {
+        "active": True,
+        "tilted": [
+            {"direction": "上涨", "probability": 0.35},
+            {"direction": "横盘", "probability": 0.40},
+            {"direction": "下跌", "probability": 0.25},
+        ],
+        "deltas": {"上涨": 0.06, "下跌": 0.0, "横盘": -0.06},
+        "reasons": ["La Niña → 供给偏紧，影子抬升上涨情景"],
+    }
     report.llm_commentary = "中文点评内容"
     report.llm_commentary_en = "English commentary body"
     return report
@@ -64,6 +79,8 @@ def test_english_markdown_labels_and_numbers():
     assert "Base rate" in md
     assert "month avg" in md
     assert "Kelly view" in md
+    assert "Scenario scorecard" in md
+    assert "Event shadow" in md
     assert "Direction Accuracy" in md
     assert "Risk Warnings" in md
     assert "Generated:" in md

@@ -130,6 +130,60 @@ def test_term_structure_negative_basis_tilts_down():
     assert tilted_bear["probability"] > 0.25
 
 
+def test_tilt_and_scorecard_rendered_in_exporters():
+    from reports.demo_data import demo_report
+    from reports.exporters.html_to_pdf import build_report_html
+    from reports.exporters.markdown_exporter import export_markdown
+
+    report = demo_report()
+    report.scenario_scorecard = {
+        "n": 9, "interval_coverage": 0.66, "strict_direction_rate": 0.33,
+        "mean_brier": 0.25, "has_skill": False,
+    }
+    report.scenario_event_tilt = {
+        "active": True,
+        "tilted": [
+            {"direction": "上涨", "probability": 0.30},
+            {"direction": "横盘", "probability": 0.45},
+            {"direction": "下跌", "probability": 0.25},
+        ],
+        "reasons": ["ICO–KC 基差 +8.0¢ → 现货偏紧，影子抬升上涨"],
+    }
+    md = export_markdown(report, lang="zh")
+    assert "情景记分" in md
+    assert "事件影子" in md
+    assert "ICO–KC" in md
+    html = build_report_html(report, lang="zh")
+    assert "情景记分" in html
+    assert "事件影子" in html
+    assert "情景记分" in report.to_text()
+    assert "事件影子" in report.to_text()
+
+
+def test_history_persists_tilt_and_scorecard(tmp_path, monkeypatch):
+    from reports.demo_data import demo_report
+    from reports.history import load_summaries, save_report_summary
+
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    report = demo_report()
+    report.scenario_scorecard = {
+        "n": 5, "interval_coverage": 0.8, "strict_direction_rate": 0.2,
+        "mean_brier": 0.3, "has_skill": False,
+    }
+    report.scenario_event_tilt = {
+        "active": True,
+        "deltas": {"上涨": 0.05, "下跌": 0.0, "横盘": -0.05},
+        "reasons": ["Polymarket 气候/灾害 P=80% → 影子抬升上涨"],
+        "tilted": [{"direction": "上涨", "probability": 0.3}],
+    }
+    save_report_summary(report)
+    sums = load_summaries()
+    assert len(sums) == 1
+    assert sums[0].scenario_scorecard.get("n") == 5
+    assert sums[0].scenario_event_tilt.get("active") is True
+    assert "Polymarket" in sums[0].scenario_event_tilt["reasons"][0]
+
+
 def test_vol_based_scenarios_use_close_30d():
     # 构造平稳序列 → 窄区间；剧烈波动序列 → 宽区间
     def market(closes):

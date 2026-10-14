@@ -85,6 +85,17 @@ _T = {
         "en": "Kelly view: suggests {s} (edge {e}) vs current {c}",
     },
     "kelly_inactive": {"zh": "凯利视角: {reason}", "en": "Kelly view: {reason}"},
+    "scorecard_line": {
+        "zh": "情景记分: n={n} 区间覆盖 {cov} 严格方向 {dir} Brier {brier}（{skill}）",
+        "en": "Scenario scorecard: n={n} interval {cov} strict dir {dir} Brier {brier} ({skill})",
+    },
+    "scorecard_skill_yes": {"zh": "有技能", "en": "skill"},
+    "scorecard_skill_no": {"zh": "技能未证实", "en": "unproven"},
+    "tilt_line": {
+        "zh": "事件影子: {probs}（不改套保）",
+        "en": "Event shadow: {probs} (hedge unchanged)",
+    },
+    "tilt_reason_prefix": {"zh": "影子依据", "en": "Shadow rationale"},
     "landed_total": {"zh": "到库成本", "en": "Landed Cost"},
     "cyp_share": {"zh": "CYP 占比", "en": "CYP Share"},
     "current_hedge": {"zh": "当前套保比率", "en": "Current Hedge"},
@@ -196,6 +207,29 @@ def _md_scenarios(report: "Report", lang: str) -> list[str]:
                         years=f"{rc.get('years', 5):.0f}",
                         up=f"{rc.get('up', 0):.0%}", flat=f"{rc.get('flat', 0):.0%}",
                         down=f"{rc.get('down', 0):.0%}") + thin)
+        lines.append("")
+
+    sc = getattr(report, "scenario_scorecard", None)
+    if sc and sc.get("n", 0) > 0:
+        brier = sc.get("mean_brier")
+        brier_s = f"{brier:.3f}" if brier is not None else "—"
+        skill = _t("scorecard_skill_yes" if sc.get("has_skill") else "scorecard_skill_no", lang)
+        lines.append(_t("scorecard_line", lang,
+                        n=sc["n"],
+                        cov=f"{sc.get('interval_coverage', 0):.0%}",
+                        dir=f"{sc.get('strict_direction_rate', 0):.0%}",
+                        brier=brier_s, skill=skill))
+        lines.append("")
+
+    tilt = getattr(report, "scenario_event_tilt", None)
+    if tilt and tilt.get("active"):
+        probs = " / ".join(
+            f"{t['direction']} {t['probability']:.0%}"
+            for t in tilt.get("tilted", [])
+        )
+        lines.append(_t("tilt_line", lang, probs=probs))
+        for r in (tilt.get("reasons") or [])[:4]:
+            lines.append(f"- {_t('tilt_reason_prefix', lang)}: {r}")
         lines.append("")
     return lines
 

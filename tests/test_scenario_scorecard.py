@@ -81,6 +81,55 @@ def test_event_tilt_shadow_does_not_mutate_scenarios():
     assert tilted_bull["probability"] > 0.25
 
 
+def test_polymarket_and_term_structure_tilt_shadow():
+    scenarios = [
+        Scenario("A", "横盘", 290, 310, 0.50, []),
+        Scenario("B", "上涨", 310, 330, 0.25, []),
+        Scenario("C", "下跌", 270, 290, 0.25, []),
+    ]
+    poly = type("P", (), {"markets": [
+        {"question": "Will El Nino be declared in 2026?", "probability": 0.80, "slug": "el-nino"},
+        {"question": "US-China trade war escalation?", "probability": 0.70, "slug": "trade-war"},
+    ]})()
+    ico = {"icip": 320.0}  # KC=300 → +20¢ 正基差
+    gfex = {"spread_pct": 0.04}  # 内盘升水
+    before = [s.probability for s in scenarios]
+    out = apply_event_tilt_shadow(
+        scenarios,
+        climate=None,
+        events=[],
+        polymarket=poly,
+        ico_spot=ico,
+        gfex=gfex,
+        kc_price=300.0,
+    )
+    assert out["active"] is True
+    assert [s.probability for s in scenarios] == before
+    assert out["deltas"]["上涨"] > 0
+    assert any("Polymarket" in r for r in out["reasons"])
+    assert any("基差" in r or "GFEX" in r for r in out["reasons"])
+    tilted_bull = next(t for t in out["tilted"] if t["direction"] == "上涨")
+    assert tilted_bull["probability"] > 0.25
+
+
+def test_term_structure_negative_basis_tilts_down():
+    scenarios = [
+        Scenario("A", "横盘", 290, 310, 0.50, []),
+        Scenario("B", "上涨", 310, 330, 0.25, []),
+        Scenario("C", "下跌", 270, 290, 0.25, []),
+    ]
+    out = apply_event_tilt_shadow(
+        scenarios,
+        ico_spot={"icip": 280.0},
+        gfex={"spread_pct": -0.05},
+        kc_price=300.0,
+    )
+    assert out["active"] is True
+    assert out["deltas"]["下跌"] > 0
+    tilted_bear = next(t for t in out["tilted"] if t["direction"] == "下跌")
+    assert tilted_bear["probability"] > 0.25
+
+
 def test_vol_based_scenarios_use_close_30d():
     # 构造平稳序列 → 窄区间；剧烈波动序列 → 宽区间
     def market(closes):

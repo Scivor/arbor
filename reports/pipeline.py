@@ -680,22 +680,40 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"kelly shadow failed: {e}")
 
-    # ── Step 3e: 事件倾斜影子（不改 scenarios，不进 hedge）──────────────
-    scenario_event_tilt = None
-    try:
-        from reports.scenario_tilt import apply_event_tilt_shadow
-        scenario_event_tilt = apply_event_tilt_shadow(
-            scenarios, climate=climate, events=report_events,
-        )
-    except Exception as e:
-        logger.warning(f"scenario_event_tilt failed: {e}")
-
-    # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
+    # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件 + ICO/GFEX）──
     # 汇率/政策事件不依赖套保比率，且 Step 6 的 LLM 点评上下文
     # （_build_context）要读到这三者才不会跳过对应描述，故仍在此处早取一次，
     # 用初版 hedge 算到库成本。到库成本会在 Step 6 最终比率算出后原地刷新
     # （见下方"收尾"注释），届时不重复 fetch 汇率/政策事件，避免多打网络请求。
+    # ICO/GFEX 亦供 Step 3e 期限结构影子倾斜使用（只读，不进 hedge）。
     china_import = fetch_china_import_snapshot(market, hedge)
+
+    # ── Step 3b2: Polymarket（可选；失败不影响出报）────────────────
+    polymarket_data = None
+    try:
+        from sources.markets.polymarket import PolymarketSource
+        polymarket_data = PolymarketSource().fetch()
+    except Exception as e:
+        logger.warning(f"polymarket fetch failed: {e}")
+
+    # ── Step 3e: 事件/预测市场/期限结构倾斜影子（不改 scenarios，不进 hedge）──
+    scenario_event_tilt = None
+    try:
+        from reports.scenario_tilt import apply_event_tilt_shadow
+        ico = china_import.ico_spot if china_import else None
+        gfex = china_import.gfex if china_import else None
+        kc = market.current if market else None
+        scenario_event_tilt = apply_event_tilt_shadow(
+            scenarios,
+            climate=climate,
+            events=report_events,
+            polymarket=polymarket_data,
+            ico_spot=ico,
+            gfex=gfex,
+            kc_price=kc,
+        )
+    except Exception as e:
+        logger.warning(f"scenario_event_tilt failed: {e}")
 
     # ── Step 3: Compute forecast week ────────────────────────────
     today = date.today()

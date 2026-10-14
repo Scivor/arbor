@@ -230,7 +230,7 @@ class PredictionReport:
     # 情景预测记分卡（方向/区间覆盖/Brier；供展示与条件化 shrink）
     scenario_scorecard: Optional[dict] = None
 
-    # 事件倾斜影子情景（气候/供给/政策 → 概率倾斜；不改 hedge_advice）
+    # 事件倾斜影子情景（气候/供给/政策/Polymarket/期限结构 → 概率倾斜；不改 hedge_advice）
     scenario_event_tilt: Optional[dict] = None
 
     # AI 分析师点评（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）

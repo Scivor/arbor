@@ -139,12 +139,37 @@ def _get_ml_advice_uncached(current_price: Optional[float] = None) -> MLAdvice:
     for a in advice_list:
         rationales.append(f"[{a.model_type}] {a.signal.value} ({a.confidence:.0%})")
 
+    # 目标价：按置信度加权（忽略缺失）；模型分歧大时下调 ensemble 置信度
+    weighted_targets = [
+        (a.price_target_30d, a.confidence)
+        for a in advice_list
+        if a.price_target_30d is not None and a.confidence > 0
+    ]
+    price_target_30d = None
+    if weighted_targets:
+        tw = sum(c for _, c in weighted_targets)
+        price_target_30d = (
+            sum(t * c for t, c in weighted_targets) / tw if tw else weighted_targets[0][0]
+        )
+        vals = [t for t, _ in weighted_targets]
+        if len(vals) >= 2:
+            mid = sum(vals) / len(vals)
+            spread = (max(vals) - min(vals)) / max(abs(mid), 1e-6)
+            if spread > 0.05:
+                avg_confidence *= 0.8
+                rationales.append(f"[ensemble] 目标价分歧 {spread:.1%}，置信度折减")
+                bias_magnitude = avg_confidence * 0.10
+                final_bias = (
+                    bias_magnitude if final_signal == MLSignal.BEARISH
+                    else (-bias_magnitude if final_signal == MLSignal.BULLISH else 0.0)
+                )
+
     return MLAdvice(
         signal=final_signal,
         confidence=avg_confidence,
         bias=final_bias,
         rationale=rationales,
-        price_target_30d=advice_list[0].price_target_30d,
+        price_target_30d=price_target_30d,
         model_type="ensemble",
     )
 

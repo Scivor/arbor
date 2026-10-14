@@ -227,6 +227,12 @@ class PredictionReport:
     # 凯利仓位影子（Phase 3：{edge, suggested_ratio, active, reason}，只读不改 hedge_advice）
     kelly_shadow: Optional[dict] = None
 
+    # 情景预测记分卡（方向/区间覆盖/Brier；供展示与条件化 shrink）
+    scenario_scorecard: Optional[dict] = None
+
+    # 事件倾斜影子情景（气候/供给/政策 → 概率倾斜；不改 hedge_advice）
+    scenario_event_tilt: Optional[dict] = None
+
     # AI 分析师点评（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
     llm_commentary: Optional[str] = None
 
@@ -326,6 +332,29 @@ class PredictionReport:
                 f"  {'基础概率':>12}: 近 {rc.get('years', 5):.0f} 年周度分布，"
                 f"涨 {rc.get('up', 0):.0%} / 横 {rc.get('flat', 0):.0%} / 跌 {rc.get('down', 0):.0%}{thin}"
             )
+            lines.append("")
+
+        # ─── 情景记分卡 ─────────────────────────────────────────────
+        if self.scenario_scorecard and self.scenario_scorecard.get("n", 0) > 0:
+            sc = self.scenario_scorecard
+            skill = "有技能" if sc.get("has_skill") else "技能未证实"
+            brier = sc.get("mean_brier")
+            brier_s = f"{brier:.3f}" if brier is not None else "—"
+            lines.append(
+                f"  {'情景记分':>12}: n={sc['n']} 区间覆盖 {sc.get('interval_coverage', 0):.0%} "
+                f"严格方向 {sc.get('strict_direction_rate', 0):.0%} "
+                f"Brier {brier_s}（{skill}）"
+            )
+            lines.append("")
+
+        # ─── 事件倾斜影子 ───────────────────────────────────────────
+        if self.scenario_event_tilt and self.scenario_event_tilt.get("active"):
+            tilt = self.scenario_event_tilt
+            parts = [
+                f"{t['direction']} {t['probability']:.0%}"
+                for t in tilt.get("tilted", [])
+            ]
+            lines.append(f"  {'事件影子':>12}: " + " / ".join(parts) + "（不改套保）")
             lines.append("")
 
         # ─── 驱动因子 ───────────────────────────────────────────────

@@ -47,7 +47,7 @@ class PipelineConfig:
     use_demo_data: bool = False       # If True, skip live fetches
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
     forecast_week_offset: int = 0     # 0 = current week, 1 = next week, etc.
-    shrink_w: float = 0.0             # 参考类概率收缩权重（0.0=关闭；>0 时 p'=w·p+(1−w)·p_base）
+    shrink_w: float = 0.0             # 参考类收缩：<=0 自动（有技能才启用 0.2）；>0 显式但仍要求有技能
     live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
 
@@ -167,35 +167,47 @@ def compute_levels_and_scenarios(
     p_bull /= total
     p_bear /= total
 
-    # ── Price ranges based on actual volatility ────────────────────────
-    # Estimate recent volatility from 5d closes
-    if len(close_5d) >= 2:
-        deltas = [abs(close_5d[i] - close_5d[i-1]) for i in range(1, len(close_5d))]
+    # ── Price ranges: realized vol → 5 交易日 horizon（与周报期限对齐）──
+    # 优先用 30 日收盘算日波动；不足则退回 5 日均波幅。
+    close_series = list(market.close_30d or []) or list(close_5d or [])
+    avg_delta = p * 0.02
+    daily_vol_price = avg_delta
+    if len(close_series) >= 6:
+        rets = [
+            (close_series[i] - close_series[i - 1]) / close_series[i - 1]
+            for i in range(1, len(close_series))
+            if close_series[i - 1]
+        ]
+        if len(rets) >= 5:
+            mean_r = sum(rets) / len(rets)
+            var = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+            daily_vol_price = max(math.sqrt(var) * p, p * 0.005)
+            avg_delta = sum(abs(r) * p for r in rets[-5:]) / min(5, len(rets))
+    elif len(close_5d) >= 2:
+        deltas = [abs(close_5d[i] - close_5d[i - 1]) for i in range(1, len(close_5d))]
         avg_delta = sum(deltas) / len(deltas)
-    else:
-        avg_delta = p * 0.02  # fallback 2%
+        daily_vol_price = avg_delta
 
-    # Neutral range: current ± 1x avg daily move
-    neutral_min = round(p - avg_delta, 0)
-    neutral_max = round(p + avg_delta, 0)
+    _HORIZON_DAYS = 5  # 周报预测窗口 ≈ 下一交易周
+    move = daily_vol_price * math.sqrt(_HORIZON_DAYS)
 
-    # Bearish range: down 1-2x avg daily move, floor at 30d low
-    bear_min = round(max(p - avg_delta * 2.5, market.low_30d * 0.98), 0)
-    bear_max = round(p - avg_delta * 0.5, 0)
+    # 横盘 ≈ ±0.67σ（约 50% 覆盖）；涨/跌用 0.5σ–1.65σ 带，贴 30 日高低
+    neutral_min = round(p - move * 0.67, 0)
+    neutral_max = round(p + move * 0.67, 0)
+    bear_min = round(max(p - move * 1.65, market.low_30d * 0.98), 0)
+    bear_max = round(p - move * 0.50, 0)
+    bull_min = round(p + move * 0.50, 0)
+    bull_max = round(min(p + move * 1.65, market.high_30d * 1.02), 0)
 
-    # Bullish range: up 1-2x avg daily move, cap at 30d high
-    bull_min = round(p + avg_delta * 0.5, 0)
-    bull_max = round(min(p + avg_delta * 2.5, market.high_30d * 1.02), 0)
-
-    # If ML has price target, anchor the dominant scenario to it
+    # ML 30 日目标 → 按交易日比例折到 5 日期望位移后再锚定情景
     if ml and ml.price_target_30d:
-        target = ml.price_target_30d
-        if ml.signal == "BEARISH" and target < p:
-            bear_min = round(min(target * 0.97, bear_min), 0)
-            bear_max = round(max(target * 1.03, bear_max), 0)
-        elif ml.signal == "BULLISH" and target > p:
-            bull_min = round(min(target * 0.97, bull_min), 0)
-            bull_max = round(max(target * 1.03, bull_max), 0)
+        target_5d = p + (ml.price_target_30d - p) * (_HORIZON_DAYS / 21.0)
+        if ml.signal == "BEARISH" and target_5d < p:
+            bear_min = round(min(target_5d * 0.97, bear_min), 0)
+            bear_max = round(max(target_5d * 1.03, bear_max), 0)
+        elif ml.signal == "BULLISH" and target_5d > p:
+            bull_min = round(min(target_5d * 0.97, bull_min), 0)
+            bull_max = round(max(target_5d * 1.03, bull_max), 0)
 
     # Build rationales from real data
     def _build_rationale(direction: str) -> list[str]:
@@ -615,7 +627,18 @@ def run(config: PipelineConfig) -> PredictionReport:
     hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
-    # ── Step 3c: 参考类基础概率（超级预测 Phase 2；失败降级 None）────
+    # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────
+    scenario_scorecard = None
+    _sums = None
+    try:
+        from reports.scenario_scorecard import compute_scenario_scorecard
+        from reports.history import load_summaries as _load_sums
+        _sums = _load_sums()
+        scenario_scorecard = compute_scenario_scorecard(_sums)
+    except Exception as e:
+        logger.warning(f"scenario_scorecard failed: {e}")
+        scenario_scorecard = None
+
     reference_class = None
     try:
         from reports.reference_class import compute_base_rates
@@ -623,9 +646,14 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"compute_base_rates failed: {e}")
 
-    # 概率收缩（PipelineConfig.shrink_w，默认 0.0 关闭）
-    if config.shrink_w > 0 and reference_class:
-        scenarios = apply_shrink(scenarios, reference_class, config.shrink_w)
+    # 条件化收缩：无技能则强制 0；有技能且 shrink_w<=0 时自动启用温和权重
+    try:
+        from reports.scenario_scorecard import resolve_shrink_w
+        effective_shrink = resolve_shrink_w(config.shrink_w, scenario_scorecard)
+    except Exception:
+        effective_shrink = config.shrink_w if config.shrink_w > 0 else 0.0
+    if effective_shrink > 0 and reference_class:
+        scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 
     # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
     kelly_shadow = None
@@ -634,8 +662,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         from reports.kelly import compute_kelly_advice, resolve_base_rate, resolve_calibrated_p
         dominant = max(scenarios, key=lambda s: s.probability) if scenarios else None
         if dominant:
-            # L5: 历史只读一次，track_record 与 prev_ratio 共用
-            sums = load_summaries()
+            # L5: 历史只读一次；若上面记分卡已 load 则复用
+            sums = _sums if _sums is not None else load_summaries()
             track_record = compute_track_record(sums)
             if sums:
                 last = sums[-1]
@@ -651,6 +679,16 @@ def run(config: PipelineConfig) -> PredictionReport:
             )
     except Exception as e:
         logger.warning(f"kelly shadow failed: {e}")
+
+    # ── Step 3e: 事件倾斜影子（不改 scenarios，不进 hedge）──────────────
+    scenario_event_tilt = None
+    try:
+        from reports.scenario_tilt import apply_event_tilt_shadow
+        scenario_event_tilt = apply_event_tilt_shadow(
+            scenarios, climate=climate, events=report_events,
+        )
+    except Exception as e:
+        logger.warning(f"scenario_event_tilt failed: {e}")
 
     # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
     # 汇率/政策事件不依赖套保比率，且 Step 6 的 LLM 点评上下文
@@ -798,6 +836,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         china_import=china_import,
         reference_class=reference_class,
         kelly_shadow=kelly_shadow,
+        scenario_scorecard=scenario_scorecard,
+        scenario_event_tilt=scenario_event_tilt,
         outlook=outlook,
         risk_warnings=risk_warnings,
         weather_snapshots=weather_snaps,

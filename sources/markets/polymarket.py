@@ -49,9 +49,12 @@ class PolymarketSource:
     name = "polymarket"
     markets = ["polymarket"]
 
-    def __init__(self, timeout: int = 10):
+    def __init__(self, timeout: int = 10, cache_ttl: int = 3600):
         self.timeout = timeout
+        self._cache_ttl = cache_ttl
         self._session = requests.Session()
+        self._cache: Optional[PolymarketData] = None
+        self._cache_time: Optional[datetime] = None
 
     def is_available(self) -> bool:
         """运行时检测：Gamma API 是否可达。"""
@@ -65,6 +68,11 @@ class PolymarketSource:
         except Exception:
             return False
 
+    def _cache_fresh(self) -> bool:
+        if self._cache is None or self._cache_time is None:
+            return False
+        return (datetime.now() - self._cache_time).total_seconds() < self._cache_ttl
+
     def fetch(self) -> Optional[PolymarketData]:
         """
         获取 Polymarket 活跃市场，筛选相关市场。
@@ -72,6 +80,9 @@ class PolymarketSource:
         Returns:
             PolymarketData 或 None（失败时）
         """
+        if self._cache_fresh():
+            return self._cache
+
         try:
             resp = self._session.get(
                 _GAMMA_API_URL,
@@ -117,12 +128,15 @@ class PolymarketSource:
             total, len(relevant)
         )
 
-        return PolymarketData(
+        data = PolymarketData(
             timestamp=datetime.now(),
             markets=relevant,
             relevant_count=len(relevant),
             total_scanned=total,
         )
+        self._cache = data
+        self._cache_time = datetime.now()
+        return data
 
     @staticmethod
     def _extract_probability(market: dict) -> float:

@@ -444,7 +444,8 @@ if __name__ == '__main__':
     print('Loading KC=F data...')
     loader = HistoryLoader()
     price_df = loader.load_kc_futures('2024-01-01', '2025-12-31')
-    prices = price_df['price'].values
+    col = 'close' if 'close' in price_df.columns else 'price'
+    prices = price_df[col].values
     print(f'KC=F: {len(prices)} pts, last={prices[-1]:.1f}')
     print()
 

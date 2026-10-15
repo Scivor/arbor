@@ -145,12 +145,17 @@ def test_policy_events_from_db(monkeypatch):
          "severity": 4, "narrative": "中国调整咖啡生豆进口关税", "source": "PolicyNews"},
         {"timestamp": "2026-07-14T18:30:00", "event_type": "trade_war_new_round",
          "severity": 3, "narrative": "新一轮贸易摩擦谈判开启", "source": "PolicyNews"},
+        # 供给事件不得出现在「政策事件」输出中
+        {"timestamp": "2026-07-14T12:00:00", "event_type": "frost_confirmed",
+         "severity": 5, "narrative": "巴西霜冻确认", "source": "ONI"},
     ])
     db = SimpleNamespace(get_events=lambda **kwargs: df)
     monkeypatch.setattr("core.persistence.DecisionDB", lambda *a, **k: db)
     out = get_policy_events.invoke({})
     assert "china_tariff_change" in out and "sev=4" in out
     assert "中国调整咖啡生豆进口关税" in out
+    assert "frost_confirmed" not in out
+    assert "巴西霜冻" not in out
 
 
 def test_policy_events_empty(monkeypatch):

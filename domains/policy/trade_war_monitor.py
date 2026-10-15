@@ -109,9 +109,10 @@ class TradeWarMonitor(BaseMonitor):
                 combined = text.lower()
                 esc_count = sum(1 for kw in escalation_kw if kw in combined)
                 deesc_count = sum(1 for kw in deescalation_kw if kw in combined)
+                # 新闻层用 TRADE_WAR_*，与 Polymarket 的 POLY_* 区分，避免同簇双计与归因混淆
                 if esc_count >= 3:
                     evt = CoffeeEvent(
-                        event_type=EventType.POLY_TRADE_WAR_ESCALATE,
+                        event_type=EventType.TRADE_WAR_NEW_ROUND,
                         domain=Domain.POLICY,
                         timestamp=datetime.now(),
                         severity=3,
@@ -122,7 +123,7 @@ class TradeWarMonitor(BaseMonitor):
                     events.append(evt)
                 elif deesc_count >= 3:
                     evt = CoffeeEvent(
-                        event_type=EventType.POLY_TRADE_WAR_DEESCALATE,
+                        event_type=EventType.TRADE_WAR_DEESCALATION,
                         domain=Domain.POLICY,
                         timestamp=datetime.now(),
                         severity=2,

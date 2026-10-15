@@ -47,10 +47,12 @@ def _event_tilt(events: list | None) -> tuple[float, float, list[str]]:
         "ICE_INVENTORY_DROP", "ICE_INVENTORY_CRITICAL", "HEAT_WAVE",
         "BRAZIL_CROP_ALERT", "COLOMBIA_WEATHER_ALERT", "EXPORT_BAN",
         "SEASONAL_WINDOW_OPEN",
+        "POLY_CLIMATE_HOT", "POLY_CLIMATE_COLD",
+        "POLY_TRADE_WAR_ESCALATE", "TRADE_WAR_NEW_ROUND",
     }
     bearish_types = {
         "ICE_INVENTORY_SPIKE", "COT_SPECULATIVE_TOP",
-        "TRADE_WAR_DEESCALATION",
+        "TRADE_WAR_DEESCALATION", "POLY_TRADE_WAR_DEESCALATE",
     }
     for ev in events:
         et = getattr(ev, "event_type", None)

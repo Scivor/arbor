@@ -28,11 +28,13 @@ class SupplyDomainScanner(BaseDomainScanner):
         from domains.supply.cot_monitor import COTMonitor
         from domains.supply.ice_monitor import ICECoffeeMonitor
         from domains.supply.seasonal_monitor import SeasonalMonitor
+        from domains.supply.polymarket_climate_monitor import PolymarketClimateMonitor
 
         self.oni_monitor = ONIMonitor(self.bus)
         self.cot_monitor = COTMonitor(self.bus)
         self.ice_monitor = ICECoffeeMonitor(self.bus, inventory_source=inventory_source)
         self.seasonal_monitor = SeasonalMonitor(self.bus)
+        self.polymarket_climate_monitor = PolymarketClimateMonitor(self.bus)
 
     def scan_all(self) -> List[CoffeeEvent]:
         """执行所有供给域检查"""
@@ -67,5 +69,11 @@ class SupplyDomainScanner(BaseDomainScanner):
                 events.append(ev)
         except Exception as e:
             self.on_scan_error(e, "Seasonal")
+
+        # Polymarket 气候市场
+        try:
+            events.extend(self.polymarket_climate_monitor.check_and_publish())
+        except Exception as e:
+            self.on_scan_error(e, "PolymarketClimate")
 
         return events

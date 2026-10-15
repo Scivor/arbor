@@ -76,6 +76,32 @@ def test_trade_war_polymarket_unavailable_is_silent(monkeypatch):
 
 
 @pytest.mark.unit
+def test_web_layer_emits_trade_war_not_poly(monkeypatch):
+    """DuckDuckGo 新闻层应发 TRADE_WAR_*，不得冒充 POLY_*。"""
+    reset_event_bus()
+    monkeypatch.setattr(
+        "sources.markets.polymarket.PolymarketSource.fetch",
+        lambda self: None,
+    )
+
+    class Resp:
+        status_code = 200
+        text = (
+            " tariff hike  new tariff  tariff increase trade war escalat "
+            "extra tariff hike filler"
+        )
+
+    monkeypatch.setattr(
+        "domains.policy.trade_war_monitor.requests.get",
+        MagicMock(return_value=Resp()),
+    )
+    events = TradeWarMonitor().check_and_publish()
+    assert any(e.event_type == EventType.TRADE_WAR_NEW_ROUND for e in events)
+    assert all(e.event_type != EventType.POLY_TRADE_WAR_ESCALATE
+               for e in events if e.source == "trade_war_monitor/web")
+
+
+@pytest.mark.unit
 def test_polymarket_source_cache(monkeypatch):
     from sources.markets.polymarket import PolymarketSource
 

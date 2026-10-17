@@ -45,7 +45,7 @@ def test_query_system_status_error(monkeypatch):
 def test_get_recent_events_empty(monkeypatch):
     bus = MagicMock()
     bus.get_recent.return_value = []
-    monkeypatch.setattr("core.events.get_event_bus", lambda: bus)
+    monkeypatch.setattr("arbor.infrastructure.events.get_event_bus", lambda: bus)
     out = get_recent_events.invoke({"hours": 24})
     assert "无事件" in out
 
@@ -62,7 +62,7 @@ def test_get_recent_events_with_items(monkeypatch):
     )
     bus = MagicMock()
     bus.get_recent.return_value = [ev]
-    monkeypatch.setattr("core.events.get_event_bus", lambda: bus)
+    monkeypatch.setattr("arbor.infrastructure.events.get_event_bus", lambda: bus)
     out = get_recent_events.invoke({"hours": 48, "domain": "POLICY", "min_severity": 2})
     assert "最近 48h 事件" in out
     assert "china_tariff_change" in out

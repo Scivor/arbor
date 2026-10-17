@@ -9,10 +9,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-from core.regime_config import get_regime_loader
-from core.state.scoring import compute_score
-from core.types.enums import Domain, EventType
-from core.types.event import CoffeeEvent
+from arbor.infrastructure.config.regime import get_regime_loader
+from arbor.domain.scoring import compute_score
+from arbor.domain.types.enums import Domain, EventType
+from arbor.domain.types.event import CoffeeEvent
 from reports.formatters import format_rsi as _fmt_rsi
 from reports.models import (
     MarketSnapshot,
@@ -134,7 +134,7 @@ def _scan_live_events() -> list[CoffeeEvent]:
     每个域独立 try/except —— 任一域失败只丢那个域，既不拖垮整篇周报，
     也不连累另外两个域。扫描器一律挂在独立 EventBus 上，避免污染全局总线。
     """
-    from core.events import EventBus
+    from arbor.infrastructure.events import EventBus
     from domains.finance.scanner import FinanceDomainScanner
     from domains.policy.scanner import PolicyDomainScanner
     from domains.supply.scanner import SupplyDomainScanner
@@ -189,7 +189,7 @@ def gather_report_events(
 
     # 历史衰减尾巴 —— DB 失败时静默降级为「只用报告侧因子」
     try:
-        from core.persistence.database import DecisionDB
+        from arbor.infrastructure.persistence.database import DecisionDB
 
         db = DecisionDB()
         df = db.get_events(start=(now - timedelta(days=365)).isoformat(), limit=2000)

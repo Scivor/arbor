@@ -175,7 +175,7 @@ def generate_weekly_report(
         from reports.learning import recalibrate
         result = recalibrate()
         if result["changed"]:
-            from core.notify.ops_alert import send_ops_alert
+            from arbor.infrastructure.notify.ops_alert import send_ops_alert
             lines = "\n".join(
                 f"• {c['param']}: {c['old']:.3f} → {c['new']:.3f}（{c['reason']}，n={result['n_samples']}）"
                 for c in result["changed"]

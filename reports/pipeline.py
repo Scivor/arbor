@@ -890,7 +890,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     # 上面早取的那份，不重复调用 fetch_china_import_snapshot。
     if china_import is not None and china_import.fx_rate is not None and report.market is not None:
         try:
-            from core.cost.landed_cost import LandedCostCalculator
+            from arbor.domain.cost.landed_cost import LandedCostCalculator
             landed = LandedCostCalculator().calculate(
                 cyp_price_usd_lb=report.market.current,
                 fx_rate_usd_cny=china_import.fx_rate,

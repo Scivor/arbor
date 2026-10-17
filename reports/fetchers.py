@@ -212,7 +212,7 @@ def fetch_china_import_snapshot(
     landed = None
     if fx_rate is not None and market is not None:
         try:
-            from core.cost.landed_cost import LandedCostCalculator
+            from arbor.domain.cost.landed_cost import LandedCostCalculator
             landed = LandedCostCalculator().calculate(
                 cyp_price_usd_lb=market.current,
                 fx_rate_usd_cny=fx_rate,
@@ -224,7 +224,7 @@ def fetch_china_import_snapshot(
     # ── 政策事件扫描（独立 EventBus，避免污染全局总线）─────────────
     policy_events: list[dict] = []
     try:
-        from core.events import EventBus
+        from arbor.infrastructure.events import EventBus
         from domains.policy.scanner import PolicyDomainScanner
         events = PolicyDomainScanner(EventBus()).scan_all()
         events.sort(key=lambda e: e.severity, reverse=True)

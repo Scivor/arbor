@@ -28,8 +28,8 @@ def get_recent_events(hours: int = 24, domain: str = None, min_severity: int = 1
         min_severity: 最低严重等级 1-5 (默认 1)
     """
     try:
-        from core.events import get_event_bus
-        from core.types.enums import Domain
+        from arbor.infrastructure.events import get_event_bus
+        from arbor.domain.types.enums import Domain
 
         bus = get_event_bus()
         dom = Domain(domain.upper()) if domain else None

@@ -136,7 +136,7 @@ def demo_hedge_advice() -> HedgeAdvice:
 
 def demo_china_import(hedge_ratio: float = 0.65) -> ChinaImportSnapshot:
     """Demo 中国进口快照（汇率 + 到库成本 + 政策），供完整演示/简报测试。"""
-    from core.cost.landed_cost import LandedCostCalculator
+    from arbor.domain.cost.landed_cost import LandedCostCalculator
 
     landed = LandedCostCalculator().calculate(293.70, 7.25, hedge_ratio)
     return ChinaImportSnapshot(

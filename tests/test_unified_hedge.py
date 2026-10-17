@@ -112,7 +112,7 @@ def test_gather_report_events_falls_back_when_db_unavailable(monkeypatch):
         def __init__(self, *args, **kwargs):
             raise RuntimeError("db unavailable")
 
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _RaisingDB)
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _RaisingDB)
 
     market = type("M", (), {"rsi_14": 30.0})()
     scenarios = [_Scenario("下跌", 0.6)]
@@ -155,7 +155,7 @@ def _gather_with_db(monkeypatch, tmp_path, rows, **kwargs):
     from reports.pipeline import gather_report_events
 
     monkeypatch.setattr(
-        "core.persistence.database.DecisionDB", _make_db(tmp_path, rows)
+        "arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, rows)
     )
     return gather_report_events(
         None, [], llm_direction=None, now=NOW, live_scan=False, **kwargs
@@ -242,7 +242,7 @@ def test_live_scan_merges_with_db_and_dedupes(monkeypatch, tmp_path):
         _fake_scanner([_ev(EventType.RSI_EXTREME, datetime(2026, 7, 20, 10, 0))]),
         _fake_scanner([]),
     )
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, [
         ("2026-07-19T08:00:00", "CHINA_TARIFF_CHANGE", 4, "db 版本", "db"),
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "只在 db 里", "db"),
     ]))
@@ -269,7 +269,7 @@ def test_live_scan_far_apart_same_type_not_deduped(monkeypatch, tmp_path):
         _fake_scanner([]),
         _fake_scanner([]),
     )
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, [
         ("2026-06-01T08:00:00", "CHINA_TARIFF_CHANGE", 4, "上一轮关税", "db"),
     ]))
 
@@ -287,7 +287,7 @@ def test_one_domain_failure_does_not_affect_others(monkeypatch, tmp_path):
         _fake_scanner([_ev(EventType.RSI_EXTREME, datetime(2026, 7, 20, 10, 0))]),
         _fake_scanner([_ev(EventType.CHINA_TARIFF_CHANGE, datetime(2026, 7, 20, 10, 0))]),
     )
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, [
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
     ]))
 
@@ -307,7 +307,7 @@ def test_all_domains_failing_still_returns_db_tail(monkeypatch, tmp_path):
         _fake_scanner(None, boom=True),
         _fake_scanner(None, boom=True),
     )
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, [
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
     ]))
 
@@ -325,7 +325,7 @@ def test_live_scan_false_does_no_scanning(monkeypatch, tmp_path):
         _fake_scanner(None, boom=True),
         _fake_scanner(None, boom=True),
     )
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _make_db(tmp_path, [
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, [
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
     ]))
 

@@ -58,7 +58,7 @@ def get_landed_cost() -> str:
     try:
         from sources.fx.yfinance import FXSource
         from sources.coffee.yfinance_price import PriceSource
-        from core.cost.landed_cost import LandedCostCalculator
+        from arbor.domain.cost.landed_cost import LandedCostCalculator
 
         price = PriceSource().fetch()
         fx = FXSource().fetch()

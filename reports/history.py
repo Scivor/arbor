@@ -110,6 +110,12 @@ def _current_learned_scales() -> dict:
             fan_width = 1.0
         if fan_width > 1.001:
             scales["fan_width"] = fan_width
+        try:
+            target_shift = float(memory.get("ml_target_shift") or 0.0)
+        except (TypeError, ValueError):
+            target_shift = 0.0
+        if abs(target_shift) >= 0.0025:
+            scales["ml_target_shift"] = target_shift
         return scales
     except Exception:
         return {}

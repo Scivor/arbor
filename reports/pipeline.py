@@ -627,6 +627,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             apply_driver_weights,
             apply_hedge_conviction,
             apply_hedge_lean,
+            apply_ml_target_shift,
             load_learned,
             load_review_memory,
             ml_trust_multiplier,
@@ -648,8 +649,10 @@ def run(config: PipelineConfig) -> PredictionReport:
             "prob_sharpness": 1.0,
             "hedge_lean": 0.0,
             "fan_width": 1.0,
+            "ml_target_shift": 0.0,
         }
         apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
+        apply_ml_target_shift = None
         apply_band_center_shift = apply_fan_width = apply_flat_trust = apply_prob_sharpness = None
         apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
@@ -659,6 +662,11 @@ def run(config: PipelineConfig) -> PredictionReport:
         ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
         if ml_trust_multiplier is not None:
             ml.bias *= ml_trust_multiplier(ml.model_type, ml.signal, trust)
+        # 目标价只进支撑/阻力位和情景价格，不进概率，所以这里不重算套保。
+        if apply_ml_target_shift is not None and market is not None:
+            apply_ml_target_shift(
+                ml, memory.get("ml_target_shift", 0.0), market.current,
+            )
 
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(

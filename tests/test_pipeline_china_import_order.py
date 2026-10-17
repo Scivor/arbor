@@ -354,3 +354,37 @@ def test_wide_fan_widens_published_ranges_without_moving_probability(synthetic_p
         if (after.price_max - after.price_min) > (before.price_max - before.price_min):
             widened = True
     assert widened
+
+
+def test_ml_target_shift_moves_published_level_without_changing_hedge(synthetic_pipeline, monkeypatch):
+    """目标偏移 -2% 时，公布的 ML目标位下移约现价的 2%，套保比率不变。"""
+    from reports.models import MLSnapshot
+
+    def _snap(current_price=None):
+        return MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+
+    monkeypatch.setattr("reports.pipeline.fetch_ml_snapshot", _snap)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    shifted = dict(memory)
+    shifted["ml_target_shift"] = -0.02
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: shifted)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+
+    def _ml_level(report):
+        return next(level.price for level in report.support_levels if level.label == "ML目标位")
+
+    assert _ml_level(baseline) == pytest.approx(270.0)
+    assert _ml_level(adjusted) == pytest.approx(264.0)
+    assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio)

@@ -32,6 +32,9 @@ reports/learning.py
 - fan_width:           三个情景合在一起的价格扇面（1.0 ~ 1.25）。
                         实际价格落在每一段区间外面时加宽，罩住了再收回。
                         只统计扇面中心离当时现价 15% 以内、半宽不超过 30% 的周
+- ml_target_shift:     ML 30 日目标价相对现价的偏移（-3% ~ +3%）。
+                        只统计目标离当时现价 15% 以内的周。连续偏高或偏低
+                        时，下一期目标价同向挪 0.5 个百分点
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -79,6 +82,12 @@ _FAN_BOUNDS = (1.0, 1.25)
 _FAN_HALF_CAP = 0.30
 _FAN_MISS = 0.55
 _FAN_COVER = 0.30
+# ML 30 日目标价偏移。一步、死区和截断与区间中心相同，但只看目标价本身。
+_ML_TARGET_BOUNDS = (-0.03, 0.03)
+_ML_TARGET_STEP = 0.005
+_ML_TARGET_DEAD = 0.01
+_ML_TARGET_ANCHOR = 0.15
+_ML_TARGET_WINSOR = 0.08
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -125,6 +134,7 @@ def _empty_memory() -> dict:
         "prob_sharpness": 1.0,
         "hedge_lean": 0.0,
         "fan_width": 1.0,
+        "ml_target_shift": 0.0,
     }
 
 
@@ -185,6 +195,7 @@ def _load_state() -> dict:
         "prob_sharpness": _prob_sharpness(data.get("prob_sharpness", 1.0)),
         "hedge_lean": _hedge_lean(data.get("hedge_lean", 0.0)),
         "fan_width": _fan_width(data.get("fan_width", 1.0)),
+        "ml_target_shift": _ml_target_shift(data.get("ml_target_shift", 0.0)),
     }
 
 
@@ -209,7 +220,13 @@ def load_review_memory() -> dict:
         "prob_sharpness": state["prob_sharpness"],
         "hedge_lean": state["hedge_lean"],
         "fan_width": state["fan_width"],
+        "ml_target_shift": state["ml_target_shift"],
     }
+
+
+def _ml_target_shift(value) -> float:
+    """ML 目标价偏移。坏值当 0，越界钳到 ±3%。"""
+    return round(_clamp(_finite(value, 0.0), _ML_TARGET_BOUNDS), 4)
 
 
 def _fan_width(value) -> float:
@@ -385,6 +402,42 @@ def _band_center_error(pairs) -> float | None:
     if samples < _DRIVER_MIN_SAMPLES or not total:
         return None
     return signed / total
+
+
+def _ml_target_stats(pairs) -> dict:
+    """
+    ML 30 日目标相对当时现价的近期误差。正数表示实际价在目标之上，目标偏低。
+
+    没有目标价，或目标离现价超过 15% 的周不计入。单周误差先截到 ±8%。
+    样本少于 4 对时 error 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = signed = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        raw = getattr(cur, "ml_price_target_30d", None)
+        if raw is None:
+            continue
+        try:
+            price = float(cur.current_price)
+            target = float(raw)
+            actual = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if price == 0 or price != price or target != target or actual != actual:
+            continue
+        if abs(target - price) / abs(price) > _ML_TARGET_ANCHOR:
+            continue
+        err = (actual - target) / price
+        err = max(-_ML_TARGET_WINSOR, min(_ML_TARGET_WINSOR, err))
+        total += weight
+        signed += weight * err
+        samples += 1
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "error": (signed / total) if ready else None,
+    }
 
 
 def _flat_call_stats(pairs) -> dict:
@@ -588,6 +641,22 @@ def _step_band_shift(current: float, error: float) -> float:
     return _band_shift(0.0 if abs(stepped) < _BAND_SHIFT_STEP / 2 else stepped)
 
 
+def _step_ml_target(current: float, error: float) -> float:
+    """目标误差越过 ±1% 就朝那边走 0.5 个百分点；落在死区则向 0 退一步。"""
+    current = _ml_target_shift(current)
+    if error > _ML_TARGET_DEAD:
+        stepped = current + _ML_TARGET_STEP
+    elif error < -_ML_TARGET_DEAD:
+        stepped = current - _ML_TARGET_STEP
+    elif current > 0:
+        stepped = current - _ML_TARGET_STEP
+    elif current < 0:
+        stepped = current + _ML_TARGET_STEP
+    else:
+        return 0.0
+    return _ml_target_shift(0.0 if abs(stepped) < _ML_TARGET_STEP / 2 else stepped)
+
+
 def _step_hedge_lean(current: float, error: float) -> float:
     """偏向越过 ±0.20 就朝那边走 1 个百分点；落在死区则向 0 退一步。"""
     current = _hedge_lean(current)
@@ -687,6 +756,24 @@ def apply_hedge_conviction(hedge, conviction: float):
         return hedge
     ratio = _HEDGE_BASELINE + (float(hedge.ratio) - _HEDGE_BASELINE) * factor
     return _set_hedge_ratio(hedge, ratio)
+
+
+def apply_ml_target_shift(ml, shift, price) -> bool:
+    """把 ML 30 日目标价按偏移挪到下一期。偏移为 0 或没有目标价时不改。"""
+    if ml is None or getattr(ml, "price_target_30d", None) is None:
+        return False
+    delta = _ml_target_shift(shift)
+    if delta == 0.0:
+        return False
+    try:
+        target = float(ml.price_target_30d)
+        spot = float(price)
+    except (TypeError, ValueError):
+        return False
+    if not spot or spot != spot or target != target:
+        return False
+    ml.price_target_30d = round(target + delta * spot, 2)
+    return True
 
 
 def apply_fan_width(scenarios, scale) -> bool:
@@ -1098,6 +1185,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     sharp_stats = _sharpness_stats(pairs)
     lean_stats = _hedge_lean_stats(pairs)
     fan_stats = _fan_stats(pairs)
+    target_stats = _ml_target_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1115,6 +1203,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "prob_sharpness": state["prob_sharpness"],
         "hedge_lean": state["hedge_lean"],
         "fan_width": state["fan_width"],
+        "ml_target_shift": state["ml_target_shift"],
     }
     changed: list[dict] = []
 
@@ -1287,6 +1376,34 @@ def recalibrate(min_samples: int = 8) -> dict:
                 "reason": reason,
             })
 
+    # ── ml_target_shift: 目标连续偏高就下移，偏低就上移；没有目标价则退回 0 ──
+    old_target = new_values["ml_target_shift"]
+    target_samples = target_stats["samples"]
+    target_error = target_stats["error"]
+    if target_samples >= _DRIVER_MIN_SAMPLES and target_error is not None:
+        new_target = _step_ml_target(old_target, target_error)
+        if target_error < -_ML_TARGET_DEAD:
+            reason = f"ML 目标偏高 {abs(target_error):.1%}，目标下移"
+        elif target_error > _ML_TARGET_DEAD:
+            reason = f"ML 目标偏低 {target_error:.1%}，目标上移"
+        else:
+            reason = "ML 目标近期无明显偏离，偏移向零回归"
+    elif target_samples == 0 and old_target != 0.0:
+        reason = "本期没有 ML 目标价，偏移向零回归"
+        new_target = _step_ml_target(old_target, 0.0)
+    else:
+        new_target = old_target
+        reason = ""
+    new_target = _ml_target_shift(new_target)
+    if reason and new_target != old_target:
+        new_values["ml_target_shift"] = new_target
+        changed.append({
+            "param": "ml_target_shift",
+            "old": old_target,
+            "new": new_target,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -1410,6 +1527,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "prob_sharpness": new_values["prob_sharpness"],
         "hedge_lean": new_values["hedge_lean"],
         "fan_width": new_values["fan_width"],
+        "ml_target_shift": new_values["ml_target_shift"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

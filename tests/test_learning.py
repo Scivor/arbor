@@ -349,7 +349,7 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
 
 def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
                 band_min=0.0, band_max=9999.0, drivers=None, direction="横盘",
-                scenarios=None):
+                scenarios=None, ml_target=None):
     data = {
         "report_date": report_date,
         "forecast_week_start": report_date,
@@ -360,7 +360,7 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
         "rsi_14": 50.0,
         "ml_signal": ml_signal,
         "ml_confidence": 0.5,
-        "ml_price_target_30d": None,
+        "ml_price_target_30d": ml_target,
         "hedge_ratio": hedge_ratio,
         "hedge_signal": "TIGHT" if hedge_ratio >= 0.70 else "MEDIUM_HEDGE",
         "dominant_scenario_direction": direction,
@@ -555,6 +555,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "prob_sharpness": 0.1,
         "hedge_lean": 9,
         "fan_width": 9,
+        "ml_target_shift": 9,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -566,6 +567,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["prob_sharpness"] == 0.6
     assert memory["hedge_lean"] == 0.04
     assert memory["fan_width"] == 1.25
+    assert memory["ml_target_shift"] == 0.03
 
 
 def test_apply_review_memory_changes_next_report():
@@ -724,6 +726,7 @@ def test_track_record_shows_review_memory():
             "prob_sharpness": 0.9,
             "hedge_lean": -0.01,
             "fan_width": 1.05,
+            "ml_target_shift": -0.005,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -745,6 +748,7 @@ def test_track_record_shows_review_memory():
     assert "再挪 1 个百分点" in html
     assert "扇面宽度" in html and ">1.05<" in html
     assert "整段扇面加宽" in html
+    assert "ML 目标" in html and "目标同向挪动" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -1427,3 +1431,106 @@ def test_fan_width_widens_ranges_around_the_same_center():
     assert same[0].price_min == 390 and same[0].price_max == 410
     assert apply_fan_width(same, 0.5) is False
     assert same[0].price_min == 390
+
+
+def _seed_ml_target(dir_path, *, high: bool, limit=None):
+    """
+    价格每步跌 2%。ML 信号中性，套保停在 65%。
+    主导区间奇偶交替，命中率 50%，中心误差为 0。
+    high 时目标价 = 当时现价 × 1.04（下一周价格在目标下方约 6%）。
+    否则目标价等于下一周价格（误差 0）。
+    limit 只给前几期写目标价。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        target = None
+        if nxt is not None and (limit is None or i < limit):
+            target = round(current * 1.04, 2) if high else nxt
+        _write_case(
+            dir_path, f"2026-12-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, ml_target=target,
+        )
+
+
+def test_recalibrate_high_ml_targets_shift_down(learn_env):
+    """目标连续停在下一周价格上方：偏移降到 -0.005。旧系数和其他记忆不动。"""
+    _seed_ml_target(learn_env / "history", high=True)
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.005)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["memory"]["fan_width"] == 1.0
+    assert result["memory"]["flat_trust"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+    assert "目标下移" in result["changed"][0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.03,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["ml_target_shift"] == -0.03
+    assert all(c["param"] != "ml_target_shift" for c in floored["changed"])
+
+
+def test_recalibrate_on_target_walks_shift_toward_zero(learn_env):
+    _seed_ml_target(learn_env / "history", high=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.015)
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+    assert "向零回归" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_few_ml_targets_hold_shift(learn_env):
+    _seed_ml_target(learn_env / "history", high=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.01,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.01)
+
+
+def test_recalibrate_no_ml_targets_fade_shift(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.015)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+
+
+def test_ml_target_shift_moves_the_published_target():
+    from reports.learning import apply_ml_target_shift
+    from reports.models import MLSnapshot
+
+    ml = MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+    assert apply_ml_target_shift(ml, -0.02, 300.0) is True
+    assert ml.price_target_30d == 264.00
+
+    same = MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+    assert apply_ml_target_shift(same, 0.0, 300.0) is False
+    assert same.price_target_30d == 270.0
+
+    missing = MLSnapshot(signal="NEUTRAL", confidence=0.5, bias=0.0, price_target_30d=None)
+    assert apply_ml_target_shift(missing, -0.02, 300.0) is False
+    assert missing.price_target_30d is None

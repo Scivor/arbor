@@ -32,6 +32,7 @@ from reports.pipeline import run, PipelineConfig
 from reports.exporters.html_to_pdf import build_report_html, html_to_pdf
 from reports.exporters.markdown_exporter import export_markdown
 from reports.history import save_report_summary
+from reports.procurement_briefing import write_briefing_sidecar
 
 logger = logging.getLogger("report_scheduler")
 
@@ -81,6 +82,14 @@ def generate_and_publish(
         md_en_path = report_dir / "report_en.md"
         md_en_path.write_text(export_markdown(report, lang="en"), encoding="utf-8")
         logger.info("Markdown saved: %s (zh) + %s (en)", md_path, md_en_path)
+
+    # ── 采购简报 sidecar（聊天页 / Agent 优先读，避免只靠 HTML 抽取）──
+    try:
+        side = write_briefing_sidecar(report, report_dir, report_date=today_str)
+        if side:
+            logger.info("Briefing sidecar saved: %s", side)
+    except Exception as e:
+        logger.warning("briefing.json skipped: %s", e)
 
     # ── Generate PDF（缺 playwright/textutil 时降级：HTML 已出，不阻断发布）──
     if output_format in ("pdf", "both"):

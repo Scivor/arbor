@@ -13,10 +13,12 @@ from web.chat import build_chat_page
 
 @pytest.fixture(autouse=True)
 def _reset_chat_rate():
-    """每个测试重置限流状态（内存 dict 是模块级共享的）"""
+    """每个测试重置限流与会话状态（内存 dict 是模块级共享的）"""
     web_app._CHAT_RATE.clear()
+    web_app._CHAT_SESSIONS.clear()
     yield
     web_app._CHAT_RATE.clear()
+    web_app._CHAT_SESSIONS.clear()
 
 
 @pytest.fixture
@@ -36,6 +38,8 @@ def test_build_chat_page_elements():
     assert "顾问思考中" in html        # pending 态文案
     assert "chat-chip" in html
     assert "这周该不该买" in html
+    assert "session_id" in html
+    assert "getSessionId" in html
 
 
 def test_build_chat_page_with_briefing():
@@ -68,8 +72,9 @@ def test_api_chat_empty_message(client):
 def test_api_chat_success(client, monkeypatch):
     seen = {}
 
-    def _chat(q):
+    def _chat(q, chat_history=None):
         seen["q"] = q
+        seen["history"] = chat_history or []
         return f"【现在怎么做】分批观望（{q}）"
 
     fake = SimpleNamespace(chat=_chat)
@@ -80,14 +85,36 @@ def test_api_chat_success(client, monkeypatch):
         "_extract_procurement_briefing",
         lambda d: "【现在怎么做】观望为主、套保中性。",
     )
-    resp = client.post("/api/chat", json={"message": "这周该不该买"})
+    resp = client.post("/api/chat", json={"message": "这周该不该买", "session_id": "t1"})
     assert resp.status_code == 200
     data = resp.json()
     assert "现在怎么做" in data["output"]
     assert "这周该不该买" in data["output"]
-    # Agent 输入应带上本期简报上下文
+    assert data["session_id"] == "t1"
+    # 首轮 Agent 输入应带上本期简报上下文
     assert "本期已发布采购简报" in seen["q"]
     assert "观望为主" in seen["q"]
+    assert seen["history"] == []
+
+
+def test_api_chat_multi_turn_keeps_history(client, monkeypatch):
+    calls = []
+
+    def _chat(q, chat_history=None):
+        calls.append({"q": q, "history": list(chat_history or [])})
+        return f"答：{q}"
+
+    monkeypatch.setattr(web_app, "_get_analyst", lambda: SimpleNamespace(chat=_chat))
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "_extract_procurement_briefing", lambda d: None)
+
+    r1 = client.post("/api/chat", json={"message": "第一问", "session_id": "s-mt"})
+    r2 = client.post("/api/chat", json={"message": "第二问", "session_id": "s-mt"})
+    assert r1.status_code == 200 and r2.status_code == 200
+    assert calls[0]["history"] == []
+    assert calls[1]["history"] == [("human", "第一问"), ("ai", "答：第一问")]
+    # 第二轮不再重复灌简报（无简报时本就原样）
+    assert calls[1]["q"] == "第二问"
 
 
 def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):
@@ -107,9 +134,10 @@ def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):
 
 
 def test_api_chat_agent_internal_error(client, monkeypatch):
-    fake = SimpleNamespace(
-        chat=lambda q: (_ for _ in ()).throw(ConnectionError("tool network down"))
-    )
+    def _boom(q, chat_history=None):
+        raise ConnectionError("tool network down")
+
+    fake = SimpleNamespace(chat=_boom)
     monkeypatch.setattr(web_app, "_get_analyst", lambda: fake)
     resp = client.post("/api/chat", json={"message": "hello"})
     assert resp.status_code == 500

@@ -10,11 +10,16 @@ reports/procurement_briefing.py
 
 from __future__ import annotations
 
+import json
+import logging
 import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Any, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent.parent / "web" / "static" / "reports"
+_BRIEFING_FILENAME = "briefing.json"
 
 
 def _dominant_direction(report) -> str:
@@ -257,6 +262,53 @@ def extract_briefing_from_html(html: str) -> Optional[str]:
     return raw.strip() or None
 
 
+def briefing_payload(report, report_date: str = "") -> dict[str, Any]:
+    """结构化简报 sidecar（供聊天页 / Agent 工具稳定读取）。"""
+    return {
+        "report_date": report_date or str(getattr(report, "report_date", "")),
+        "direction": getattr(report, "llm_direction", None),
+        "zh": getattr(report, "llm_commentary", None),
+        "en": getattr(report, "llm_commentary_en", None),
+        "source": "llm_or_rule",
+    }
+
+
+def write_briefing_sidecar(report, report_dir: Path, report_date: str = "") -> Optional[Path]:
+    """
+    写出 briefing.json。无中文简报时跳过。
+    Returns: 写入路径或 None
+    """
+    if not getattr(report, "llm_commentary", None):
+        return None
+    report_dir = Path(report_dir)
+    report_dir.mkdir(parents=True, exist_ok=True)
+    path = report_dir / _BRIEFING_FILENAME
+    payload = briefing_payload(report, report_date=report_date or report_dir.name)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+def load_briefing_from_dir(report_dir: Path) -> Optional[str]:
+    """优先读 briefing.json，否则回退 HTML 抽取。"""
+    report_dir = Path(report_dir)
+    side = report_dir / _BRIEFING_FILENAME
+    if side.exists():
+        try:
+            data = json.loads(side.read_text(encoding="utf-8"))
+            text = (data.get("zh") or "").strip()
+            if text:
+                return text
+        except Exception as e:
+            logger.warning("briefing.json 读取失败 %s: %s", side, e)
+    html_path = report_dir / "report.html"
+    if html_path.exists():
+        try:
+            return extract_briefing_from_html(html_path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+    return None
+
+
 def load_latest_published_briefing(
     reports_dir: Optional[Path] = None,
 ) -> Optional[Tuple[str, str]]:
@@ -278,13 +330,7 @@ def load_latest_published_briefing(
         reverse=True,
     )
     for d in dates:
-        html_path = root / d / "report.html"
-        if not html_path.exists():
-            continue
-        try:
-            text = extract_briefing_from_html(html_path.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+        text = load_briefing_from_dir(root / d)
         if text:
             return d, text
     return None

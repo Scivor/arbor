@@ -59,6 +59,24 @@ def test_extract_and_load_published_briefing(tmp_path):
     assert loaded == ("2026-10-17", "【现在怎么做】分批观望")
 
 
+def test_briefing_sidecar_preferred_over_html(tmp_path):
+    from reports.demo_data import demo_report
+    from reports.procurement_briefing import write_briefing_sidecar, load_briefing_from_dir
+
+    day = tmp_path / "2026-10-17"
+    day.mkdir()
+    (day / "report.html").write_text(
+        '<div class="outlook-box ai-commentary">HTML旧文案</div>',
+        encoding="utf-8",
+    )
+    report = demo_report()
+    report.llm_commentary = "【现在怎么做】来自 sidecar"
+    report.llm_direction = "横盘"
+    write_briefing_sidecar(report, day, report_date="2026-10-17")
+    assert load_briefing_from_dir(day) == "【现在怎么做】来自 sidecar"
+    assert load_latest_published_briefing(tmp_path)[1] == "【现在怎么做】来自 sidecar"
+
+
 def test_format_followup_context():
     ctx = format_followup_context("【现在怎么做】观望", "套保要紧还是松", "2026-10-17")
     assert "本期已发布采购简报" in ctx

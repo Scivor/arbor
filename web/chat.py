@@ -221,6 +221,20 @@ const SUGGESTIONS = {chips_json};
 const DATE_NOTE_HTML = {json.dumps(date_note, ensure_ascii=False)};
 let pending = false;
 
+function getSessionId() {{
+  try {{
+    let sid = sessionStorage.getItem('arbor_chat_sid');
+    if (!sid) {{
+      sid = (crypto.randomUUID && crypto.randomUUID()) ||
+        ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+      sessionStorage.setItem('arbor_chat_sid', sid);
+    }}
+    return sid;
+  }} catch (e) {{
+    return 'anon';
+  }}
+}}
+
 function addBubble(text, cls) {{
   if (emptyHint) emptyHint.style.display = 'none';
   const div = document.createElement('div');
@@ -275,7 +289,7 @@ async function send() {{
     const resp = await fetch('/api/chat', {{
       method: 'POST',
       headers: {{'Content-Type': 'application/json'}},
-      body: JSON.stringify({{message: msg}}),
+      body: JSON.stringify({{message: msg, session_id: getSessionId()}}),
     }});
     const data = await resp.json();
     thinking.remove();

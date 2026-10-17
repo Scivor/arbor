@@ -374,16 +374,38 @@ def _chat_rate_ok(ip: str) -> bool:
 
 
 def _extract_procurement_briefing(report_date: str) -> Optional[str]:
-    """从已发布周报 HTML 抽出「采购下一步建议」正文。"""
-    from reports.procurement_briefing import extract_briefing_from_html
+    """读本期采购简报：优先 briefing.json，回退 HTML 抽取。"""
+    from reports.procurement_briefing import load_briefing_from_dir
 
-    html_path = REPORTS_DIR / report_date / "report.html"
-    if not html_path.exists():
-        return None
-    try:
-        return extract_briefing_from_html(html_path.read_text(encoding="utf-8"))
-    except Exception:
-        return None
+    return load_briefing_from_dir(REPORTS_DIR / report_date)
+
+
+# 进程内多轮会话（session_id → [("human"|"ai", text), ...]）；最多保留 10 轮
+_CHAT_SESSIONS: dict[str, list] = {}
+_CHAT_SESSION_MAX_TURNS = 10
+_CHAT_SESSION_MAX_LEN = _CHAT_SESSION_MAX_TURNS * 2
+
+
+def _session_history(session_id: Optional[str]) -> list:
+    if not session_id:
+        return []
+    sid = re.sub(r"[^a-zA-Z0-9_-]", "", session_id)[:64]
+    if not sid:
+        return []
+    return list(_CHAT_SESSIONS.get(sid, []))
+
+
+def _append_session(session_id: Optional[str], user_msg: str, assistant_msg: str) -> None:
+    if not session_id:
+        return
+    sid = re.sub(r"[^a-zA-Z0-9_-]", "", session_id)[:64]
+    if not sid:
+        return
+    hist = _CHAT_SESSIONS.setdefault(sid, [])
+    hist.append(("human", user_msg))
+    hist.append(("ai", assistant_msg))
+    if len(hist) > _CHAT_SESSION_MAX_LEN:
+        _CHAT_SESSIONS[sid] = hist[-_CHAT_SESSION_MAX_LEN:]
 
 
 def _offline_clarify(message: str, briefing: Optional[str]) -> str:
@@ -424,7 +446,10 @@ async def chat_page():
 
 @app.post("/api/chat")
 async def chat_api(request: Request):
-    """聊天 API: {message} → {output}。agent 是同步长任务，走 to_thread 不阻塞事件循环。"""
+    """
+    聊天 API: {message, session_id?} → {output, session_id}。
+    session_id 用于多轮记忆（进程内，最多 10 轮）；agent 同步长任务走 to_thread。
+    """
     ip = request.client.host if request.client else "unknown"
     if not _chat_rate_ok(ip):
         return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
@@ -433,29 +458,37 @@ async def chat_api(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    message = (body.get("message") or "").strip() if isinstance(body, dict) else ""
+    if not isinstance(body, dict):
+        body = {}
+    message = (body.get("message") or "").strip()
+    session_id = (body.get("session_id") or "").strip() or None
     if not message:
         return JSONResponse({"error": "消息不能为空"}, status_code=400)
 
     latest = _latest_report_date()
     briefing = _extract_procurement_briefing(latest) if latest else None
+    history = _session_history(session_id)
 
     try:
         analyst = _get_analyst()
     except RuntimeError:
-        return {"output": _offline_clarify(message, briefing)}
+        output = _offline_clarify(message, briefing)
+        _append_session(session_id, message, output)
+        return {"output": output, "session_id": session_id}
 
-    # 有 LLM：把本期简报塞进追问上下文，避免与周报立场打架
+    # 首轮注入本期简报；后续轮次靠 chat_history，避免重复灌简报
     agent_input = message
-    if briefing:
+    if briefing and not history:
         from reports.procurement_briefing import format_followup_context
         agent_input = format_followup_context(briefing, message, report_date=latest or "")
 
     try:
-        output = await asyncio.to_thread(analyst.chat, agent_input)
+        output = await asyncio.to_thread(analyst.chat, agent_input, history)
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
-    return {"output": output}
+
+    _append_session(session_id, message, output)
+    return {"output": output, "session_id": session_id}
 
 
 @app.get("/reports/", response_class=HTMLResponse)

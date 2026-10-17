@@ -164,7 +164,7 @@ class CoffeeAnalyst:
             "chat_history": history,
         })
 
-    def chat(self, query: str) -> str:
-        """简化接口，只返回文本回答。"""
-        result = self.invoke(query)
+    def chat(self, query: str, chat_history: Optional[list] = None) -> str:
+        """简化接口，只返回文本回答；可带多轮历史。"""
+        result = self.invoke(query, chat_history=chat_history)
         return result.get("output", "")

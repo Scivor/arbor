@@ -12,6 +12,7 @@ launchd / systemd 调度的 `scripts/scheduler.py` 每周六 03:00 自动生成�
 | `report.html` / `report_en.html` | 在线版（中英双语） |
 | `report.pdf` | PDF 归档 |
 | `report.md` | **公众号用 markdown 源稿** |
+| `briefing.json` | 采购简报 sidecar（聊天页 / Agent 优先读取） |
 
 ## 2. 接收发布提醒（Telegram）
 

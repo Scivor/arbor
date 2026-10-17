@@ -617,6 +617,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2b: 自校准系数（失败回退 1.0，不影响出报）──────────────
     try:
         from reports.learning import (
+            apply_band_center_shift,
             apply_direction_trust,
             apply_driver_hedge_nudge,
             apply_driver_scenario_tilt,
@@ -634,9 +635,14 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"load_learned failed, fallback to 1.0: {e}")
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
-        memory = {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {}}
+        memory = {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+        }
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        apply_direction_trust = apply_driver_hedge_nudge = None
+        apply_band_center_shift = apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
         sync_dominant_scenario_event = ml_trust_multiplier = None
     trust = memory.get("driver_trust") or {}
@@ -648,6 +654,11 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
+    # 只平移价格区间，不改概率，所以这里不重算套保。
+    if apply_band_center_shift is not None and market is not None:
+        apply_band_center_shift(
+            scenarios, memory.get("band_center_shift", 0.0), market.current,
+        )
     bullish, bearish = compute_drivers(market, climate, ml)
     if apply_driver_weights is not None:
         apply_driver_weights(bullish, bearish, trust)

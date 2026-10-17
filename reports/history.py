@@ -80,6 +80,12 @@ def _current_learned_scales() -> dict:
             scales["driver_trust"] = memory["driver_trust"]
         if memory.get("direction_trust"):
             scales["direction_trust"] = memory["direction_trust"]
+        try:
+            shift = float(memory.get("band_center_shift") or 0.0)
+        except (TypeError, ValueError):
+            shift = 0.0
+        if abs(shift) >= 0.0025:
+            scales["band_center_shift"] = shift
         return scales
     except Exception:
         return {}

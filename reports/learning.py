@@ -17,6 +17,9 @@ reports/learning.py
 - direction_trust:      上涨 / 下跌主张本身的信任（0.6 ~ 1.0）。
                         横盘不是方向主张。说错时该侧概率乘以信任系数，
                         让出的部分给横盘，单侧概率不低于 5%
+- band_center_shift:    情景区间中心相对现价的偏移（-3% ~ +3%）。
+                        只统计中心离当时现价 15% 以内的周。连续偏高或偏低
+                        时，下一期整段价格区间同向挪 0.5 个百分点
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -45,6 +48,12 @@ _CONVICTION_BOUNDS = (0.6, 1.0)
 _DRIVER_TRUST_BOUNDS = (0.5, 1.0)
 _DIRECTION_BOUNDS = (0.6, 1.0)
 _DIRECTION_SIDES = ("up", "down")
+# 区间中心偏移。一步 0.5 个百分点，死区 ±1%，单周误差先截到 ±8%。
+_BAND_SHIFT_BOUNDS = (-0.03, 0.03)
+_BAND_SHIFT_STEP = 0.005
+_BAND_SHIFT_DEAD = 0.01
+_BAND_SHIFT_ANCHOR = 0.15
+_BAND_SHIFT_WINSOR = 0.08
 
 # 套保比率往 65% 中性收敛。与 arbor.domain.scoring.ScoringConfig.baseline 同一锚点，
 # baseline 本身不参与自校准。
@@ -80,7 +89,12 @@ def _pair_weights(n: int) -> list[float]:
 
 
 def _empty_memory() -> dict:
-    return {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {}}
+    return {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+    }
 
 
 def _trust_map(raw) -> dict[str, float]:
@@ -135,6 +149,7 @@ def _load_state() -> dict:
         "hedge_conviction": _clamp(_finite(data.get("hedge_conviction", 1.0), 1.0), _CONVICTION_BOUNDS),
         "driver_trust": _trust_map(data.get("driver_trust")),
         "direction_trust": _direction_map(data.get("direction_trust")),
+        "band_center_shift": _band_shift(data.get("band_center_shift", 0.0)),
     }
 
 
@@ -148,13 +163,20 @@ def load_learned() -> dict:
 
 
 def load_review_memory() -> dict:
-    """读取近期记忆：套保持信、被压低的驱动因子、上涨/下跌方向信任。缺省为不干预。"""
+    """读取近期记忆：套保持信、驱动因子、方向信任、区间中心偏移。缺省为不干预。"""
     state = _load_state()
     return {
         "hedge_conviction": state["hedge_conviction"],
         "driver_trust": dict(state["driver_trust"]),
         "direction_trust": dict(state["direction_trust"]),
+        "band_center_shift": state["band_center_shift"],
     }
+
+
+def _band_shift(value) -> float:
+    """区间中心偏移。坏值当 0，越界钳到 ±3%，再收到 4 位小数。"""
+    number = _clamp(_finite(value, 0.0), _BAND_SHIFT_BOUNDS)
+    return round(number, 4)
 
 
 def _clamp(value: float, bounds: tuple[float, float]) -> float:
@@ -273,6 +295,53 @@ def _direction_rates(pairs) -> dict[str, dict]:
         for side, (total, hit, samples) in buckets.items()
         if samples
     }
+
+
+def _band_center_error(pairs) -> float | None:
+    """
+    主导情景中心相对当时现价的近期误差。正数表示实际价在中心之上，区间偏低。
+
+    中心离现价超过 15% 的周不计入（那是区间没罩住，不是中心该搬家）。
+    单周误差先截到 ±8%。有效样本少于 4 对时返回 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = signed = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        try:
+            price = float(cur.current_price)
+            mid = (float(cur.dominant_scenario_min) + float(cur.dominant_scenario_max)) / 2
+            actual = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if price == 0 or price != price or mid != mid or actual != actual:
+            continue
+        if abs(mid - price) / abs(price) > _BAND_SHIFT_ANCHOR:
+            continue
+        err = (actual - mid) / price
+        err = max(-_BAND_SHIFT_WINSOR, min(_BAND_SHIFT_WINSOR, err))
+        total += weight
+        signed += weight * err
+        samples += 1
+    if samples < _DRIVER_MIN_SAMPLES or not total:
+        return None
+    return signed / total
+
+
+def _step_band_shift(current: float, error: float) -> float:
+    """误差越过 ±1% 就朝那边走 0.5 个百分点；落在死区则向 0 退一步。"""
+    current = _band_shift(current)
+    if error > _BAND_SHIFT_DEAD:
+        stepped = current + _BAND_SHIFT_STEP
+    elif error < -_BAND_SHIFT_DEAD:
+        stepped = current - _BAND_SHIFT_STEP
+    elif current > 0:
+        stepped = current - _BAND_SHIFT_STEP
+    elif current < 0:
+        stepped = current + _BAND_SHIFT_STEP
+    else:
+        return 0.0
+    return _band_shift(0.0 if abs(stepped) < _BAND_SHIFT_STEP / 2 else stepped)
 
 
 def _step_toward(current: float, good: bool, bounds: tuple[float, float]) -> float:
@@ -461,6 +530,41 @@ def apply_driver_scenario_tilt(scenarios, bullish, bearish, trust: dict | None) 
     return True
 
 
+def apply_band_center_shift(scenarios, shift, price) -> bool:
+    """
+    把三个情景的价格区间整体平移。shift 为 0、价格无效、或平移后区间倒挂时不改数字。
+
+    shift 是相对现价的比例：-0.01 表示整段下移 1%。
+    """
+    if not scenarios:
+        return False
+    try:
+        price = float(price)
+    except (TypeError, ValueError):
+        return False
+    if not price or price != price:
+        return False
+    amount = _band_shift(shift)
+    if amount == 0.0:
+        return False
+    delta = amount * price
+    moved = False
+    for scenario in scenarios:
+        try:
+            lo = float(scenario.price_min)
+            hi = float(scenario.price_max)
+        except (TypeError, ValueError):
+            continue
+        new_lo = round(lo + delta, 0)
+        new_hi = round(hi + delta, 0)
+        if new_hi <= new_lo:
+            continue
+        scenario.price_min = new_lo
+        scenario.price_max = new_hi
+        moved = True
+    return moved
+
+
 _DIRECTION_LABELS = {"up": "上涨", "down": "下跌"}
 
 
@@ -610,6 +714,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     ml_accuracy, band_hit_rate = _evaluate(pairs)
     hedge_accuracy, driver_rates = _memory_signals(pairs)
     direction_rates = _direction_rates(pairs)
+    center_error = _band_center_error(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -622,6 +727,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "hedge_conviction": state["hedge_conviction"],
         "driver_trust": dict(state["driver_trust"]),
         "direction_trust": dict(state["direction_trust"]),
+        "band_center_shift": state["band_center_shift"],
     }
     changed: list[dict] = []
 
@@ -738,6 +844,25 @@ def recalibrate(min_samples: int = 8) -> dict:
             direction_trust[side] = new
         changed.append({"param": f"direction_trust:{side}", "old": old, "new": new, "reason": reason})
 
+    # ── band_center_shift: 中心连续偏高就下移，偏低就上移；不明显则退回 0 ──
+    if center_error is not None:
+        old_shift = new_values["band_center_shift"]
+        new_shift = _step_band_shift(old_shift, center_error)
+        if new_shift != old_shift:
+            if center_error < -_BAND_SHIFT_DEAD:
+                reason = f"情景中心偏高 {abs(center_error):.1%}，区间下移"
+            elif center_error > _BAND_SHIFT_DEAD:
+                reason = f"情景中心偏低 {center_error:.1%}，区间上移"
+            else:
+                reason = "情景中心近期无明显偏离，偏移向零回归"
+            new_values["band_center_shift"] = new_shift
+            changed.append({
+                "param": "band_center_shift",
+                "old": old_shift,
+                "new": new_shift,
+                "reason": reason,
+            })
+
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -765,6 +890,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "hedge_conviction": new_values["hedge_conviction"],
         "driver_trust": dict(new_values["driver_trust"]),
         "direction_trust": dict(new_values["direction_trust"]),
+        "band_center_shift": new_values["band_center_shift"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

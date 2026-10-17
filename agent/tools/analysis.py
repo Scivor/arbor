@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：ml_bias、scenario_band、套保持信、被压低的驱动、方向信任，以及最近 3 条调整。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、被压低的驱动、方向信任、区间中心，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -71,6 +71,13 @@ def get_learning_status() -> str:
                 for side, value in list(direction.items())[:4]
             )
             lines.append(f"方向信任: {shown}")
+        try:
+            shift = float(memory.get("band_center_shift") or 0.0)
+        except (TypeError, ValueError):
+            shift = 0.0
+        if abs(shift) >= 0.0025:
+            side = "下移" if shift < 0 else "上移"
+            lines.append(f"区间中心 {side} {abs(shift) * 100:.2f}%")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

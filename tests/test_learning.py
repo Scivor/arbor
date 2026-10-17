@@ -547,12 +547,14 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "hedge_conviction": 9,
         "driver_trust": {"A": 0.1, "B": "nope", "": 0.5, "C": 1.2, "D": 0.8},
         "direction_trust": {"up": 0.1, "down": 1.0, "flat": 0.7, "nope": 0.5},
+        "band_center_shift": 9,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
     assert memory["hedge_conviction"] == 1.0
     assert memory["driver_trust"] == {"A": 0.5, "D": 0.8}
     assert memory["direction_trust"] == {"up": 0.6}
+    assert memory["band_center_shift"] == 0.03
 
 
 def test_apply_review_memory_changes_next_report():
@@ -697,12 +699,16 @@ def test_track_record_shows_review_memory():
     learning = {
         "current": {"ml_bias_scale": 0.9, "scenario_band_scale": 1.0},
         "n_samples": 8, "min_samples": 8, "ml_accuracy": 0.4, "band_hit_rate": 0.5,
-        "changelog": [],
+        "changelog": [{
+            "ts": "2026-08-01T00:00:00", "param": "band_center_shift",
+            "old": 0.0, "new": -0.005, "reason": "情景中心偏高",
+        }],
         "memory": {
             "hedge_conviction": 0.9,
             "hedge_accuracy": 0.38,
             "driver_trust": {"RSI超买": 0.81},
             "direction_trust": {"up": 0.9},
+            "band_center_shift": -0.005,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -713,6 +719,9 @@ def test_track_record_shows_review_memory():
     assert "情景概率让给横盘" in html
     assert "按方向信任让给横盘" in html
     assert "方向信任" in html and "上涨 0.90" in html
+    assert "区间中心" in html and "下移 0.50%" in html
+    assert "每步 0.5 个百分点" in html
+    assert "0.00 → -0.005" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -834,3 +843,110 @@ def test_wrong_direction_gives_its_probability_to_flat():
     ]
     assert apply_direction_trust(no_flat, {"up": 0.5}) is False
     assert [s.probability for s in no_flat] == [0.60, 0.40]
+
+
+def _seed_center(dir_path, *, high: bool):
+    """
+    8 对。偶数对的区间中心贴着现价：high 时中心在现价上方 4% 且罩不住下一周；
+    否则中心落在下一周价格上。奇数对用远离现价的宽区间，只负责把命中率维持在 50%。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None:
+            bmin, bmax = (0.0, 9999.0)
+        elif i % 2 == 1:
+            # high 时用罩住一切的宽区间凑满 50% 命中；否则用远离现价的脱靶区间。
+            bmin, bmax = (0.0, 9999.0) if high else (nxt + 1000.0, nxt + 2000.0)
+        elif high:
+            mid = current * 1.04
+            half = current * 0.01
+            bmin, bmax = mid - half, mid + half
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        _write_case(
+            dir_path, f"2026-08-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax,
+        )
+
+
+def test_recalibrate_high_center_steps_band_down(learn_env):
+    """区间中心连续停在现价上方：下一期偏移走低 0.5 个百分点。宽度和套保不动。"""
+    _seed_center(learn_env / "history", high=True)
+    result = recalibrate()
+    assert result["memory"]["band_center_shift"] == -0.005
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "band_center_shift"]
+    assert len(changed) == 1
+    assert changed[0]["old"] == 0.0 and changed[0]["new"] == -0.005
+    assert "区间下移" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.03,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["band_center_shift"] == -0.03
+    assert all(c["param"] != "band_center_shift" for c in floored["changed"])
+
+
+def test_recalibrate_centered_bands_walk_shift_back_toward_zero(learn_env):
+    _seed_center(learn_env / "history", high=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["band_center_shift"] == -0.015
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["band_center_shift"]
+
+
+def test_recalibrate_few_anchored_bands_do_not_move_center(learn_env):
+    _seed_center(learn_env / "history", high=True)
+    # 只留 3 个贴近现价的区间。2026-08-07 改成宽区间后，中心样本不够 4 对。
+    path = learn_env / "history" / "weekly_summary_2026-08-07.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["dominant_scenario_min"] = 0.0
+    data["dominant_scenario_max"] = 9999.0
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.01,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["band_center_shift"] == -0.01
+
+
+def test_band_center_shift_clamps_and_moves_prices():
+    """偏移 -1% 时，400 附近的区间整体下移 4。0 和倒挂区间不改。"""
+    from reports.learning import apply_band_center_shift
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 420, 0.25, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.35, []),
+    ]
+    assert apply_band_center_shift(bands, -0.01, 400) is True
+    assert [s.price_min for s in bands] == [396, 386, 366]
+    assert [s.price_max for s in bands] == [416, 406, 396]
+    assert [s.probability for s in bands] == [0.25, 0.40, 0.35]
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.4, [])]
+    assert apply_band_center_shift(same, 0.0, 400) is False
+    assert same[0].price_min == 390 and same[0].price_max == 410
+
+    tiny = [Scenario("盘", "横盘", 10, 10.2, 1.0, [])]
+    assert apply_band_center_shift(tiny, -0.03, 400) is False
+    assert tiny[0].price_min == 10 and tiny[0].price_max == 10.2

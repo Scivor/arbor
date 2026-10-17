@@ -221,3 +221,24 @@ def test_distrusted_up_forecast_yields_probability_to_flat(synthetic_pipeline, m
     assert _scenario_p(adjusted, "横盘") > _scenario_p(baseline, "横盘")
     assert _scenario_p(baseline, "下跌") == pytest.approx(_scenario_p(adjusted, "下跌"))
     assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_band_center_shift_moves_published_ranges(synthetic_pipeline, monkeypatch):
+    """区间中心偏移只改公布的价格区间，不改概率。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": -0.02,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    delta = adjusted.market.current * -0.02
+    for before, after in zip(baseline.scenarios, adjusted.scenarios):
+        assert after.price_min == pytest.approx(before.price_min + delta, abs=1.5)
+        assert after.price_max == pytest.approx(before.price_max + delta, abs=1.5)
+        assert after.price_min < before.price_min
+        assert after.probability == pytest.approx(before.probability)

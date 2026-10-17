@@ -13,6 +13,20 @@ from html import escape as _esc
 from reports.fonts import css_sans_stack, css_serif_stack
 
 
+def _fmt_step(value) -> str:
+    """系数调整至少两位小数；0.005 这类半步不被收成 0.01。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    text = f"{number:.4f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        text += ".00"
+    elif len(text.split(".", 1)[1]) < 2:
+        text += "0"
+    return text
+
+
 def _build_learning_html(learning: dict | None) -> str:
     """自校准区块：当前系数 + 近期指标 + 最近 5 条调整记录。"""
     if not learning:
@@ -52,6 +66,15 @@ def _build_learning_html(learning: dict | None) -> str:
         if parts:
             direction_html = f"""
     <div class="tr-learn-metrics">方向信任 {" · ".join(parts)}</div>"""
+    shift_html = ""
+    try:
+        shift = float(memory.get("band_center_shift") or 0.0)
+    except (TypeError, ValueError):
+        shift = 0.0
+    if abs(shift) >= 0.0025:
+        side = "下移" if shift < 0 else "上移"
+        shift_html = f"""
+    <div class="tr-learn-metrics">区间中心 {side} {abs(shift) * 100:.2f}%</div>"""
     trust = memory.get("driver_trust") or {}
     if trust:
         discounted = " · ".join(
@@ -67,11 +90,11 @@ def _build_learning_html(learning: dict | None) -> str:
         trust_html = ""
     if learning.get("memory") is not None:
         trust_html += """
-    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。停在中性的周不给套保持信加分。</div>"""
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。情景区间中心连续偏高或偏低时，下一期整段价格区间同向挪动，每步 0.5 个百分点，最多 3 个。停在中性的周不给套保持信加分。</div>"""
 
     rows = f"""
     <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>
-    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{direction_html}{trust_html}"""
+    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{direction_html}{shift_html}{trust_html}"""
 
     if acc is not None and hit is not None:
         rows += f"""
@@ -88,7 +111,7 @@ def _build_learning_html(learning: dict | None) -> str:
         <tr>
           <td class="tr-num">{_esc(ts)}</td>
           <td>{_esc(str(e.get("param", "")))}</td>
-          <td class="tr-num">{e.get("old", 0):.2f} → {e.get("new", 0):.2f}</td>
+          <td class="tr-num">{_fmt_step(e.get("old", 0))} → {_fmt_step(e.get("new", 0))}</td>
           <td>{_esc(str(e.get("reason", "")))}</td>
         </tr>"""
         rows += f"""

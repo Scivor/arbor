@@ -4,8 +4,20 @@
 
 {% block content %}
 <section class="idle">
-  <p class="idle-kicker">{% if lang == 'en' %}Stateless · Saturday 03:00 Shanghai{% else %}无状态 · 周六 03:00 上海{% endif %}</p>
-  <h1 class="idle-title">{% if lang == 'en' %}The report is still at sea{% else %}周报还在海上{% endif %}</h1>
+  <figure class="poster">
+    <figcaption class="poster-head">
+      <div class="poster-club">ARBOR</div>
+      <div class="poster-issue">{% if lang == 'en' %}NO REPORT{% else %}无报告{% endif %}</div>
+    </figcaption>
+    <div class="poster-frame">
+      <img src="/static/img/empty-desk.jpg" alt="{% if lang == 'en' %}Ink sketch of an empty desk, a hanging lamp, a coffee cup, and a blank sheet. The caption says the report is still at sea.{% else %}钢笔速写：空桌子、吊灯、咖啡杯和一张白纸。图注写着报告还在海上。{% endif %}">
+    </div>
+    <figcaption class="poster-foot">
+      <div>{% if lang == 'en' %}SATURDAY 03:00{% else %}每周六 03:00{% endif %}</div>
+      <div>{% if lang == 'en' %}SHANGHAI{% else %}上海{% endif %}</div>
+    </figcaption>
+  </figure>
+
   <p class="idle-lead">
     {% if lang == 'en' %}
     This page stores no prices. Scoring does not read the clock or the database: events decay by half-life, fourteen factor clusters sum with rank decay, and tanh holds the hedge ratio between 20% and 95%. Live numbers dock Saturday before dawn.

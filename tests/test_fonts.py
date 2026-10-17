@@ -60,6 +60,7 @@ def test_css_stack_includes_linux_fallbacks():
     assert "Droid Sans Fallback" in serif
     display = css_display_stack()
     assert "Comfortaa" in display
+    assert "ChillRoundM" in display
 
 
 def test_brand_assets_and_comfortaa_faces():
@@ -72,11 +73,15 @@ def test_brand_assets_and_comfortaa_faces():
     uri = arbor_wordmark_data_uri("brand")
     assert uri.startswith("data:image/png;base64,")
     assert len(uri) > 200
-    assert "Comfortaa" in comfortaa_font_face_css()
-    assert "comfortaa-latin-400.woff2" in comfortaa_font_face_css()
+    faces = comfortaa_font_face_css()
+    assert "Comfortaa" in faces
+    assert "comfortaa-latin-400.woff2" in faces
+    assert "ChillRoundM" in faces
+    assert "ChillRoundM.woff2" in faces
     embedded = embedded_comfortaa_font_face_css()
     assert "Comfortaa" in embedded
     assert "data:font/woff2;base64," in embedded
+    assert "ChillRoundM" in embedded
 
 
 def test_web_pages_use_shared_cjk_stacks():

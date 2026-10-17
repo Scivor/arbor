@@ -115,11 +115,12 @@ def css_serif_stack() -> str:
 
 def css_display_stack() -> str:
     """
-    标题 / 品牌展示栈：Comfortaa 对齐字标圆润几何气质；
-    CJK 回退到无衬线中文（Comfortaa 无汉字字形）。
+    标题 / 品牌展示栈：
+    - Comfortaa：拉丁，对齐字标圆润几何气质
+    - ChillRoundM（寒蝉圆中黑）：汉字圆润几何，OFL
     """
     return (
-        '"Comfortaa", "Nunito", "Varela Round", '
+        '"Comfortaa", "ChillRoundM", "Nunito", "Varela Round", '
         '"PingFang SC", "Hiragino Sans GB", '
         '"WenQuanYi Micro Hei", "Droid Sans Fallback", '
         '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
@@ -127,7 +128,7 @@ def css_display_stack() -> str:
 
 
 def comfortaa_font_face_css(*, url_prefix: str = "/static/fonts/") -> str:
-    """Web 用 @font-face（相对站点 /static）。"""
+    """Web 用 @font-face（相对站点 /static）— Comfortaa + ChillRoundM。"""
     prefix = url_prefix if url_prefix.endswith("/") else url_prefix + "/"
     faces = []
     for weight, name in ((400, "comfortaa-latin-400.woff2"),
@@ -145,12 +146,24 @@ def comfortaa_font_face_css(*, url_prefix: str = "/static/fonts/") -> str:
     U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }}"""
         )
+    faces.append(
+        f"""@font-face {{
+  font-family: "ChillRoundM";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("{prefix}ChillRoundM.woff2") format("woff2");
+}}"""
+    )
     return "\n".join(faces)
 
 
 @lru_cache(maxsize=1)
 def embedded_comfortaa_font_face_css() -> str:
-    """周报 HTML/PDF 内嵌 Comfortaa（data URI），不依赖外网。"""
+    """
+    周报 HTML：内嵌 Comfortaa（拉丁，小）；ChillRoundM 走 /static（约 2.5MB，
+    不内嵌以免每期报告膨胀）。站内浏览 /reports/ 时中文标题可加载圆体。
+    """
     faces = []
     for weight, name in ((400, "comfortaa-latin-400.woff2"),
                          (600, "comfortaa-latin-600.woff2"),
@@ -168,6 +181,16 @@ def embedded_comfortaa_font_face_css() -> str:
   src: url(data:font/woff2;base64,{b64}) format("woff2");
 }}"""
         )
+    # 站内路径：uvicorn 静态挂载；PDF 本地 file:// 时回退系统 CJK
+    faces.append(
+        """@font-face {
+  font-family: "ChillRoundM";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/static/fonts/ChillRoundM.woff2") format("woff2");
+}"""
+    )
     return "\n".join(faces)
 
 

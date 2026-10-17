@@ -121,7 +121,7 @@ def generate_and_publish(
         from reports.learning import recalibrate
         result = recalibrate()
         if result["changed"]:
-            from core.notify.ops_alert import send_ops_alert
+            from arbor.infrastructure.notify.ops_alert import send_ops_alert
             lines = "\n".join(
                 f"• {c['param']}: {c['old']:.3f} → {c['new']:.3f}（{c['reason']}，n={result['n_samples']}）"
                 for c in result["changed"]
@@ -143,7 +143,7 @@ def generate_and_publish(
     try:
         level, problems = assess_report_health(report)
         if level != "ok":
-            from core.notify.ops_alert import send_ops_alert
+            from arbor.infrastructure.notify.ops_alert import send_ops_alert
             icon = "🔴" if level == "critical" else "🟡"
             outcome = "失败" if level == "critical" else "降级"
             send_ops_alert(
@@ -155,7 +155,7 @@ def generate_and_publish(
 
     # ── 发布提醒：常态通知（与告警语义不同，无 🔴/🟡；未配置则静默）──
     try:
-        from core.notify.ops_alert import send_ops_alert
+        from arbor.infrastructure.notify.ops_alert import send_ops_alert
         send_ops_alert(_build_publish_notice(report, report_dir, today_str))
     except Exception as e:
         logger.warning("Publish notice failed: %s", e)
@@ -212,7 +212,7 @@ def _job_with_alerts(**kwargs):
     except Exception as e:
         logger.error("Scheduled report failed: %s", e, exc_info=True)
         try:
-            from core.notify.ops_alert import send_ops_alert
+            from arbor.infrastructure.notify.ops_alert import send_ops_alert
             from html import escape as _esc
             send_ops_alert(f"🔴 <b>Arbor 周报定时任务失败</b>\n<code>{_esc(str(e))}</code>")
         except Exception:
@@ -322,7 +322,7 @@ def main(argv=None) -> int:
     )
 
     if args.alert_test:
-        from core.notify.ops_alert import send_ops_alert
+        from arbor.infrastructure.notify.ops_alert import send_ops_alert
         ok = send_ops_alert(
             "✅ <b>Arbor 告警链路测试</b>\n看到这条消息说明 TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID 配置正确。"
         )

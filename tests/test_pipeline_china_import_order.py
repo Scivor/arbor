@@ -107,7 +107,7 @@ def synthetic_pipeline(monkeypatch, tmp_path):
                          lambda: {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0})
     monkeypatch.setattr("reports.reference_class.compute_base_rates", lambda *a, **k: None)
     monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-    monkeypatch.setattr("core.persistence.database.DecisionDB", _RaisingDB)
+    monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _RaisingDB)
 
     # LLM —— 假 key + 假 ChatOpenAI，捕获 prompt
     monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: ("sk-fake", "deepseek"))

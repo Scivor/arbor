@@ -125,7 +125,7 @@ def get_policy_events() -> str:
     try:
         # weekly summary 不含 china_import 快照，改从事件持久化库取近 7 天记录
         from datetime import datetime, timedelta
-        from core.persistence import DecisionDB
+        from arbor.infrastructure.persistence import DecisionDB
         start = (datetime.now() - timedelta(days=7)).isoformat()
         # 多取再过滤：库内混有供给/金融事件
         df = DecisionDB().get_events(start=start, limit=40)

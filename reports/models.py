@@ -13,7 +13,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from core.cost.landed_cost import LandedCostBreakdown  # noqa: F401
+    from arbor.domain.cost.landed_cost import LandedCostBreakdown  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

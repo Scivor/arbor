@@ -150,7 +150,7 @@ def test_policy_events_from_db(monkeypatch):
          "severity": 5, "narrative": "巴西霜冻确认", "source": "ONI"},
     ])
     db = SimpleNamespace(get_events=lambda **kwargs: df)
-    monkeypatch.setattr("core.persistence.DecisionDB", lambda *a, **k: db)
+    monkeypatch.setattr("arbor.infrastructure.persistence.DecisionDB", lambda *a, **k: db)
     out = get_policy_events.invoke({})
     assert "china_tariff_change" in out and "sev=4" in out
     assert "中国调整咖啡生豆进口关税" in out
@@ -160,12 +160,12 @@ def test_policy_events_from_db(monkeypatch):
 
 def test_policy_events_empty(monkeypatch):
     db = SimpleNamespace(get_events=lambda **kwargs: pd.DataFrame())
-    monkeypatch.setattr("core.persistence.DecisionDB", lambda *a, **k: db)
+    monkeypatch.setattr("arbor.infrastructure.persistence.DecisionDB", lambda *a, **k: db)
     assert "无政策事件记录" in get_policy_events.invoke({})
 
 
 def test_policy_events_db_failure(monkeypatch):
-    monkeypatch.setattr("core.persistence.DecisionDB",
+    monkeypatch.setattr("arbor.infrastructure.persistence.DecisionDB",
                         SimpleNamespace(side_effect=RuntimeError("db locked")))
     out = get_policy_events.invoke({})
     assert "错误" in out

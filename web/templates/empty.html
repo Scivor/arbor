@@ -3,72 +3,8 @@
 {% block title %}{% if lang == 'en' %}The report is still at sea · Arbor{% else %}周报还在海上 · Arbor{% endif %}{% endblock %}
 
 {% block content %}
-<section class="idle">
-  <figure class="poster">
-    <figcaption class="poster-head">
-      <div class="poster-club">ARBOR</div>
-      <div class="poster-issue">{% if lang == 'en' %}NO REPORT{% else %}无报告{% endif %}</div>
-    </figcaption>
-    <div class="poster-frame">
-      <img src="/static/img/empty-desk.jpg" alt="{% if lang == 'en' %}Ink sketch of an empty desk, a hanging lamp, a coffee cup, and a blank sheet. The caption says the report is still at sea.{% else %}钢笔速写：空桌子、吊灯、咖啡杯和一张白纸。图注写着报告还在海上。{% endif %}">
-    </div>
-    <figcaption class="poster-foot">
-      <div>{% if lang == 'en' %}SATURDAY 03:00{% else %}每周六 03:00{% endif %}</div>
-      <div>{% if lang == 'en' %}SHANGHAI{% else %}上海{% endif %}</div>
-    </figcaption>
-  </figure>
-
-  <p class="idle-lead">
-    {% if lang == 'en' %}
-    This page stores no prices. Scoring does not read the clock or the database: events decay by half-life, fourteen factor clusters sum with rank decay, and tanh holds the hedge ratio between 20% and 95%. Live numbers dock Saturday before dawn.
-    {% else %}
-    这页故意不记行情。评分不读时钟、不写数据库：事件按半衰期衰减，十四个因子簇递减求和，tanh 把套保比率夹在 20% 与 95% 之间。真数字要等周六凌晨靠岸。
-    {% endif %}
-  </p>
-
-  <div class="idle-scale" role="img" aria-label="{% if lang == 'en' %}Hedge ratio scale from 20% to 95%, baseline 65%{% else %}套保比率尺，左端 20%，基准 65%，右端 95%{% endif %}">
-    <div class="idle-scale-name">{% if lang == 'en' %}Where the ratio lives when the score is zero{% else %}分数为零时，比率停在这枚钉子上{% endif %}</div>
-    <div class="idle-scale-bar"><i class="idle-scale-pin"></i></div>
-    <div class="idle-scale-ticks">
-      <span>20%<small>{% if lang == 'en' %}Light{% else %}轻套{% endif %}</small></span>
-      <span>65%<small>{% if lang == 'en' %}Baseline{% else %}基准{% endif %}</small></span>
-      <span>95%<small>{% if lang == 'en' %}Nearly full{% else %}几乎全套{% endif %}</small></span>
-    </div>
-  </div>
-
-  <div class="idle-grid">
-    <article class="idle-card">
-      <div class="idle-card-idx">01</div>
-      <h2>{% if lang == 'en' %}Supply{% else %}供给{% endif %}</h2>
-      <p>{% if lang == 'en' %}Origin weather, ONI, COT, ICE stocks. The farms speak first.{% else %}产区天气、ONI、COT、ICE 库存。产地先开口。{% endif %}</p>
-    </article>
-    <article class="idle-card">
-      <div class="idle-card-idx">02</div>
-      <h2>{% if lang == 'en' %}Finance{% else %}金融{% endif %}</h2>
-      <p>{% if lang == 'en' %}KC=F, USD/CNY, Polymarket. Price answers next.{% else %}KC=F、美元兑人民币、Polymarket。价格接着表态。{% endif %}</p>
-    </article>
-    <article class="idle-card">
-      <div class="idle-card-idx">03</div>
-      <h2>{% if lang == 'en' %}Policy{% else %}政策{% endif %}</h2>
-      <p>{% if lang == 'en' %}Tariffs, trade war, LDC status, news. Rules change the last word.{% else %}关税、贸易战、LDC 地位、新闻。规则最后改口。{% endif %}</p>
-    </article>
-  </div>
-
-  <div class="idle-ledger">
-    <h2>{% if lang == 'en' %}What lands on the desk{% else %}靠岸时桌上会有{% endif %}</h2>
-    <ol>
-      <li><span>01</span>{% if lang == 'en' %}Market snapshot and scenarios{% else %}市场快照，以及几条情景{% endif %}</li>
-      <li><span>02</span>{% if lang == 'en' %}Landed cost, FX included{% else %}到库成本，汇率算进去{% endif %}</li>
-      <li><span>03</span>{% if lang == 'en' %}A hedge ratio that moved off 65%{% else %}离开 65% 的动态套保比率{% endif %}</li>
-      <li><span>04</span>{% if lang == 'en' %}Next procurement step. An API key only polishes the prose.{% else %}采购下一步。有密钥时才润色文风。{% endif %}</li>
-    </ol>
-  </div>
-
-  <div class="idle-actions">
-    <a class="btn btn-primary" href="/track-record/">{% if lang == 'en' %}See the scoreboard{% else %}先看预测战绩{% endif %}</a>
-    <a class="btn btn-secondary" href="/chat/">{% if lang == 'en' %}Ask the buyer{% else %}问采购顾问{% endif %}</a>
-    <a class="btn btn-ghost" href="{% if lang == 'en' %}/reports/?lang=en{% else %}/reports/{% endif %}">{% if lang == 'en' %}Open the empty archive{% else %}翻开空归档{% endif %}</a>
-  </div>
-  <p class="idle-note">{% if lang == 'en' %}Refreshing changes nothing. There is no report to remember.{% else %}刷新也不会变。没有报告可记，所以这页是无状态的。{% endif %}</p>
+<section class="quiet">
+  <img src="/static/img/empty-desk.jpg" alt="{% if lang == 'en' %}Ink sketch of an empty desk, a lamp, a coffee cup, and a blank sheet.{% else %}钢笔速写：空桌子、吊灯、咖啡杯和一张白纸。{% endif %}">
+  <p>{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
 </section>
 {% endblock %}

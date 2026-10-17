@@ -159,6 +159,10 @@ def build_chat_page(
     font-family: inherit;
   }}
   .chat-chip:hover {{ border-color: #1B365D; }}
+  .chat-chip:disabled {{
+    opacity: 0.45;
+    cursor: default;
+  }}
   .chat-input-row {{
     display: flex;
     gap: 10px;
@@ -276,12 +280,16 @@ function seedBriefing() {{
   renderChips();
 }}
 
+function setChipsEnabled(on) {{
+  chipsRow.querySelectorAll('.chat-chip').forEach((btn) => {{ btn.disabled = !on; }});
+}}
+
 async function send() {{
   const msg = input.value.trim();
   if (!msg || pending) return;
   pending = true;
   sendBtn.disabled = true;
-  chipsRow.hidden = true;
+  setChipsEnabled(false);
   addBubble(msg, 'user');
   input.value = '';
   const thinking = addBubble('顾问思考中…', 'assistant pending');
@@ -304,6 +312,8 @@ async function send() {{
   }} finally {{
     pending = false;
     sendBtn.disabled = false;
+    setChipsEnabled(true);
+    chipsRow.hidden = false;
     input.focus();
   }}
 }}

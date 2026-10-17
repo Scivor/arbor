@@ -4,6 +4,7 @@ web 聊天界面 — 无网络（mock CoffeeAnalyst 单例工厂）
 """
 
 from types import SimpleNamespace
+import time
 
 import pytest
 
@@ -16,9 +17,11 @@ def _reset_chat_rate():
     """每个测试重置限流与会话状态（内存 dict 是模块级共享的）"""
     web_app._CHAT_RATE.clear()
     web_app._CHAT_SESSIONS.clear()
+    web_app._CHAT_SESSION_TS.clear()
     yield
     web_app._CHAT_RATE.clear()
     web_app._CHAT_SESSIONS.clear()
+    web_app._CHAT_SESSION_TS.clear()
 
 
 @pytest.fixture
@@ -40,6 +43,9 @@ def test_build_chat_page_elements():
     assert "这周该不该买" in html
     assert "session_id" in html
     assert "getSessionId" in html
+    assert "setChipsEnabled" in html
+    # 发送后芯片应保持可点（不再 chipsRow.hidden = true 永久藏起）
+    assert "chipsRow.hidden = false" in html
 
 
 def test_build_chat_page_with_briefing():
@@ -148,3 +154,44 @@ def test_offline_clarify_hedge():
     briefing = "【现在怎么做】套保维持偏紧。\n【别踩的坑】关税风险。"
     out = web_app._offline_clarify("套保要紧还是松", briefing)
     assert "偏紧" in out
+
+
+def test_offline_clarify_why_and_referential():
+    briefing = (
+        "【现在怎么做】分批观望。\n"
+        "【为什么】主导情景横盘。\n"
+        "【下周盯什么】跌破 288。"
+    )
+    assert "主导情景" in web_app._offline_clarify("为什么", briefing)
+    # 短指代：结合上一轮「到库」扩写
+    hist = [("human", "到库成本怎么看"), ("ai", "到库约 30")]
+    out = web_app._offline_clarify("那呢", briefing, history=hist)
+    # 「那呢」+ prior 到库 → 时机/为什么；demo briefing 无到库句时回退为什么
+    assert "主导情景" in out or "分批" in out
+
+
+def test_api_briefing_endpoint(client, tmp_path, monkeypatch):
+    day = tmp_path / "2026-10-17"
+    day.mkdir()
+    (day / "briefing.json").write_text(
+        '{"report_date":"2026-10-17","direction":"横盘","zh":"【现在怎么做】观望","en":"[Do now] wait"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_app, "REPORTS_DIR", tmp_path)
+    resp = client.get("/api/briefing")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["report_date"] == "2026-10-17"
+    assert data["direction"] == "横盘"
+    assert "观望" in data["zh"]
+    assert data["en"].startswith("[Do now]")
+
+
+def test_session_ttl_purge(monkeypatch):
+    web_app._CHAT_SESSIONS["old"] = [("human", "a"), ("ai", "b")]
+    web_app._CHAT_SESSION_TS["old"] = time.time() - web_app._CHAT_SESSION_TTL_SEC - 10
+    web_app._CHAT_SESSIONS["new"] = [("human", "c"), ("ai", "d")]
+    web_app._CHAT_SESSION_TS["new"] = time.time()
+    hist = web_app._session_history("new")
+    assert hist == [("human", "c"), ("ai", "d")]
+    assert "old" not in web_app._CHAT_SESSIONS

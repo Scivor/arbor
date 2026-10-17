@@ -51,18 +51,26 @@ def _landed_line(report) -> Optional[str]:
     return f"{ci.landed.total_cost_cny_jin:.2f} CNY/斤"
 
 
-def _hedge_line(report) -> Optional[str]:
+def _hedge_line(report, lang: str = "zh") -> Optional[str]:
     h = report.hedge_advice
     if not h:
         return None
     sig = (h.signal or "").upper()
-    sig_zh = {
-        "HIGH_HEDGE": "偏紧",
-        "MEDIUM_HEDGE": "中性偏紧",
-        "LOW_HEDGE": "偏松",
-        "NO_HEDGE": "不加保",
-    }.get(sig, h.signal)
-    return f"{h.ratio:.0%}（{sig_zh}）"
+    if lang == "en":
+        sig_label = {
+            "HIGH_HEDGE": "tight",
+            "MEDIUM_HEDGE": "neutral-tight",
+            "LOW_HEDGE": "loose",
+            "NO_HEDGE": "unhedged",
+        }.get(sig, h.signal)
+    else:
+        sig_label = {
+            "HIGH_HEDGE": "偏紧",
+            "MEDIUM_HEDGE": "中性偏紧",
+            "LOW_HEDGE": "偏松",
+            "NO_HEDGE": "不加保",
+        }.get(sig, h.signal)
+    return f"{h.ratio:.0%}（{sig_label}）"
 
 
 def _scenario_line(report) -> Optional[str]:
@@ -105,7 +113,7 @@ def build_procurement_briefing(report, lang: str = "zh") -> tuple[str, str]:
 
 def _build_zh(report, direction: str) -> str:
     landed = _landed_line(report)
-    hedge = _hedge_line(report)
+    hedge = _hedge_line(report, lang="zh")
     scenario = _scenario_line(report)
     ml = _ml_line(report)
     soft = _scorecard_soft(report)
@@ -167,7 +175,7 @@ def _build_zh(report, direction: str) -> str:
 
 def _build_en(report, direction: str) -> str:
     landed = _landed_line(report)
-    hedge = _hedge_line(report)
+    hedge = _hedge_line(report, lang="en")
     scenario = _scenario_line(report)
     ml = _ml_line(report)
     soft = _scorecard_soft(report)

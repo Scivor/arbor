@@ -20,6 +20,9 @@ reports/learning.py
 - band_center_shift:    情景区间中心相对现价的偏移（-3% ~ +3%）。
                         只统计中心离当时现价 15% 以内的周。连续偏高或偏低
                         时，下一期整段价格区间同向挪 0.5 个百分点
+- flat_trust:          横盘主张的信任（0.6 ~ 1.0）。
+                        只统计区间罩住当时现价、且半宽不超过 8% 的周。
+                        说错时横盘概率乘以信任系数，分给上涨和下跌
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -54,6 +57,9 @@ _BAND_SHIFT_STEP = 0.005
 _BAND_SHIFT_DEAD = 0.01
 _BAND_SHIFT_ANCHOR = 0.15
 _BAND_SHIFT_WINSOR = 0.08
+_FLAT_BOUNDS = (0.6, 1.0)
+# 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
+_FLAT_HALF_WIDTH = 0.08
 
 # 套保比率往 65% 中性收敛。与 arbor.domain.scoring.ScoringConfig.baseline 同一锚点，
 # baseline 本身不参与自校准。
@@ -94,6 +100,7 @@ def _empty_memory() -> dict:
         "driver_trust": {},
         "direction_trust": {},
         "band_center_shift": 0.0,
+        "flat_trust": 1.0,
     }
 
 
@@ -150,6 +157,7 @@ def _load_state() -> dict:
         "driver_trust": _trust_map(data.get("driver_trust")),
         "direction_trust": _direction_map(data.get("direction_trust")),
         "band_center_shift": _band_shift(data.get("band_center_shift", 0.0)),
+        "flat_trust": _flat_trust(data.get("flat_trust", 1.0)),
     }
 
 
@@ -163,14 +171,20 @@ def load_learned() -> dict:
 
 
 def load_review_memory() -> dict:
-    """读取近期记忆：套保持信、驱动因子、方向信任、区间中心偏移。缺省为不干预。"""
+    """读取近期记忆：套保持信、驱动因子、方向信任、区间中心、横盘信任。缺省为不干预。"""
     state = _load_state()
     return {
         "hedge_conviction": state["hedge_conviction"],
         "driver_trust": dict(state["driver_trust"]),
         "direction_trust": dict(state["direction_trust"]),
         "band_center_shift": state["band_center_shift"],
+        "flat_trust": state["flat_trust"],
     }
+
+
+def _flat_trust(value) -> float:
+    """横盘信任。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _FLAT_BOUNDS), 4)
 
 
 def _band_shift(value) -> float:
@@ -326,6 +340,46 @@ def _band_center_error(pairs) -> float | None:
     if samples < _DRIVER_MIN_SAMPLES or not total:
         return None
     return signed / total
+
+
+def _flat_call_stats(pairs) -> dict:
+    """
+    横盘主张的近期命中率。涨跌主张不计入。
+
+    区间没罩住当时现价，或半宽超过现价 8%，都不算一次横盘主张。
+    实际涨跌超过 ±1% 算说错。样本少于 4 对时 rate 为 None。
+    """
+    from reports.models import normalize_direction
+
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        if normalize_direction(getattr(cur, "dominant_scenario_direction", "")) != "flat":
+            continue
+        try:
+            price = float(cur.current_price)
+            lo = float(cur.dominant_scenario_min)
+            hi = float(cur.dominant_scenario_max)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if not price or price != price or hi < lo:
+            continue
+        if not (lo <= price <= hi):
+            continue
+        if (hi - lo) / 2 / abs(price) > _FLAT_HALF_WIDTH:
+            continue
+        change = (actual_price - price) / price * 100
+        landed = "flat" if abs(change) <= 1.0 else ("up" if change > 0 else "down")
+        total += weight
+        samples += 1
+        if landed == "flat":
+            hit += weight
+    return {
+        "samples": samples,
+        "rate": (hit / total) if samples >= _DRIVER_MIN_SAMPLES and total else None,
+    }
 
 
 def _step_band_shift(current: float, error: float) -> float:
@@ -565,6 +619,54 @@ def apply_band_center_shift(scenarios, shift, price) -> bool:
     return moved
 
 
+def apply_flat_trust(scenarios, flat_trust) -> bool:
+    """
+    横盘连续说错时，横盘概率乘以信任系数，让出的部分按现有比例分给上涨和下跌。
+
+    信任为 1、没有横盘、或没有涨跌情景时返回 False，不改数字。单侧概率不低于 5%。
+    """
+    if not scenarios:
+        return False
+    factor = _flat_trust(flat_trust)
+    if factor >= 1.0:
+        return False
+
+    from reports.models import normalize_direction
+
+    grouped: dict[str, list] = {}
+    for scenario in scenarios:
+        grouped.setdefault(normalize_direction(getattr(scenario, "direction", "")), []).append(scenario)
+    flat = grouped.get("flat") or []
+    directional = (grouped.get("up") or []) + (grouped.get("down") or [])
+    if not flat or not directional:
+        return False
+
+    moved = 0.0
+    for scenario in flat:
+        current = float(scenario.probability)
+        target = max(_PROB_FLOOR, current * factor)
+        take = current - target
+        if take <= 1e-12:
+            continue
+        scenario.probability = target
+        moved += take
+    if moved <= 0:
+        return False
+    weights = [max(float(s.probability), 0.0) for s in directional]
+    weight_total = sum(weights)
+    if weight_total <= 0:
+        weights = [1.0] * len(directional)
+        weight_total = float(len(directional))
+    for scenario, weight in zip(directional, weights):
+        scenario.probability = float(scenario.probability) + moved * (weight / weight_total)
+    total_p = sum(float(s.probability) for s in scenarios)
+    if total_p <= 0:
+        return False
+    for scenario in scenarios:
+        scenario.probability = round(float(scenario.probability) / total_p, 4)
+    return True
+
+
 _DIRECTION_LABELS = {"up": "上涨", "down": "下跌"}
 
 
@@ -715,6 +817,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     hedge_accuracy, driver_rates = _memory_signals(pairs)
     direction_rates = _direction_rates(pairs)
     center_error = _band_center_error(pairs)
+    flat_stats = _flat_call_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -728,6 +831,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "driver_trust": dict(state["driver_trust"]),
         "direction_trust": dict(state["direction_trust"]),
         "band_center_shift": state["band_center_shift"],
+        "flat_trust": state["flat_trust"],
     }
     changed: list[dict] = []
 
@@ -863,6 +967,36 @@ def recalibrate(min_samples: int = 8) -> dict:
                 "reason": reason,
             })
 
+    # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
+    old_flat = new_values["flat_trust"]
+    flat_samples = flat_stats["samples"]
+    flat_rate = flat_stats["rate"]
+    if flat_samples >= _DRIVER_MIN_SAMPLES and flat_rate is not None:
+        if flat_rate < 0.45:
+            reason = f"横盘情景近期命中率 {flat_rate:.0%} < 45%，概率分给涨跌"
+            new_flat = _step_toward(old_flat, False, _FLAT_BOUNDS)
+        elif flat_rate > 0.65:
+            reason = f"横盘情景近期命中率 {flat_rate:.0%} > 65%，信任向基准回归"
+            new_flat = _step_toward(old_flat, True, _FLAT_BOUNDS)
+        else:
+            new_flat = old_flat
+            reason = ""
+    elif flat_samples == 0 and old_flat < 1.0:
+        reason = "横盘情景本期未再主张，信任向基准回归"
+        new_flat = _step_toward(old_flat, True, _FLAT_BOUNDS)
+    else:
+        new_flat = old_flat
+        reason = ""
+    new_flat = _flat_trust(new_flat)
+    if reason and new_flat != old_flat:
+        new_values["flat_trust"] = new_flat
+        changed.append({
+            "param": "flat_trust",
+            "old": old_flat,
+            "new": new_flat,
+            "reason": reason,
+        })
+
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -891,6 +1025,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "driver_trust": dict(new_values["driver_trust"]),
         "direction_trust": dict(new_values["direction_trust"]),
         "band_center_shift": new_values["band_center_shift"],
+        "flat_trust": new_values["flat_trust"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

@@ -548,6 +548,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "driver_trust": {"A": 0.1, "B": "nope", "": 0.5, "C": 1.2, "D": 0.8},
         "direction_trust": {"up": 0.1, "down": 1.0, "flat": 0.7, "nope": 0.5},
         "band_center_shift": 9,
+        "flat_trust": 0.1,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -555,6 +556,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["driver_trust"] == {"A": 0.5, "D": 0.8}
     assert memory["direction_trust"] == {"up": 0.6}
     assert memory["band_center_shift"] == 0.03
+    assert memory["flat_trust"] == 0.6
 
 
 def test_apply_review_memory_changes_next_report():
@@ -709,6 +711,7 @@ def test_track_record_shows_review_memory():
             "driver_trust": {"RSI超买": 0.81},
             "direction_trust": {"up": 0.9},
             "band_center_shift": -0.005,
+            "flat_trust": 0.9,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -722,6 +725,8 @@ def test_track_record_shows_review_memory():
     assert "区间中心" in html and "下移 0.50%" in html
     assert "每步 0.5 个百分点" in html
     assert "0.00 → -0.005" in html
+    assert "横盘信任" in html and ">0.90<" in html
+    assert "分给上涨和下跌" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -950,3 +955,129 @@ def test_band_center_shift_clamps_and_moves_prices():
     tiny = [Scenario("盘", "横盘", 10, 10.2, 1.0, [])]
     assert apply_band_center_shift(tiny, -0.03, 400) is False
     assert tiny[0].price_min == 10 and tiny[0].price_max == 10.2
+
+
+def _seed_flat_calls(dir_path, *, wrong: bool):
+    """
+    8 对横盘主张。偶数对的区间罩住现价、半宽约 2%，算一次横盘。
+    wrong 时价格每步跌 2%，中心落在下一周价格上，所以区间中心误差是 0。
+    奇数对用远离现价的脱靶区间，把区间命中率维持在 50%。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * (0.98 if wrong else 1.004), 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None:
+            bmin, bmax = 0.0, 9999.0
+        elif i % 2 == 1:
+            bmin, bmax = nxt + 1000.0, nxt + 2000.0
+        elif wrong:
+            half = abs(current - nxt)
+            bmin, bmax = nxt - half, nxt + half
+        else:
+            half = current * 0.02
+            bmin, bmax = current - half, current + half
+        _write_case(
+            dir_path, f"2026-09-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, direction="横盘",
+        )
+
+
+def test_recalibrate_wrong_flat_calls_lower_flat_trust(learn_env):
+    """横盘区间罩住现价、价格却连跌：横盘信任降到 0.9。区间中心和套保不动。"""
+    _seed_flat_calls(learn_env / "history", wrong=True)
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.9)
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "flat_trust"]
+    assert len(changed) == 1
+    assert "分给涨跌" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["flat_trust"] == 0.6
+    assert all(c["param"] != "flat_trust" for c in floored["changed"])
+
+
+def test_recalibrate_right_flat_calls_recover_trust(learn_env):
+    _seed_flat_calls(learn_env / "history", wrong=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.9,
+    }))
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.945)
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["flat_trust"]
+
+
+def test_recalibrate_few_flat_calls_do_not_move_trust(learn_env):
+    _seed_flat_calls(learn_env / "history", wrong=True)
+    path = learn_env / "history" / "weekly_summary_2026-09-07.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["dominant_scenario_min"] = data["current_price"] + 1000.0
+    data["dominant_scenario_max"] = data["current_price"] + 2000.0
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.8,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["flat_trust"] == pytest.approx(0.8)
+
+
+def test_recalibrate_absent_flat_calls_fade_trust(learn_env):
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.84)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+
+
+def test_wrong_flat_gives_its_probability_to_the_two_sides():
+    """横盘信任 0.9 时，40% 的横盘变成 36%，涨跌各得 2 个点。没有涨跌情景则不改。"""
+    from reports.learning import apply_flat_trust
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 420, 0.30, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.30, []),
+    ]
+    assert apply_flat_trust(bands, 0.9) is True
+    by = {s.direction: s.probability for s in bands}
+    assert by["横盘"] == pytest.approx(0.36, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.32, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.32, abs=0.001)
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.40, [])]
+    assert apply_flat_trust(same, 0.5) is False
+    assert same[0].probability == 0.40
+    untouched = [
+        Scenario("涨", "上涨", 400, 420, 0.30, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.30, []),
+    ]
+    assert apply_flat_trust(untouched, 1.0) is False
+    assert [s.probability for s in untouched] == [0.30, 0.40, 0.30]

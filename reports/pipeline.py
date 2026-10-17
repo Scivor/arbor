@@ -619,6 +619,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         from reports.learning import (
             apply_band_center_shift,
             apply_direction_trust,
+            apply_flat_trust,
             apply_driver_hedge_nudge,
             apply_driver_scenario_tilt,
             apply_driver_weights,
@@ -640,9 +641,11 @@ def run(config: PipelineConfig) -> PredictionReport:
             "driver_trust": {},
             "direction_trust": {},
             "band_center_shift": 0.0,
+            "flat_trust": 1.0,
         }
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        apply_band_center_shift = apply_direction_trust = apply_driver_hedge_nudge = None
+        apply_band_center_shift = apply_flat_trust = None
+        apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
         sync_dominant_scenario_event = ml_trust_multiplier = None
     trust = memory.get("driver_trust") or {}
@@ -697,7 +700,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 
     # 复盘修正落在收缩之后，避免被参考类再抹平。
-    # 先按方向信任让概率，再按不可靠因子让概率。没动就不重算套保。
+    # 先按方向信任和不可靠因子把概率让给横盘，横盘自己也说错时再分回去。
+    # 没动就不重算套保。
     tilted = False
     if apply_direction_trust is not None and apply_direction_trust(
         scenarios, memory.get("direction_trust") or {},
@@ -705,6 +709,10 @@ def run(config: PipelineConfig) -> PredictionReport:
         tilted = True
     if apply_driver_scenario_tilt is not None and apply_driver_scenario_tilt(
         scenarios, bullish, bearish, trust,
+    ):
+        tilted = True
+    if apply_flat_trust is not None and apply_flat_trust(
+        scenarios, memory.get("flat_trust", 1.0),
     ):
         tilted = True
     if tilted:

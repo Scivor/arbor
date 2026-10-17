@@ -242,3 +242,23 @@ def test_band_center_shift_moves_published_ranges(synthetic_pipeline, monkeypatc
         assert after.price_max == pytest.approx(before.price_max + delta, abs=1.5)
         assert after.price_min < before.price_min
         assert after.probability == pytest.approx(before.probability)
+
+
+def test_distrusted_flat_forecast_splits_probability_to_both_sides(synthetic_pipeline, monkeypatch):
+    """横盘主张不可靠时，报告里的横盘概率分给上涨和下跌。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 0.5,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "横盘") < _scenario_p(baseline, "横盘")
+    assert _scenario_p(adjusted, "上涨") > _scenario_p(baseline, "上涨")
+    assert _scenario_p(adjusted, "下跌") > _scenario_p(baseline, "下跌")
+    assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)

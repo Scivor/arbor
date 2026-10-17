@@ -86,6 +86,12 @@ def _current_learned_scales() -> dict:
             shift = 0.0
         if abs(shift) >= 0.0025:
             scales["band_center_shift"] = shift
+        try:
+            flat_trust = float(memory.get("flat_trust", 1.0))
+        except (TypeError, ValueError):
+            flat_trust = 1.0
+        if flat_trust < 0.999:
+            scales["flat_trust"] = flat_trust
         return scales
     except Exception:
         return {}

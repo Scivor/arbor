@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：当前 ml_bias / scenario_band 系数、复盘样本数、最近 3 条调整记录。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度、扇面宽度、ML 目标偏移，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -56,6 +56,60 @@ def get_learning_status() -> str:
             f"ml_bias_scale {cur['ml_bias_scale']:.2f} | scenario_band_scale {cur['scenario_band_scale']:.2f}",
             f"复盘样本 {st['n_samples']}/{st['min_samples']}",
         ]
+        memory = st.get("memory") or {}
+        if "hedge_conviction" in memory:
+            lines.append(f"hedge_conviction {float(memory['hedge_conviction']):.2f}")
+        trust = memory.get("driver_trust") or {}
+        if trust:
+            discounted = ", ".join(f"{name} {float(value):.2f}" for name, value in list(trust.items())[:5])
+            lines.append(f"压低的驱动: {discounted}")
+        direction = memory.get("direction_trust") or {}
+        if direction:
+            labels = {"up": "上涨", "down": "下跌"}
+            shown = ", ".join(
+                f"{labels.get(str(side), str(side))} {float(value):.2f}"
+                for side, value in list(direction.items())[:4]
+            )
+            lines.append(f"方向信任: {shown}")
+        try:
+            shift = float(memory.get("band_center_shift") or 0.0)
+        except (TypeError, ValueError):
+            shift = 0.0
+        if abs(shift) >= 0.0025:
+            side = "下移" if shift < 0 else "上移"
+            lines.append(f"区间中心 {side} {abs(shift) * 100:.2f}%")
+        try:
+            flat_trust = float(memory.get("flat_trust", 1.0))
+        except (TypeError, ValueError):
+            flat_trust = 1.0
+        if flat_trust < 0.999:
+            lines.append(f"横盘信任 {flat_trust:.2f}")
+        try:
+            sharpness = float(memory.get("prob_sharpness", 1.0))
+        except (TypeError, ValueError):
+            sharpness = 1.0
+        if sharpness < 0.999:
+            lines.append(f"概率锐度 {sharpness:.2f}")
+        try:
+            lean = float(memory.get("hedge_lean") or 0.0)
+        except (TypeError, ValueError):
+            lean = 0.0
+        if abs(lean) >= 0.005:
+            side = "少套" if lean < 0 else "多套"
+            lines.append(f"套保偏向 {side} {abs(lean) * 100:.2f} 个百分点")
+        try:
+            fan_width = float(memory.get("fan_width", 1.0))
+        except (TypeError, ValueError):
+            fan_width = 1.0
+        if fan_width > 1.001:
+            lines.append(f"扇面宽度 {fan_width:.2f}")
+        try:
+            target_shift = float(memory.get("ml_target_shift") or 0.0)
+        except (TypeError, ValueError):
+            target_shift = 0.0
+        if abs(target_shift) >= 0.0025:
+            side = "下移" if target_shift < 0 else "上移"
+            lines.append(f"ML 目标 {side} {abs(target_shift) * 100:.2f}%")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

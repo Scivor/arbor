@@ -7,7 +7,7 @@ import json
 
 import pytest
 
-from reports.learning import load_learned, recalibrate, learning_status
+from reports.learning import load_learned, load_review_memory, recalibrate, learning_status
 from reports.pipeline import compute_levels_and_scenarios
 from tests.test_pipeline_formatting import _market_snapshot
 
@@ -326,11 +326,1211 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
         "reports.learning.load_learned",
         lambda: {"ml_bias_scale": 0.9, "scenario_band_scale": 1.1},
     )
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 0.9, "driver_trust": {"RSI超买": 0.8}},
+    )
 
     path = save_report_summary(demo_report())
     data = json.loads(path.read_text(encoding="utf-8"))
-    assert data["learned_scales"] == {"ml_bias_scale": 0.9, "scenario_band_scale": 1.1}
+    assert data["learned_scales"] == {
+        "ml_bias_scale": 0.9,
+        "scenario_band_scale": 1.1,
+        "hedge_conviction": 0.9,
+        "driver_trust": {"RSI超买": 0.8},
+    }
 
     del data["learned_scales"]  # 模拟旧格式
     s = ReportSummary(**data)
     assert s.learned_scales == {}
+
+
+# ── 近期记忆：套保持信 / 驱动因子信任 ─────────────────────────────────────────
+
+def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
+                band_min=0.0, band_max=9999.0, drivers=None, direction="横盘",
+                scenarios=None, ml_target=None):
+    data = {
+        "report_date": report_date,
+        "forecast_week_start": report_date,
+        "forecast_week_end": report_date,
+        "current_price": price,
+        "change_1d_pct": 0.0,
+        "change_30d_pct": 0.0,
+        "rsi_14": 50.0,
+        "ml_signal": ml_signal,
+        "ml_confidence": 0.5,
+        "ml_price_target_30d": ml_target,
+        "hedge_ratio": hedge_ratio,
+        "hedge_signal": "TIGHT" if hedge_ratio >= 0.70 else "MEDIUM_HEDGE",
+        "dominant_scenario_direction": direction,
+        "dominant_scenario_prob": 0.5,
+        "dominant_scenario_min": band_min,
+        "dominant_scenario_max": band_max,
+        "outlook": "测试",
+        "drivers": drivers or [],
+    }
+    if scenarios is not None:
+        data["scenarios"] = scenarios
+    (dir_path / f"weekly_summary_{report_date}.json").write_text(
+        json.dumps(data, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None, hedge_for=None,
+                 direction_for=None):
+    """
+    moves: 每一对的价格方向，"up" 或 "down"（幅度 2%，超过 ±1% 判定线）。
+    最后一期没有下一跳，只用来给倒数第二期当实际价。
+    drivers_for(pair_index, direction) → drivers list，缺省不写驱动。
+    区间奇偶交替，命中率 50%，不触发现有的区间系数。
+    """
+    price = 400.0
+    prices = [price]
+    for move in moves:
+        price = round(price * (1.02 if move == "up" else 0.98), 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < len(moves) else None
+        if nxt is None or i % 2 == 0:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt - 1.0, nxt + 1.0)
+        else:
+            bmin, bmax = nxt + 1000.0, nxt + 2000.0
+        if nxt is None:
+            bmin, bmax = 0.0, 9999.0
+        drivers = []
+        if drivers_for is not None and i < len(moves):
+            drivers = drivers_for(i, moves[i])
+        ratio = hedge_for(i) if hedge_for is not None and i < len(moves) else hedge_ratio
+        direction = "横盘"
+        if direction_for is not None and i < len(moves):
+            direction = direction_for(i, moves[i])
+        _write_case(
+            dir_path, f"2026-07-{i + 1:02d}", current,
+            hedge_ratio=ratio, band_min=bmin, band_max=bmax, drivers=drivers,
+            direction=direction,
+        )
+
+
+def test_recalibrate_failed_hedges_lower_conviction(learn_env):
+    """偏紧套保却连涨：近期套保有效率为 0，持信降到 0.9。两个旧系数不动。"""
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.80)
+    result = recalibrate()
+    assert result["memory"]["hedge_accuracy"] == 0.0
+    assert result["ml_accuracy"] == 1.0  # NEUTRAL 不进方向样本
+    assert result["band_hit_rate"] == 0.5
+    conviction = [c for c in result["changed"] if c["param"] == "hedge_conviction"]
+    assert len(conviction) == 1
+    assert conviction[0]["old"] == 1.0 and conviction[0]["new"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["memory"]["hedge_conviction"] == pytest.approx(0.9)
+
+
+def test_recalibrate_good_hedges_recover_conviction_and_clamp(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.80)
+    (learn_env / "learned_adjustments.json").write_text(
+        json.dumps({"ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_conviction": 0.9})
+    )
+    recovered = recalibrate()
+    assert recovered["memory"]["hedge_conviction"] == pytest.approx(0.945)
+
+    (learn_env / "learned_adjustments.json").write_text(
+        json.dumps({"ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_conviction": 0.62})
+    )
+    # 换一组成立不住的套保，把 0.62×0.9 钳到下限 0.6
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.80)
+    clamped = recalibrate()
+    assert clamped["memory"]["hedge_conviction"] == 0.6
+    again = recalibrate()
+    assert all(c["param"] != "hedge_conviction" for c in again["changed"])
+
+
+def test_recalibrate_recent_hedges_outweigh_old_misses(learn_env):
+    """等权只有 5/12 会继续降权；近期 5 对叫对，加权后越过 65%，持信往回走。"""
+    moves = ["up"] * 7 + ["down"] * 5
+    _seed_hedges(learn_env / "history", moves, hedge_ratio=0.80)
+    (learn_env / "learned_adjustments.json").write_text(
+        json.dumps({"ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_conviction": 0.9})
+    )
+    result = recalibrate()
+    assert result["memory"]["hedge_accuracy"] > 0.65
+    assert result["memory"]["hedge_conviction"] == pytest.approx(0.945)
+    assert "向基准回归" in result["changed"][0]["reason"]
+
+
+def test_neutral_hedges_do_not_dilute_conviction(learn_env):
+    """停在 65% 的周不再算叫对。四次偏紧叫错就够降持信，即使另外四周中性。"""
+    def ratio(i):
+        return 0.80 if i < 4 else 0.65
+
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_for=ratio)
+    result = recalibrate()
+    assert result["memory"]["hedge_accuracy"] == 0.0
+    assert result["memory"]["hedge_conviction"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    (learn_env / "learned_adjustments.json").unlink()
+    # 只有两次表态：样本不够，持信不动
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8,
+        hedge_for=lambda i: 0.80 if i < 2 else 0.65,
+    )
+    short = recalibrate()
+    assert short["memory"]["hedge_accuracy"] is None
+    assert short["changed"] == []
+    assert short["memory"]["hedge_conviction"] == 1.0
+
+
+def test_recalibrate_driver_trust_shrinks_and_fades(learn_env):
+    """看跌因子连着被涨市打脸就降权；从报告里消失之后，信任再慢慢回到 1。"""
+    def failing(i, direction):
+        if i >= 4:
+            return []
+        return [{"param_name": "RSI超买", "signal": "看跌", "weight": "高", "category": "技术"}]
+
+    _seed_hedges(learn_env / "history", ["up"] * 4 + ["down"] * 4, hedge_ratio=0.65, drivers_for=failing)
+    first = recalibrate()
+    assert first["memory"]["driver_trust"]["RSI超买"] == pytest.approx(0.9)
+    assert first["memory"]["hedge_conviction"] == 1.0
+    assert any(c["param"] == "driver_trust:RSI超买" for c in first["changed"])
+
+    # 下一轮历史里这个因子不再出现：0.9×1.05=0.945，而不是继续停在原地
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.65)
+    faded = recalibrate()
+    assert faded["memory"]["driver_trust"]["RSI超买"] == pytest.approx(0.945)
+    assert any("未再出现" in c["reason"] for c in faded["changed"])
+
+
+def test_recalibrate_recent_driver_hits_restore_trust(learn_env):
+    def named(i, direction):
+        signal = "看跌"
+        return [{"param_name": "均线空头排列", "signal": signal, "weight": "高", "category": "技术"}]
+
+    _seed_hedges(
+        learn_env / "history",
+        ["up"] * 7 + ["down"] * 5,
+        hedge_ratio=0.65,
+        drivers_for=named,
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "hedge_conviction": 1.0,
+        "driver_trust": {"均线空头排列": 0.8},
+    }))
+    result = recalibrate()
+    assert result["memory"]["driver_trust"]["均线空头排列"] == pytest.approx(0.84)
+
+
+def test_recalibrate_keeps_trust_until_enough_samples(learn_env):
+    def rare(i, direction):
+        if i >= 2:
+            return []
+        return [{"param_name": "La Nina", "signal": "看涨", "weight": "高", "category": "气候"}]
+
+    # 两次应验也不够 4 个样本：既不降也不因「没出现」而淡忘
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.65, drivers_for=rare)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "driver_trust": {"La Nina": 0.8},
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["driver_trust"]["La Nina"] == pytest.approx(0.8)
+
+
+def test_load_review_memory_clamps_and_drops_garbage(learn_env):
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 0.8,
+        "hedge_conviction": 9,
+        "driver_trust": {"A": 0.1, "B": "nope", "": 0.5, "C": 1.2, "D": 0.8},
+        "direction_trust": {"up": 0.1, "down": 1.0, "flat": 0.7, "nope": 0.5},
+        "band_center_shift": 9,
+        "flat_trust": 0.1,
+        "prob_sharpness": 0.1,
+        "hedge_lean": 9,
+        "fan_width": 9,
+        "ml_target_shift": 9,
+    }), encoding="utf-8")
+    assert load_learned()["ml_bias_scale"] == 0.8
+    memory = load_review_memory()
+    assert memory["hedge_conviction"] == 1.0
+    assert memory["driver_trust"] == {"A": 0.5, "D": 0.8}
+    assert memory["direction_trust"] == {"up": 0.6}
+    assert memory["band_center_shift"] == 0.03
+    assert memory["flat_trust"] == 0.6
+    assert memory["prob_sharpness"] == 0.6
+    assert memory["hedge_lean"] == 0.04
+    assert memory["fan_width"] == 1.25
+    assert memory["ml_target_shift"] == 0.03
+
+
+def test_apply_review_memory_changes_next_report():
+    """信任和持信要进下一期：权重降档、RSI 贡献变小、套保比率靠回 65%。"""
+    from datetime import datetime
+
+    from arbor.domain.types.enums import Domain, EventType
+    from arbor.domain.types.event import CoffeeEvent
+    from reports.learning import (
+        apply_driver_weights,
+        apply_hedge_conviction,
+        ml_trust_multiplier,
+        scale_trusted_events,
+    )
+    from reports.models import HedgeAdvice, ResistParam, SupportParam
+
+    bullish = [SupportParam("技术", "5日动量强势", "1", "看涨", "高", "涨")]
+    bearish = [ResistParam("技术", "RSI超买", "70", "看跌", "高", "热")]
+    apply_driver_weights(bullish, bearish, {"RSI超买": 0.8, "5日动量强势": 0.95})
+    assert bearish[0].weight == "中"
+    assert bullish[0].weight == "高"  # 0.95 还在原档
+
+    fresh = [ResistParam("技术", "RSI超买", "70", "看跌", "高", "热")]
+    apply_driver_weights([], fresh, {"RSI超买": 0.9})
+    assert fresh[0].weight == "中"  # 第一次降权就改报告里的档
+
+    apply_driver_weights(bearish, [], {"RSI超买": 0.7})
+    assert bearish[0].weight == "弱"
+
+    assert ml_trust_multiplier("ensemble", "BEARISH", {"ensemble 看跌信号": 0.8}) == pytest.approx(0.8)
+    assert ml_trust_multiplier("ensemble", "NEUTRAL", {"ensemble 中性信号": 0.5}) == 1.0
+    assert ml_trust_multiplier("ensemble", "BULLISH", {}) == 1.0
+
+    events = [
+        CoffeeEvent(EventType.RSI_EXTREME, Domain.FINANCE, datetime(2026, 7, 1), 3, -0.10, "超买", "pipeline"),
+        CoffeeEvent(EventType.RSI_EXTREME, Domain.FINANCE, datetime(2026, 7, 1), 3, 0.10, "超卖", "pipeline"),
+    ]
+    scale_trusted_events(events, {"RSI超买": 0.5})
+    assert events[0].value == pytest.approx(-0.05)
+    assert events[1].value == pytest.approx(0.10)
+
+    hedge = HedgeAdvice(ratio=0.80, signal="套保偏紧", narrative="[套保偏紧] 主导因子: technical | 合约: KC=F")
+    apply_hedge_conviction(hedge, 0.6)
+    assert hedge.ratio == pytest.approx(0.74)
+    assert hedge.signal == "维持中性"
+    assert hedge.narrative.startswith("[维持中性]")
+    untouched = HedgeAdvice(ratio=0.80, signal="套保偏紧", narrative="[套保偏紧] x")
+    apply_hedge_conviction(untouched, 1.0)
+    assert untouched.ratio == 0.80 and untouched.signal == "套保偏紧"
+
+
+def test_untrusted_driver_gives_its_scenario_to_flat():
+    """看跌却不可靠时，下跌概率让给横盘。RSI 不重复计算，空信任不改数字。"""
+    from reports.learning import apply_driver_scenario_tilt, sync_dominant_scenario_event
+    from reports.models import ResistParam, Scenario, SupportParam
+    from reports.report_events import scenario_event
+
+    def pack(up, flat, down):
+        return [
+            Scenario("涨", "上涨", 400, 420, up, []),
+            Scenario("盘", "横盘", 390, 410, flat, []),
+            Scenario("跌", "下跌", 370, 400, down, []),
+        ]
+
+    same = pack(0.25, 0.40, 0.35)
+    before = [(s.direction, s.probability) for s in same]
+    assert apply_driver_scenario_tilt(same, [], [], {}) is False
+    assert [(s.direction, s.probability) for s in same] == before
+
+    bearish = [ResistParam("技术", "均线空头排列", "MA", "看跌", "高", "空")]
+    moved = pack(0.25, 0.40, 0.35)
+    assert apply_driver_scenario_tilt(moved, [], bearish, {"均线空头排列": 0.5}) is True
+    by = {s.direction: s.probability for s in moved}
+    assert by["下跌"] == pytest.approx(0.31, abs=0.001)
+    assert by["横盘"] == pytest.approx(0.44, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.25, abs=0.001)
+    assert sum(by.values()) == pytest.approx(1.0)
+
+    rsi = [ResistParam("技术", "RSI超买", "70", "看跌", "高", "热")]
+    untouched = pack(0.25, 0.40, 0.35)
+    assert apply_driver_scenario_tilt(untouched, [], rsi, {"RSI超买": 0.5}) is False
+
+    crowded = [ResistParam("技术", f"因子{i}", "x", "看跌", "高", "x") for i in range(6)]
+    capped = pack(0.25, 0.40, 0.35)
+    apply_driver_scenario_tilt(capped, [], crowded, {f"因子{i}": 0.5 for i in range(6)})
+    assert {s.direction: s.probability for s in capped}["下跌"] == pytest.approx(0.29, abs=0.001)
+
+    events = [scenario_event(moved[2])]
+    sync_dominant_scenario_event(events, moved)
+    assert "横盘" in events[0].narrative
+
+
+def test_untrusted_driver_nudges_hedge_against_its_signal():
+    """均线、气候这类没有单独数值通道的因子，不可靠时直接改下一期比率。"""
+    from reports.learning import apply_driver_hedge_nudge, driver_hedge_nudge, scale_analyst_event
+    from reports.models import HedgeAdvice, ResistParam, SupportParam
+    from datetime import datetime
+    from arbor.domain.types.enums import Domain, EventType
+    from arbor.domain.types.event import CoffeeEvent
+
+    bearish = [
+        ResistParam("技术", "均线空头排列", "MA", "看跌", "高", "空"),
+        ResistParam("技术", "RSI超买", "70", "看跌", "高", "热"),
+        ResistParam("ML模型", "ensemble 看跌信号", "0.6", "看跌", "高", "模型"),
+    ]
+    bullish = [SupportParam("气候", "La Nina", "ONI", "看涨", "高", "旱")]
+    trust = {"均线空头排列": 0.8, "RSI超买": 0.5, "ensemble 看跌信号": 0.5, "La Nina": 0.9}
+    # 只有均线 −2 个点、La Nina +1 个点；RSI 和 ML 不重复计算
+    assert driver_hedge_nudge(bullish, bearish, trust) == pytest.approx(-0.01)
+
+    hedge = HedgeAdvice(ratio=0.70, signal="维持中性", narrative="[维持中性] 主导因子: technical")
+    apply_driver_hedge_nudge(hedge, [], [bearish[0]], {"均线空头排列": 0.8})
+    assert hedge.ratio == pytest.approx(0.68)
+    assert hedge.signal == "维持中性"
+
+    capped = [ResistParam("技术", f"因子{i}", "x", "看跌", "高", "x") for i in range(6)]
+    assert driver_hedge_nudge([], capped, {f"因子{i}": 0.5 for i in range(6)}) == pytest.approx(-0.06)
+
+    same = HedgeAdvice(ratio=0.70, signal="维持中性", narrative="[维持中性] x")
+    apply_driver_hedge_nudge(same, bullish, bearish, {})
+    assert same.ratio == 0.70
+
+    event = CoffeeEvent(
+        EventType.LLM_COMMENTARY, Domain.FINANCE, datetime(2026, 7, 1), 3, 0.08, "看跌", "llm",
+    )
+    scale_analyst_event(event, {"AI 分析师点评": 0.5})
+    assert event.value == pytest.approx(0.04)
+    untouched = CoffeeEvent(
+        EventType.LLM_COMMENTARY, Domain.FINANCE, datetime(2026, 7, 1), 3, 0.08, "看跌", "llm",
+    )
+    scale_analyst_event(untouched, {})
+    assert untouched.value == pytest.approx(0.08)
+
+
+def test_track_record_shows_review_memory():
+    from web.track_record import build_track_record_html
+    record = {"total": 1, "hit_rate": 1.0, "direction_rate": 1.0, "hedge_rate": 0.4,
+              "weeks": [{"report_date": "2026-07-01", "badge": "偏离", "direction": "横盘",
+                         "predicted_min": 390.0, "predicted_max": 410.0,
+                         "actual_price": 430.0, "price_change_pct": 2.0}],
+              "pending": None, "mean_brier": None, "bss": None, "calibration": [], "resolution": None}
+    learning = {
+        "current": {"ml_bias_scale": 0.9, "scenario_band_scale": 1.0},
+        "n_samples": 8, "min_samples": 8, "ml_accuracy": 0.4, "band_hit_rate": 0.5,
+        "changelog": [{
+            "ts": "2026-08-01T00:00:00", "param": "band_center_shift",
+            "old": 0.0, "new": -0.005, "reason": "情景中心偏高",
+        }],
+        "memory": {
+            "hedge_conviction": 0.9,
+            "hedge_accuracy": 0.38,
+            "driver_trust": {"RSI超买": 0.81},
+            "direction_trust": {"up": 0.9},
+            "band_center_shift": -0.005,
+            "flat_trust": 0.9,
+            "prob_sharpness": 0.9,
+            "hedge_lean": -0.01,
+            "fan_width": 1.05,
+            "ml_target_shift": -0.005,
+        },
+    }
+    stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
+    html = build_track_record_html(record, stats, learning)
+    assert "套保持信" in html and "hedge_conviction" in html and "0.90" in html
+    assert "有方向的套保有效率 38%" in html
+    assert "停在中性的周不给套保持信加分" in html
+    assert "情景概率让给横盘" in html
+    assert "按方向信任让给横盘" in html
+    assert "方向信任" in html and "上涨 0.90" in html
+    assert "区间中心" in html and "下移 0.50%" in html
+    assert "每步 0.5 个百分点" in html
+    assert "0.00 → -0.005" in html
+    assert "横盘信任" in html and ">0.90<" in html
+    assert "分给上涨和下跌" in html
+    assert "概率锐度" in html
+    assert "往三个情景均匀靠" in html
+    assert "套保偏向" in html and "少套" in html and ">1.00<" in html
+    assert "再挪 1 个百分点" in html
+    assert "扇面宽度" in html and ">1.05<" in html
+    assert "整段扇面加宽" in html
+    assert "ML 目标" in html and "目标同向挪动" in html
+    assert "压低的驱动" in html and "RSI超买 0.81" in html
+    assert "<th>信任</th>" in html and ">0.81<" in html
+
+
+def test_recalibrate_wrong_up_calls_lower_direction_trust(learn_env):
+    """连续把上涨说成主导情景、价格却下跌：上涨信任降到 0.9。套保停在中性，旧系数不动。"""
+    _seed_hedges(
+        learn_env / "history", ["down"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    result = recalibrate()
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.9)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "direction_trust:up"]
+    assert len(changed) == 1
+    assert "概率让给横盘" in changed[0]["reason"]
+    saved = json.loads((learn_env / "learned_adjustments.json").read_text())
+    assert saved["direction_trust"]["up"] == pytest.approx(0.9)
+
+
+def test_recalibrate_right_up_calls_recover_direction_trust(learn_env):
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.9},
+    }))
+    result = recalibrate()
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.945)
+    assert result["memory"]["hedge_conviction"] == 1.0
+
+
+def test_recalibrate_few_direction_calls_do_not_move_trust(learn_env):
+    """主张不足 4 次：不降，也不因样本少而淡忘。"""
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨" if i < 3 else "横盘",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.8)
+
+
+def test_recalibrate_absent_direction_fades_and_survives_other_writes(learn_env):
+    """本期全是横盘时，旧的上涨信任向 1.0 淡。另一次只改 ML 时，方向信任仍写在文件里。"""
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    faded = recalibrate()
+    assert faded["memory"]["direction_trust"]["up"] == pytest.approx(0.84)
+    assert faded["memory"]["hedge_conviction"] == 1.0
+    assert faded["current"]["ml_bias_scale"] == 1.0
+
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    _seed_hedges(
+        learn_env / "history", ["down"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨" if i < 3 else "横盘",
+    )
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["ml_signal"] = "BULLISH"
+        path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    moved = recalibrate()
+    assert moved["current"]["ml_bias_scale"] == pytest.approx(0.9)
+    assert moved["memory"]["direction_trust"]["up"] == pytest.approx(0.8)
+    saved = json.loads((learn_env / "learned_adjustments.json").read_text())
+    assert saved["direction_trust"]["up"] == pytest.approx(0.8)
+    assert saved["ml_bias_scale"] == pytest.approx(0.9)
+
+
+def test_wrong_direction_gives_its_probability_to_flat():
+    """上涨信任 0.9 时，40% 的上涨变成 36%，让出的 4 个点给横盘。没有横盘则不改。"""
+    from reports.learning import apply_direction_trust
+    from reports.models import Scenario
+
+    def pack(up, flat, down):
+        return [
+            Scenario("涨", "上涨", 400, 420, up, []),
+            Scenario("盘", "横盘", 390, 410, flat, []),
+            Scenario("跌", "下跌", 370, 400, down, []),
+        ]
+
+    moved = pack(0.40, 0.35, 0.25)
+    assert apply_direction_trust(moved, {"up": 0.9}) is True
+    by = {s.direction: s.probability for s in moved}
+    assert by["上涨"] == pytest.approx(0.36, abs=0.001)
+    assert by["横盘"] == pytest.approx(0.39, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.25, abs=0.001)
+
+    same = pack(0.40, 0.35, 0.25)
+    before = [(s.direction, s.probability) for s in same]
+    assert apply_direction_trust(same, {}) is False
+    assert apply_direction_trust(same, {"up": 1.0}) is False
+    assert [(s.direction, s.probability) for s in same] == before
+
+    no_flat = [
+        Scenario("涨", "上涨", 400, 420, 0.60, []),
+        Scenario("跌", "下跌", 370, 400, 0.40, []),
+    ]
+    assert apply_direction_trust(no_flat, {"up": 0.5}) is False
+    assert [s.probability for s in no_flat] == [0.60, 0.40]
+
+
+def _seed_center(dir_path, *, high: bool):
+    """
+    8 对。偶数对的区间中心贴着现价：high 时中心在现价上方 4% 且罩不住下一周；
+    否则中心落在下一周价格上。奇数对用远离现价的宽区间，只负责把命中率维持在 50%。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None:
+            bmin, bmax = (0.0, 9999.0)
+        elif i % 2 == 1:
+            # high 时用罩住一切的宽区间凑满 50% 命中；否则用远离现价的脱靶区间。
+            bmin, bmax = (0.0, 9999.0) if high else (nxt + 1000.0, nxt + 2000.0)
+        elif high:
+            mid = current * 1.04
+            half = current * 0.01
+            bmin, bmax = mid - half, mid + half
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        _write_case(
+            dir_path, f"2026-08-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax,
+        )
+
+
+def test_recalibrate_high_center_steps_band_down(learn_env):
+    """区间中心连续停在现价上方：下一期偏移走低 0.5 个百分点。宽度和套保不动。"""
+    _seed_center(learn_env / "history", high=True)
+    result = recalibrate()
+    assert result["memory"]["band_center_shift"] == -0.005
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "band_center_shift"]
+    assert len(changed) == 1
+    assert changed[0]["old"] == 0.0 and changed[0]["new"] == -0.005
+    assert "区间下移" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.03,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["band_center_shift"] == -0.03
+    assert all(c["param"] != "band_center_shift" for c in floored["changed"])
+
+
+def test_recalibrate_centered_bands_walk_shift_back_toward_zero(learn_env):
+    _seed_center(learn_env / "history", high=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["band_center_shift"] == -0.015
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["band_center_shift"]
+
+
+def test_recalibrate_few_anchored_bands_do_not_move_center(learn_env):
+    _seed_center(learn_env / "history", high=True)
+    # 只留 3 个贴近现价的区间。2026-08-07 改成宽区间后，中心样本不够 4 对。
+    path = learn_env / "history" / "weekly_summary_2026-08-07.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["dominant_scenario_min"] = 0.0
+    data["dominant_scenario_max"] = 9999.0
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "band_center_shift": -0.01,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["band_center_shift"] == -0.01
+
+
+def test_band_center_shift_clamps_and_moves_prices():
+    """偏移 -1% 时，400 附近的区间整体下移 4。0 和倒挂区间不改。"""
+    from reports.learning import apply_band_center_shift
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 420, 0.25, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.35, []),
+    ]
+    assert apply_band_center_shift(bands, -0.01, 400) is True
+    assert [s.price_min for s in bands] == [396, 386, 366]
+    assert [s.price_max for s in bands] == [416, 406, 396]
+    assert [s.probability for s in bands] == [0.25, 0.40, 0.35]
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.4, [])]
+    assert apply_band_center_shift(same, 0.0, 400) is False
+    assert same[0].price_min == 390 and same[0].price_max == 410
+
+    tiny = [Scenario("盘", "横盘", 10, 10.2, 1.0, [])]
+    assert apply_band_center_shift(tiny, -0.03, 400) is False
+    assert tiny[0].price_min == 10 and tiny[0].price_max == 10.2
+
+
+def _seed_flat_calls(dir_path, *, wrong: bool):
+    """
+    8 对横盘主张。偶数对的区间罩住现价、半宽约 2%，算一次横盘。
+    wrong 时价格每步跌 2%，中心落在下一周价格上，所以区间中心误差是 0。
+    奇数对用远离现价的脱靶区间，把区间命中率维持在 50%。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * (0.98 if wrong else 1.004), 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None:
+            bmin, bmax = 0.0, 9999.0
+        elif i % 2 == 1:
+            bmin, bmax = nxt + 1000.0, nxt + 2000.0
+        elif wrong:
+            half = abs(current - nxt)
+            bmin, bmax = nxt - half, nxt + half
+        else:
+            half = current * 0.02
+            bmin, bmax = current - half, current + half
+        _write_case(
+            dir_path, f"2026-09-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, direction="横盘",
+        )
+
+
+def test_recalibrate_wrong_flat_calls_lower_flat_trust(learn_env):
+    """横盘区间罩住现价、价格却连跌：横盘信任降到 0.9。区间中心和套保不动。"""
+    _seed_flat_calls(learn_env / "history", wrong=True)
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.9)
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "flat_trust"]
+    assert len(changed) == 1
+    assert "分给涨跌" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["flat_trust"] == 0.6
+    assert all(c["param"] != "flat_trust" for c in floored["changed"])
+
+
+def test_recalibrate_right_flat_calls_recover_trust(learn_env):
+    _seed_flat_calls(learn_env / "history", wrong=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.9,
+    }))
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.945)
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["flat_trust"]
+
+
+def test_recalibrate_few_flat_calls_do_not_move_trust(learn_env):
+    _seed_flat_calls(learn_env / "history", wrong=True)
+    path = learn_env / "history" / "weekly_summary_2026-09-07.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data["dominant_scenario_min"] = data["current_price"] + 1000.0
+    data["dominant_scenario_max"] = data["current_price"] + 2000.0
+    path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.8,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["flat_trust"] == pytest.approx(0.8)
+
+
+def test_recalibrate_absent_flat_calls_fade_trust(learn_env):
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "flat_trust": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["flat_trust"] == pytest.approx(0.84)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+
+
+def test_wrong_flat_gives_its_probability_to_the_two_sides():
+    """横盘信任 0.9 时，40% 的横盘变成 36%，涨跌各得 2 个点。没有涨跌情景则不改。"""
+    from reports.learning import apply_flat_trust
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 420, 0.30, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.30, []),
+    ]
+    assert apply_flat_trust(bands, 0.9) is True
+    by = {s.direction: s.probability for s in bands}
+    assert by["横盘"] == pytest.approx(0.36, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.32, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.32, abs=0.001)
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.40, [])]
+    assert apply_flat_trust(same, 0.5) is False
+    assert same[0].probability == 0.40
+    untouched = [
+        Scenario("涨", "上涨", 400, 420, 0.30, []),
+        Scenario("盘", "横盘", 390, 410, 0.40, []),
+        Scenario("跌", "下跌", 370, 400, 0.30, []),
+    ]
+    assert apply_flat_trust(untouched, 1.0) is False
+    assert [s.probability for s in untouched] == [0.30, 0.40, 0.30]
+
+
+def _seed_sharp(dir_path, *, bad: bool, limit=None):
+    """
+    价格每步跌 2%。偶数对用罩住一切的宽区间（命中，但半宽太大，不算横盘主张），
+    奇数对脱靶。情景概率要么把 80% 押在横盘上（bad），要么押在下跌上。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    if bad:
+        snap = [
+            {"direction": "横盘", "probability": 0.80, "price_min": 1, "price_max": 2},
+            {"direction": "上涨", "probability": 0.10, "price_min": 1, "price_max": 2},
+            {"direction": "下跌", "probability": 0.10, "price_min": 1, "price_max": 2},
+        ]
+    else:
+        snap = [
+            {"direction": "下跌", "probability": 0.80, "price_min": 1, "price_max": 2},
+            {"direction": "横盘", "probability": 0.10, "price_min": 1, "price_max": 2},
+            {"direction": "上涨", "probability": 0.10, "price_min": 1, "price_max": 2},
+        ]
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = 0.0, 9999.0
+        _write_case(
+            dir_path, f"2026-10-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax,
+            scenarios=snap if nxt is not None and (limit is None or i < limit) else None,
+        )
+
+
+def test_recalibrate_overconfident_probs_lower_sharpness(learn_env):
+    """八周都把 80% 押在横盘上、价格却下跌：锐度降到 0.9。区间和套保不动。"""
+    _seed_sharp(learn_env / "history", bad=True)
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.9)
+    assert result["memory"]["flat_trust"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    changed = [c for c in result["changed"] if c["param"] == "prob_sharpness"]
+    assert len(changed) == 1
+    assert "往均匀靠" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["prob_sharpness"] == 0.6
+    assert all(c["param"] != "prob_sharpness" for c in floored["changed"])
+
+
+def test_recalibrate_sharp_and_right_probs_recover(learn_env):
+    _seed_sharp(learn_env / "history", bad=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.9,
+    }))
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.945)
+    assert [c["param"] for c in result["changed"]] == ["prob_sharpness"]
+
+
+def test_recalibrate_few_probability_snapshots_hold_sharpness(learn_env):
+    _seed_sharp(learn_env / "history", bad=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.8,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.8)
+
+
+def test_recalibrate_no_probability_snapshots_fade_sharpness(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+
+
+def test_low_sharpness_pulls_probabilities_toward_uniform():
+    from reports.learning import apply_prob_sharpness
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("盘", "横盘", 390, 410, 0.80, []),
+        Scenario("涨", "上涨", 400, 420, 0.10, []),
+        Scenario("跌", "下跌", 370, 400, 0.10, []),
+    ]
+    assert apply_prob_sharpness(bands, 0.6) is True
+    by = {s.direction: s.probability for s in bands}
+    assert by["横盘"] == pytest.approx(0.6134, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.1933, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.1933, abs=0.001)
+    assert sum(by.values()) == pytest.approx(1.0, abs=0.001)
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.80, [])]
+    assert apply_prob_sharpness(same, 1.0) is False
+    assert same[0].probability == 0.80
+
+
+def test_recalibrate_tight_misses_lean_hedge_down(learn_env):
+    """偏紧套保却连涨：下一期少套 1 个百分点。持信同时下降，旧系数不动。"""
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.80)
+    result = recalibrate()
+    assert result["memory"]["hedge_lean"] == pytest.approx(-0.01)
+    assert result["memory"]["hedge_conviction"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    changed = [c for c in result["changed"] if c["param"] == "hedge_lean"]
+    assert len(changed) == 1
+    assert changed[0]["old"] == 0.0 and changed[0]["new"] == pytest.approx(-0.01)
+    assert "少套" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_lean": -0.04,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["hedge_lean"] == -0.04
+    assert all(c["param"] != "hedge_lean" for c in floored["changed"])
+
+
+def test_recalibrate_loose_misses_lean_hedge_up(learn_env):
+    """偏松套保却连跌：下一期多套 1 个百分点。"""
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.40)
+    result = recalibrate()
+    assert result["memory"]["hedge_lean"] == pytest.approx(0.01)
+    changed = [c for c in result["changed"] if c["param"] == "hedge_lean"]
+    assert len(changed) == 1
+    assert "多套" in changed[0]["reason"]
+
+
+def test_recalibrate_correct_hedges_walk_lean_toward_zero(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.80)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "hedge_conviction": 1.0,
+        "hedge_lean": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["hedge_lean"] == pytest.approx(-0.01)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["hedge_lean"]
+
+
+def test_recalibrate_few_sided_moves_hold_lean(learn_env):
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8,
+        hedge_for=lambda i: 0.80 if i < 3 else 0.65,
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_lean": -0.02,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["hedge_lean"] == pytest.approx(-0.02)
+
+
+def test_recalibrate_flat_price_does_not_count_as_hedge_bias(learn_env):
+    """价格只走 0.4% 时，偏紧不算套多了；已有偏向往 0 退，而不是再少套。"""
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 1.004, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        _write_case(
+            learn_env / "history", f"2026-11-{i + 1:02d}", current,
+            hedge_ratio=0.80, band_min=bmin, band_max=bmax,
+        )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_lean": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["hedge_lean"] == pytest.approx(-0.01)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert "向中性回归" in next(c["reason"] for c in result["changed"] if c["param"] == "hedge_lean")
+
+
+def test_recalibrate_no_sided_hedges_fade_lean(learn_env):
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "hedge_lean": 0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["hedge_lean"] == pytest.approx(0.01)
+    assert result["memory"]["hedge_conviction"] == 1.0
+
+
+def test_hedge_lean_shifts_the_finished_ratio():
+    from reports.learning import apply_hedge_lean
+    from reports.models import HedgeAdvice
+
+    hedge = HedgeAdvice(ratio=0.80, signal="套保偏紧", narrative="[套保偏紧] x")
+    apply_hedge_lean(hedge, -0.02)
+    assert hedge.ratio == pytest.approx(0.78)
+
+    same = HedgeAdvice(ratio=0.80, signal="套保偏紧", narrative="[套保偏紧] x")
+    apply_hedge_lean(same, 0.0)
+    assert same.ratio == 0.80
+    apply_hedge_lean(same, 9)
+    assert same.ratio == pytest.approx(0.84)
+
+
+def _fan_ranges(current, nxt, *, miss: bool):
+    lo = (nxt + 2) if miss else (nxt - 4)
+    return [
+        {"direction": "下跌", "probability": 0.34, "price_min": lo, "price_max": lo + 8},
+        {"direction": "横盘", "probability": 0.33, "price_min": lo + 8, "price_max": lo + 16},
+        {"direction": "上涨", "probability": 0.33, "price_min": lo + 16, "price_max": lo + 24},
+    ]
+
+
+def _seed_fan(dir_path, *, miss: bool, limit=None):
+    """
+    价格每步跌 2%。主导区间奇偶交替，命中率 50%。
+    情景快照的三段区间要么全在下一周价格上方（miss），要么有一段罩住它。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        scenarios = None
+        if nxt is not None and (limit is None or i < limit):
+            scenarios = _fan_ranges(current, nxt, miss=miss)
+        _write_case(
+            dir_path, f"2026-12-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, scenarios=scenarios,
+        )
+
+
+def test_recalibrate_fan_misses_widen_the_next_ranges(learn_env):
+    """八段区间都没罩住实际价格：扇面宽度升到 1.05。旧的区间系数不动。"""
+    _seed_fan(learn_env / "history", miss=True)
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.05)
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "fan_width"]
+    assert len(changed) == 1
+    assert "扇面加宽" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.25,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["fan_width"] == 1.25
+    assert all(c["param"] != "fan_width" for c in floored["changed"])
+
+
+def test_recalibrate_covered_fan_shrinks_width_toward_one(learn_env):
+    _seed_fan(learn_env / "history", miss=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.045)
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["fan_width"]
+
+
+def test_recalibrate_few_fans_hold_width(learn_env):
+    _seed_fan(learn_env / "history", miss=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["fan_width"] == pytest.approx(1.10)
+
+
+def test_recalibrate_no_fan_snapshots_shrink_width(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.045)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+
+
+def test_fan_width_widens_ranges_around_the_same_center():
+    from reports.learning import apply_fan_width
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 440, 0.33, []),
+        Scenario("盘", "横盘", 380, 420, 0.34, []),
+        Scenario("跌", "下跌", 360, 400, 0.33, []),
+    ]
+    assert apply_fan_width(bands, 1.05) is True
+    assert [(s.price_min, s.price_max) for s in bands] == [
+        (399, 441), (379, 421), (359, 401),
+    ]
+    assert [s.probability for s in bands] == [0.33, 0.34, 0.33]
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.34, [])]
+    assert apply_fan_width(same, 1.0) is False
+    assert same[0].price_min == 390 and same[0].price_max == 410
+    assert apply_fan_width(same, 0.5) is False
+    assert same[0].price_min == 390
+
+
+def _seed_ml_target(dir_path, *, high: bool, limit=None):
+    """
+    价格每步跌 2%。ML 信号中性，套保停在 65%。
+    主导区间奇偶交替，命中率 50%，中心误差为 0。
+    high 时目标价 = 当时现价 × 1.04（下一周价格在目标下方约 6%）。
+    否则目标价等于下一周价格（误差 0）。
+    limit 只给前几期写目标价。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        target = None
+        if nxt is not None and (limit is None or i < limit):
+            target = round(current * 1.04, 2) if high else nxt
+        _write_case(
+            dir_path, f"2026-12-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, ml_target=target,
+        )
+
+
+def test_recalibrate_high_ml_targets_shift_down(learn_env):
+    """目标连续停在下一周价格上方：偏移降到 -0.005。旧系数和其他记忆不动。"""
+    _seed_ml_target(learn_env / "history", high=True)
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.005)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["memory"]["fan_width"] == 1.0
+    assert result["memory"]["flat_trust"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+    assert "目标下移" in result["changed"][0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.03,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["ml_target_shift"] == -0.03
+    assert all(c["param"] != "ml_target_shift" for c in floored["changed"])
+
+
+def test_recalibrate_on_target_walks_shift_toward_zero(learn_env):
+    _seed_ml_target(learn_env / "history", high=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.015)
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+    assert "向零回归" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_few_ml_targets_hold_shift(learn_env):
+    _seed_ml_target(learn_env / "history", high=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.01,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.01)
+
+
+def test_recalibrate_no_ml_targets_fade_shift(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_target_shift": -0.02,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_target_shift"] == pytest.approx(-0.015)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_target_shift"]
+
+
+def test_ml_target_shift_moves_the_published_target():
+    from reports.learning import apply_ml_target_shift
+    from reports.models import MLSnapshot
+
+    ml = MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+    assert apply_ml_target_shift(ml, -0.02, 300.0) is True
+    assert ml.price_target_30d == 264.00
+
+    same = MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+    assert apply_ml_target_shift(same, 0.0, 300.0) is False
+    assert same.price_target_30d == 270.0
+
+    missing = MLSnapshot(signal="NEUTRAL", confidence=0.5, bias=0.0, price_target_30d=None)
+    assert apply_ml_target_shift(missing, -0.02, 300.0) is False
+    assert missing.price_target_30d is None

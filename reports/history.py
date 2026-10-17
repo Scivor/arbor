@@ -72,8 +72,51 @@ def summary_path(report_date: date) -> Path:
 def _current_learned_scales() -> dict:
     """读取当期生效的自校准系数快照（惰性导入避免循环依赖；失败回退空 dict）。"""
     try:
-        from reports.learning import load_learned
-        return load_learned()
+        from reports.learning import load_learned, load_review_memory
+        scales = load_learned()
+        memory = load_review_memory()
+        scales["hedge_conviction"] = memory["hedge_conviction"]
+        if memory.get("driver_trust"):
+            scales["driver_trust"] = memory["driver_trust"]
+        if memory.get("direction_trust"):
+            scales["direction_trust"] = memory["direction_trust"]
+        try:
+            shift = float(memory.get("band_center_shift") or 0.0)
+        except (TypeError, ValueError):
+            shift = 0.0
+        if abs(shift) >= 0.0025:
+            scales["band_center_shift"] = shift
+        try:
+            flat_trust = float(memory.get("flat_trust", 1.0))
+        except (TypeError, ValueError):
+            flat_trust = 1.0
+        if flat_trust < 0.999:
+            scales["flat_trust"] = flat_trust
+        try:
+            sharpness = float(memory.get("prob_sharpness", 1.0))
+        except (TypeError, ValueError):
+            sharpness = 1.0
+        if sharpness < 0.999:
+            scales["prob_sharpness"] = sharpness
+        try:
+            lean = float(memory.get("hedge_lean") or 0.0)
+        except (TypeError, ValueError):
+            lean = 0.0
+        if abs(lean) >= 0.005:
+            scales["hedge_lean"] = lean
+        try:
+            fan_width = float(memory.get("fan_width", 1.0))
+        except (TypeError, ValueError):
+            fan_width = 1.0
+        if fan_width > 1.001:
+            scales["fan_width"] = fan_width
+        try:
+            target_shift = float(memory.get("ml_target_shift") or 0.0)
+        except (TypeError, ValueError):
+            target_shift = 0.0
+        if abs(target_shift) >= 0.0025:
+            scales["ml_target_shift"] = target_shift
+        return scales
     except Exception:
         return {}
 
@@ -198,6 +241,15 @@ class PredictionReview:
     review_badge: str  # '命中' | '部分命中' | '偏离'
 
 
+def hedge_took_a_side(ratio: float) -> bool:
+    """比率落到 50%–70% 之外，才算这次套保做了方向主张。"""
+    try:
+        ratio = float(ratio)
+    except (TypeError, ValueError):
+        return False
+    return ratio >= 0.70 or ratio <= 0.50
+
+
 def compute_prediction_review(
     last: ReportSummary,
     current_price: float,
@@ -226,6 +278,7 @@ def compute_prediction_review(
     # Hedge advice correctness
     # If hedge was tight (high ratio) and price went down → correct
     # If hedge was loose (low ratio) and price went up → correct
+    # 中性仓位（hedge_took_a_side 为假）仍算安全，战绩页的套保有效率不变。
     hedge_tight = last.hedge_ratio >= 0.70
     hedge_loose = last.hedge_ratio <= 0.50
     if hedge_tight and direction_actual == "down":

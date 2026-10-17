@@ -162,3 +162,229 @@ def test_landed_cost_refreshed_with_final_hedge_ratio(synthetic_pipeline):
     assert report.china_import.landed.total_cost_cny_jin == pytest.approx(
         expected.total_cost_cny_jin
     )
+
+
+def test_review_memory_sticks_after_commentary_recompute(synthetic_pipeline, monkeypatch):
+    """点评会整段换掉套保建议。持信和因子修正要写在换掉之后的比率上。"""
+    from reports.learning import apply_driver_hedge_nudge, apply_hedge_conviction
+    from reports.models import HedgeAdvice
+
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    trust = {"均线多头排列": 0.5}
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 0.6, "driver_trust": trust},
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+
+    expected = HedgeAdvice(
+        ratio=baseline.hedge_advice.ratio,
+        signal=baseline.hedge_advice.signal,
+        narrative=baseline.hedge_advice.narrative,
+    )
+    apply_hedge_conviction(expected, 0.6)
+    apply_driver_hedge_nudge(
+        expected, adjusted.bullish_params, adjusted.bearish_params, trust,
+    )
+    assert any(p.param_name == "均线多头排列" for p in adjusted.bullish_params)
+    assert adjusted.hedge_advice.ratio == expected.ratio
+    assert adjusted.hedge_advice.ratio != baseline.hedge_advice.ratio
+
+
+def _scenario_p(report, direction: str) -> float:
+    return next(s.probability for s in report.scenarios if s.direction == direction)
+
+
+def test_distrusted_bullish_driver_yields_probability_to_flat(synthetic_pipeline, monkeypatch):
+    """均线看涨却不可靠时，报告里的上涨概率让给横盘。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 1.0, "driver_trust": {"均线多头排列": 0.5}},
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")
+    assert _scenario_p(adjusted, "横盘") > _scenario_p(baseline, "横盘")
+    assert _scenario_p(baseline, "下跌") == pytest.approx(_scenario_p(adjusted, "下跌"))
+    assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_distrusted_up_forecast_yields_probability_to_flat(synthetic_pipeline, monkeypatch):
+    """上涨主张不可靠时，报告里的上涨概率让给横盘。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {"up": 0.5}},
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")
+    assert _scenario_p(adjusted, "横盘") > _scenario_p(baseline, "横盘")
+    assert _scenario_p(baseline, "下跌") == pytest.approx(_scenario_p(adjusted, "下跌"))
+    assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_band_center_shift_moves_published_ranges(synthetic_pipeline, monkeypatch):
+    """区间中心偏移只改公布的价格区间，不改概率。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": -0.02,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    delta = adjusted.market.current * -0.02
+    for before, after in zip(baseline.scenarios, adjusted.scenarios):
+        assert after.price_min == pytest.approx(before.price_min + delta, abs=1.5)
+        assert after.price_max == pytest.approx(before.price_max + delta, abs=1.5)
+        assert after.price_min < before.price_min
+        assert after.probability == pytest.approx(before.probability)
+
+
+def test_distrusted_flat_forecast_splits_probability_to_both_sides(synthetic_pipeline, monkeypatch):
+    """横盘主张不可靠时，报告里的横盘概率分给上涨和下跌。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 0.5,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "横盘") < _scenario_p(baseline, "横盘")
+    assert _scenario_p(adjusted, "上涨") > _scenario_p(baseline, "上涨")
+    assert _scenario_p(adjusted, "下跌") > _scenario_p(baseline, "下跌")
+    assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_low_prob_sharpness_pulls_published_probabilities_together(synthetic_pipeline, monkeypatch):
+    """锐度 0.5 时，公布的最高概率下降，最低概率上升。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 0.5,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    before = sorted(s.probability for s in baseline.scenarios)
+    after = sorted(s.probability for s in adjusted.scenarios)
+    assert after[-1] < before[-1]
+    assert after[0] > before[0]
+    assert sum(after) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_negative_hedge_lean_lowers_published_ratio(synthetic_pipeline, monkeypatch):
+    """套保偏向 -2 个百分点时，公布的套保比率下降。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
+            "hedge_lean": -0.02,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio - 0.02, abs=0.011)
+    assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio
+
+
+def test_wide_fan_widens_published_ranges_without_moving_probability(synthetic_pipeline, monkeypatch):
+    """扇面宽度 1.2 时，公布的价格区间变宽，概率和中心不动。"""
+    base = _synthetic_market()
+    price = 300.0
+    closes = []
+    for i in range(30):
+        price = round(price * (1.02 if i % 2 == 0 else 1 / 1.02), 2)
+        closes.append(price)
+    market = MarketSnapshot(
+        ticker=base.ticker,
+        current=closes[-1],
+        change_1d_pct=base.change_1d_pct,
+        change_30d_pct=base.change_30d_pct,
+        high_30d=max(closes),
+        low_30d=min(closes),
+        volume_ratio=base.volume_ratio,
+        ma20=base.ma20,
+        ma60=base.ma60,
+        rsi_14=base.rsi_14,
+        close_5d=base.close_5d,
+        vol_ratio_5d=base.vol_ratio_5d,
+        close_30d=closes,
+    )
+    monkeypatch.setattr("reports.pipeline.fetch_market_snapshot", lambda ticker: market)
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
+            "hedge_lean": 0.0,
+            "fan_width": 1.2,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    widened = False
+    for before, after in zip(baseline.scenarios, adjusted.scenarios):
+        before_mid = (before.price_min + before.price_max) / 2
+        after_mid = (after.price_min + after.price_max) / 2
+        assert after_mid == pytest.approx(before_mid, abs=0.6)
+        assert after.probability == pytest.approx(before.probability)
+        if (after.price_max - after.price_min) > (before.price_max - before.price_min):
+            widened = True
+    assert widened
+
+
+def test_ml_target_shift_moves_published_level_without_changing_hedge(synthetic_pipeline, monkeypatch):
+    """目标偏移 -2% 时，公布的 ML目标位下移约现价的 2%，套保比率不变。"""
+    from reports.models import MLSnapshot
+
+    def _snap(current_price=None):
+        return MLSnapshot(signal="BEARISH", confidence=0.5, bias=0.0, price_target_30d=270.0)
+
+    monkeypatch.setattr("reports.pipeline.fetch_ml_snapshot", _snap)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    shifted = dict(memory)
+    shifted["ml_target_shift"] = -0.02
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: shifted)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+
+    def _ml_level(report):
+        return next(level.price for level in report.support_levels if level.label == "ML目标位")
+
+    assert _ml_level(baseline) == pytest.approx(270.0)
+    assert _ml_level(adjusted) == pytest.approx(264.0)
+    assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio)

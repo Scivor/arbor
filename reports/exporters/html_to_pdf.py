@@ -307,9 +307,9 @@ def _build_price_chart(report, lang: str = "zh") -> str:
             "Close": closes,
         }, index=pd.to_datetime(dates))
 
-    # -- Font setup --
-    plt.rcParams["font.family"] = ["Songti SC", "DejaVu Serif", "Hiragino Sans GB", "DejaVu Sans"]
-    plt.rcParams["axes.unicode_minus"] = False
+    # -- Font setup（优先本机已装 CJK，避免 Songti/Hiragino 缺失导致 □□□）──
+    from reports.fonts import apply_matplotlib_cjk_font, resolve_plot_font_family
+    plot_fonts = apply_matplotlib_cjk_font()
 
     # -- Brand-aligned Kami style --
     PARCHMENT = "#f5f4ed"
@@ -325,7 +325,8 @@ def _build_price_chart(report, lang: str = "zh") -> str:
         facecolor=PARCHMENT,
         edgecolor=BORDER,
         rc={
-            "font.family": ["Songti SC", "DejaVu Serif", "Hiragino Sans GB", "DejaVu Sans"],
+            "font.family": "sans-serif",
+            "font.sans-serif": plot_fonts or resolve_plot_font_family(),
             "axes.unicode_minus": False,
         },
         marketcolors=mpf.make_marketcolors(
@@ -969,8 +970,8 @@ def build_report_html(report, lang: str = "zh") -> str:
     --stone:       #6b6a64;
     --border:      #e8e6dc;
     --border-soft: #e5e3d8;
-    --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Palatino, serif;
-    --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
+    --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
     --mono:  "SF Mono", Monaco, Consolas, monospace;
   }}
 

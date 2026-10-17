@@ -51,7 +51,7 @@ def build_chat_page(
   body {{
     background: #f5f4ed;
     color: #141413;
-    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", sans-serif;
     font-size: 14px;
     margin: 0;
   }}
@@ -71,7 +71,7 @@ def build_chat_page(
     gap: 12px;
   }}
   .chat-title {{
-    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", serif;
     font-size: 22px;
     font-weight: 600;
     color: #141413;

@@ -150,7 +150,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   margin-bottom: 16px;
 }}
 .past-index-title {{
-  font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+  font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", serif;
   font-size: 15px;
   font-weight: 600;
   color: #141413;

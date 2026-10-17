@@ -348,7 +348,7 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
 # ── 近期记忆：套保持信 / 驱动因子信任 ─────────────────────────────────────────
 
 def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
-                band_min=0.0, band_max=9999.0, drivers=None):
+                band_min=0.0, band_max=9999.0, drivers=None, direction="横盘"):
     data = {
         "report_date": report_date,
         "forecast_week_start": report_date,
@@ -362,7 +362,7 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
         "ml_price_target_30d": None,
         "hedge_ratio": hedge_ratio,
         "hedge_signal": "TIGHT" if hedge_ratio >= 0.70 else "MEDIUM_HEDGE",
-        "dominant_scenario_direction": "横盘",
+        "dominant_scenario_direction": direction,
         "dominant_scenario_prob": 0.5,
         "dominant_scenario_min": band_min,
         "dominant_scenario_max": band_max,
@@ -374,7 +374,8 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
     )
 
 
-def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None, hedge_for=None):
+def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None, hedge_for=None,
+                 direction_for=None):
     """
     moves: 每一对的价格方向，"up" 或 "down"（幅度 2%，超过 ±1% 判定线）。
     最后一期没有下一跳，只用来给倒数第二期当实际价。
@@ -398,9 +399,13 @@ def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None, hedge_for=
         if drivers_for is not None and i < len(moves):
             drivers = drivers_for(i, moves[i])
         ratio = hedge_for(i) if hedge_for is not None and i < len(moves) else hedge_ratio
+        direction = "横盘"
+        if direction_for is not None and i < len(moves):
+            direction = direction_for(i, moves[i])
         _write_case(
             dir_path, f"2026-07-{i + 1:02d}", current,
             hedge_ratio=ratio, band_min=bmin, band_max=bmax, drivers=drivers,
+            direction=direction,
         )
 
 
@@ -541,11 +546,13 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "ml_bias_scale": 0.8,
         "hedge_conviction": 9,
         "driver_trust": {"A": 0.1, "B": "nope", "": 0.5, "C": 1.2, "D": 0.8},
+        "direction_trust": {"up": 0.1, "down": 1.0, "flat": 0.7, "nope": 0.5},
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
     assert memory["hedge_conviction"] == 1.0
     assert memory["driver_trust"] == {"A": 0.5, "D": 0.8}
+    assert memory["direction_trust"] == {"up": 0.6}
 
 
 def test_apply_review_memory_changes_next_report():
@@ -695,6 +702,7 @@ def test_track_record_shows_review_memory():
             "hedge_conviction": 0.9,
             "hedge_accuracy": 0.38,
             "driver_trust": {"RSI超买": 0.81},
+            "direction_trust": {"up": 0.9},
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -703,5 +711,126 @@ def test_track_record_shows_review_memory():
     assert "有方向的套保有效率 38%" in html
     assert "停在中性的周不给套保持信加分" in html
     assert "情景概率让给横盘" in html
+    assert "按方向信任让给横盘" in html
+    assert "方向信任" in html and "上涨 0.90" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
+
+
+def test_recalibrate_wrong_up_calls_lower_direction_trust(learn_env):
+    """连续把上涨说成主导情景、价格却下跌：上涨信任降到 0.9。套保停在中性，旧系数不动。"""
+    _seed_hedges(
+        learn_env / "history", ["down"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    result = recalibrate()
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.9)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "direction_trust:up"]
+    assert len(changed) == 1
+    assert "概率让给横盘" in changed[0]["reason"]
+    saved = json.loads((learn_env / "learned_adjustments.json").read_text())
+    assert saved["direction_trust"]["up"] == pytest.approx(0.9)
+
+
+def test_recalibrate_right_up_calls_recover_direction_trust(learn_env):
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.9},
+    }))
+    result = recalibrate()
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.945)
+    assert result["memory"]["hedge_conviction"] == 1.0
+
+
+def test_recalibrate_few_direction_calls_do_not_move_trust(learn_env):
+    """主张不足 4 次：不降，也不因样本少而淡忘。"""
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨" if i < 3 else "横盘",
+    )
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["direction_trust"]["up"] == pytest.approx(0.8)
+
+
+def test_recalibrate_absent_direction_fades_and_survives_other_writes(learn_env):
+    """本期全是横盘时，旧的上涨信任向 1.0 淡。另一次只改 ML 时，方向信任仍写在文件里。"""
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    faded = recalibrate()
+    assert faded["memory"]["direction_trust"]["up"] == pytest.approx(0.84)
+    assert faded["memory"]["hedge_conviction"] == 1.0
+    assert faded["current"]["ml_bias_scale"] == 1.0
+
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    _seed_hedges(
+        learn_env / "history", ["down"] * 8, hedge_ratio=0.65,
+        direction_for=lambda i, move: "上涨" if i < 3 else "横盘",
+    )
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data["ml_signal"] = "BULLISH"
+        path.write_text(json.dumps(data), encoding="utf-8")
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0,
+        "scenario_band_scale": 1.0,
+        "direction_trust": {"up": 0.8},
+    }))
+    moved = recalibrate()
+    assert moved["current"]["ml_bias_scale"] == pytest.approx(0.9)
+    assert moved["memory"]["direction_trust"]["up"] == pytest.approx(0.8)
+    saved = json.loads((learn_env / "learned_adjustments.json").read_text())
+    assert saved["direction_trust"]["up"] == pytest.approx(0.8)
+    assert saved["ml_bias_scale"] == pytest.approx(0.9)
+
+
+def test_wrong_direction_gives_its_probability_to_flat():
+    """上涨信任 0.9 时，40% 的上涨变成 36%，让出的 4 个点给横盘。没有横盘则不改。"""
+    from reports.learning import apply_direction_trust
+    from reports.models import Scenario
+
+    def pack(up, flat, down):
+        return [
+            Scenario("涨", "上涨", 400, 420, up, []),
+            Scenario("盘", "横盘", 390, 410, flat, []),
+            Scenario("跌", "下跌", 370, 400, down, []),
+        ]
+
+    moved = pack(0.40, 0.35, 0.25)
+    assert apply_direction_trust(moved, {"up": 0.9}) is True
+    by = {s.direction: s.probability for s in moved}
+    assert by["上涨"] == pytest.approx(0.36, abs=0.001)
+    assert by["横盘"] == pytest.approx(0.39, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.25, abs=0.001)
+
+    same = pack(0.40, 0.35, 0.25)
+    before = [(s.direction, s.probability) for s in same]
+    assert apply_direction_trust(same, {}) is False
+    assert apply_direction_trust(same, {"up": 1.0}) is False
+    assert [(s.direction, s.probability) for s in same] == before
+
+    no_flat = [
+        Scenario("涨", "上涨", 400, 420, 0.60, []),
+        Scenario("跌", "下跌", 370, 400, 0.40, []),
+    ]
+    assert apply_direction_trust(no_flat, {"up": 0.5}) is False
+    assert [s.probability for s in no_flat] == [0.60, 0.40]

@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：ml_bias、scenario_band、套保持信、被压低的驱动，以及最近 3 条调整。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、被压低的驱动、方向信任，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -63,6 +63,14 @@ def get_learning_status() -> str:
         if trust:
             discounted = ", ".join(f"{name} {float(value):.2f}" for name, value in list(trust.items())[:5])
             lines.append(f"压低的驱动: {discounted}")
+        direction = memory.get("direction_trust") or {}
+        if direction:
+            labels = {"up": "上涨", "down": "下跌"}
+            shown = ", ".join(
+                f"{labels.get(str(side), str(side))} {float(value):.2f}"
+                for side, value in list(direction.items())[:4]
+            )
+            lines.append(f"方向信任: {shown}")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

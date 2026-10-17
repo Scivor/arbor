@@ -207,3 +207,17 @@ def test_distrusted_bullish_driver_yields_probability_to_flat(synthetic_pipeline
     assert _scenario_p(adjusted, "横盘") > _scenario_p(baseline, "横盘")
     assert _scenario_p(baseline, "下跌") == pytest.approx(_scenario_p(adjusted, "下跌"))
     assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_distrusted_up_forecast_yields_probability_to_flat(synthetic_pipeline, monkeypatch):
+    """上涨主张不可靠时，报告里的上涨概率让给横盘。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {"up": 0.5}},
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")
+    assert _scenario_p(adjusted, "横盘") > _scenario_p(baseline, "横盘")
+    assert _scenario_p(baseline, "下跌") == pytest.approx(_scenario_p(adjusted, "下跌"))
+    assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)

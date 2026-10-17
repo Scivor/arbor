@@ -14,6 +14,9 @@ reports/learning.py
                         套保比率往反方向挪，并把该方向的情景概率让给横盘
                         （比率每个满额 1 个百分点，概率每个满额 8 个百分点，
                         合计都不超过 6 个）
+- direction_trust:      上涨 / 下跌主张本身的信任（0.6 ~ 1.0）。
+                        横盘不是方向主张。说错时该侧概率乘以信任系数，
+                        让出的部分给横盘，单侧概率不低于 5%
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -40,6 +43,8 @@ _ML_BIAS_BOUNDS = (0.5, 1.0)
 _BAND_BOUNDS = (0.7, 1.5)
 _CONVICTION_BOUNDS = (0.6, 1.0)
 _DRIVER_TRUST_BOUNDS = (0.5, 1.0)
+_DIRECTION_BOUNDS = (0.6, 1.0)
+_DIRECTION_SIDES = ("up", "down")
 
 # 套保比率往 65% 中性收敛。与 arbor.domain.scoring.ScoringConfig.baseline 同一锚点，
 # baseline 本身不参与自校准。
@@ -75,7 +80,7 @@ def _pair_weights(n: int) -> list[float]:
 
 
 def _empty_memory() -> dict:
-    return {"hedge_conviction": 1.0, "driver_trust": {}}
+    return {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {}}
 
 
 def _trust_map(raw) -> dict[str, float]:
@@ -91,6 +96,21 @@ def _trust_map(raw) -> dict[str, float]:
         number = _clamp(number, _DRIVER_TRUST_BOUNDS)
         if number < 1.0:
             cleaned[label] = number
+    return cleaned
+
+
+def _direction_map(raw) -> dict[str, float]:
+    """只保留 up/down 且低于 1 的系数。横盘、坏键、坏值丢弃，越界钳制。"""
+    if not isinstance(raw, dict):
+        return {}
+    cleaned: dict[str, float] = {}
+    for name, value in raw.items():
+        side = str(name).strip()
+        if side not in _DIRECTION_SIDES:
+            continue
+        number = _clamp(_finite(value, 1.0), _DIRECTION_BOUNDS)
+        if number < 1.0:
+            cleaned[side] = number
     return cleaned
 
 
@@ -114,6 +134,7 @@ def _load_state() -> dict:
         "scenario_band_scale": _clamp(_finite(data.get("scenario_band_scale", 1.0), 1.0), _BAND_BOUNDS),
         "hedge_conviction": _clamp(_finite(data.get("hedge_conviction", 1.0), 1.0), _CONVICTION_BOUNDS),
         "driver_trust": _trust_map(data.get("driver_trust")),
+        "direction_trust": _direction_map(data.get("direction_trust")),
     }
 
 
@@ -127,11 +148,12 @@ def load_learned() -> dict:
 
 
 def load_review_memory() -> dict:
-    """读取近期记忆：套保持信 + 被压低的驱动因子。缺省为不干预。"""
+    """读取近期记忆：套保持信、被压低的驱动因子、上涨/下跌方向信任。缺省为不干预。"""
     state = _load_state()
     return {
         "hedge_conviction": state["hedge_conviction"],
         "driver_trust": dict(state["driver_trust"]),
+        "direction_trust": dict(state["direction_trust"]),
     }
 
 
@@ -220,6 +242,37 @@ def _memory_signals(pairs) -> tuple[float | None, dict[str, dict]]:
         for name, (total, hit, samples) in drivers.items()
     }
     return hedge_accuracy, rates
+
+
+def _direction_rates(pairs) -> dict[str, dict]:
+    """
+    上涨、下跌主张的近期命中率。横盘不是主张，不计入样本。
+
+    预测上涨而实际横盘算说错。样本数是未加权次数，比率按半衰期加权。
+    """
+    from reports.history import compute_prediction_review
+    from reports.models import normalize_direction
+
+    weights = _pair_weights(len(pairs))
+    buckets = {side: [0.0, 0.0, 0] for side in _DIRECTION_SIDES}
+    for (cur, nxt), weight in zip(pairs, weights):
+        side = normalize_direction(getattr(cur, "dominant_scenario_direction", ""))
+        if side not in buckets:
+            continue
+        try:
+            review = compute_prediction_review(cur, nxt.current_price)
+        except Exception as e:
+            logger.warning("memory: 方向复盘失败 %s: %s", getattr(cur, "report_date", "?"), e)
+            continue
+        slot = buckets[side]
+        slot[0] += weight
+        slot[1] += weight if review.direction_correct else 0.0
+        slot[2] += 1
+    return {
+        side: {"samples": samples, "rate": (hit / total) if total else 0.0}
+        for side, (total, hit, samples) in buckets.items()
+        if samples
+    }
 
 
 def _step_toward(current: float, good: bool, bounds: tuple[float, float]) -> float:
@@ -408,6 +461,59 @@ def apply_driver_scenario_tilt(scenarios, bullish, bearish, trust: dict | None) 
     return True
 
 
+_DIRECTION_LABELS = {"up": "上涨", "down": "下跌"}
+
+
+def apply_direction_trust(scenarios, direction_trust) -> bool:
+    """
+    上涨或下跌连续说错时，该侧概率乘以方向信任，让出的部分给横盘。
+
+    信任为空、为 1，或没有横盘情景时返回 False，不改数字。单侧概率不低于 5%。
+    """
+    if not scenarios or not isinstance(direction_trust, dict) or not direction_trust:
+        return False
+    factors: dict[str, float] = {}
+    for side in _DIRECTION_SIDES:
+        if side not in direction_trust:
+            continue
+        factor = _clamp(_finite(direction_trust.get(side), 1.0), _DIRECTION_BOUNDS)
+        if factor < 1.0:
+            factors[side] = factor
+    if not factors:
+        return False
+
+    from reports.models import normalize_direction
+
+    grouped: dict[str, list] = {}
+    for scenario in scenarios:
+        grouped.setdefault(normalize_direction(getattr(scenario, "direction", "")), []).append(scenario)
+    flat = grouped.get("flat") or []
+    if not flat:
+        return False
+
+    moved = 0.0
+    for side, factor in factors.items():
+        for scenario in grouped.get(side) or []:
+            current = float(scenario.probability)
+            target = max(_PROB_FLOOR, current * factor)
+            take = current - target
+            if take <= 1e-12:
+                continue
+            scenario.probability = target
+            moved += take
+    if moved <= 0:
+        return False
+    share = moved / len(flat)
+    for scenario in flat:
+        scenario.probability = float(scenario.probability) + share
+    total_p = sum(float(s.probability) for s in scenarios)
+    if total_p <= 0:
+        return False
+    for scenario in scenarios:
+        scenario.probability = round(float(scenario.probability) / total_p, 4)
+    return True
+
+
 def sync_dominant_scenario_event(events, scenarios) -> None:
     """情景概率改过之后，评分用的主导情景事件跟着改，避免两处各说各话。"""
     if not events or not scenarios:
@@ -503,6 +609,7 @@ def recalibrate(min_samples: int = 8) -> dict:
 
     ml_accuracy, band_hit_rate = _evaluate(pairs)
     hedge_accuracy, driver_rates = _memory_signals(pairs)
+    direction_rates = _direction_rates(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -514,6 +621,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "scenario_band_scale": state["scenario_band_scale"],
         "hedge_conviction": state["hedge_conviction"],
         "driver_trust": dict(state["driver_trust"]),
+        "direction_trust": dict(state["direction_trust"]),
     }
     changed: list[dict] = []
 
@@ -592,6 +700,44 @@ def recalibrate(min_samples: int = 8) -> dict:
             trust[name] = new
         changed.append({"param": f"driver_trust:{name}", "old": old, "new": new, "reason": reason})
 
+    # ── direction_trust: 上涨/下跌主张说错 → 该侧概率让给横盘；说对或本期没主张 → 向 1.0 回归 ──
+    direction_trust = new_values["direction_trust"]
+    for side in _DIRECTION_SIDES:
+        stats = direction_rates.get(side)
+        if not stats or stats["samples"] < _DRIVER_MIN_SAMPLES:
+            continue
+        old = direction_trust.get(side, 1.0)
+        rate = stats["rate"]
+        label = _DIRECTION_LABELS[side]
+        if rate < 0.45:
+            reason = f"{label}情景近期命中率 {rate:.0%} < 45%，概率让给横盘"
+            new = _step_toward(old, False, _DIRECTION_BOUNDS)
+        elif rate > 0.65:
+            reason = f"{label}情景近期命中率 {rate:.0%} > 65%，信任向基准回归"
+            new = _step_toward(old, True, _DIRECTION_BOUNDS)
+        else:
+            continue
+        if new == old:
+            continue
+        if new >= 1.0:
+            direction_trust.pop(side, None)
+        else:
+            direction_trust[side] = new
+        changed.append({"param": f"direction_trust:{side}", "old": old, "new": new, "reason": reason})
+
+    for side in sorted(set(state["direction_trust"]) - set(direction_rates)):
+        old = state["direction_trust"][side]
+        new = _step_toward(old, True, _DIRECTION_BOUNDS)
+        if new == old:
+            continue
+        label = _DIRECTION_LABELS.get(side, side)
+        reason = f"{label}情景本期未再主张，信任向基准回归"
+        if new >= 1.0:
+            direction_trust.pop(side, None)
+        else:
+            direction_trust[side] = new
+        changed.append({"param": f"direction_trust:{side}", "old": old, "new": new, "reason": reason})
+
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -618,6 +764,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     memory = {
         "hedge_conviction": new_values["hedge_conviction"],
         "driver_trust": dict(new_values["driver_trust"]),
+        "direction_trust": dict(new_values["direction_trust"]),
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

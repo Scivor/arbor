@@ -617,6 +617,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2b: 自校准系数（失败回退 1.0，不影响出报）──────────────
     try:
         from reports.learning import (
+            apply_direction_trust,
             apply_driver_hedge_nudge,
             apply_driver_scenario_tilt,
             apply_driver_weights,
@@ -633,9 +634,10 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"load_learned failed, fallback to 1.0: {e}")
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
-        memory = {"hedge_conviction": 1.0, "driver_trust": {}}
+        memory = {"hedge_conviction": 1.0, "driver_trust": {}, "direction_trust": {}}
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        apply_driver_hedge_nudge = apply_driver_scenario_tilt = scale_analyst_event = None
+        apply_direction_trust = apply_driver_hedge_nudge = None
+        apply_driver_scenario_tilt = scale_analyst_event = None
         sync_dominant_scenario_event = ml_trust_multiplier = None
     trust = memory.get("driver_trust") or {}
     if ml:
@@ -683,10 +685,18 @@ def run(config: PipelineConfig) -> PredictionReport:
     if effective_shrink > 0 and reference_class:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 
-    # 复盘修正落在收缩之后，避免被参考类再抹平。没动概率就不重算套保。
+    # 复盘修正落在收缩之后，避免被参考类再抹平。
+    # 先按方向信任让概率，再按不可靠因子让概率。没动就不重算套保。
+    tilted = False
+    if apply_direction_trust is not None and apply_direction_trust(
+        scenarios, memory.get("direction_trust") or {},
+    ):
+        tilted = True
     if apply_driver_scenario_tilt is not None and apply_driver_scenario_tilt(
         scenarios, bullish, bearish, trust,
     ):
+        tilted = True
+    if tilted:
         if sync_dominant_scenario_event is not None:
             sync_dominant_scenario_event(report_events, scenarios)
         hedge = compute_hedge_advice(market, scenarios, report_events) or hedge

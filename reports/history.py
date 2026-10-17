@@ -76,8 +76,10 @@ def _current_learned_scales() -> dict:
         scales = load_learned()
         memory = load_review_memory()
         scales["hedge_conviction"] = memory["hedge_conviction"]
-        if memory["driver_trust"]:
+        if memory.get("driver_trust"):
             scales["driver_trust"] = memory["driver_trust"]
+        if memory.get("direction_trust"):
+            scales["direction_trust"] = memory["direction_trust"]
         return scales
     except Exception:
         return {}

@@ -38,6 +38,20 @@ def _build_learning_html(learning: dict | None) -> str:
     conviction_base = ' <span class="tr-learn-base">未校准</span>' if abs(conviction - 1.0) < 1e-9 else ""
     hedge_acc = memory.get("hedge_accuracy")
     hedge_acc_text = f" · 有方向的套保有效率 {hedge_acc:.0%}" if isinstance(hedge_acc, (int, float)) else ""
+    direction = memory.get("direction_trust") or {}
+    direction_html = ""
+    if isinstance(direction, dict) and direction:
+        labels = {"up": "上涨", "down": "下跌"}
+        parts = []
+        for side, value in list(direction.items())[:4]:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            parts.append(f"{_esc(labels.get(str(side), str(side)))} {number:.2f}")
+        if parts:
+            direction_html = f"""
+    <div class="tr-learn-metrics">方向信任 {" · ".join(parts)}</div>"""
     trust = memory.get("driver_trust") or {}
     if trust:
         discounted = " · ".join(
@@ -53,11 +67,11 @@ def _build_learning_html(learning: dict | None) -> str:
         trust_html = ""
     if learning.get("memory") is not None:
         trust_html += """
-    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。停在中性的周不给套保持信加分。</div>"""
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。停在中性的周不给套保持信加分。</div>"""
 
     rows = f"""
     <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>
-    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{trust_html}"""
+    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{direction_html}{trust_html}"""
 
     if acc is not None and hit is not None:
         rows += f"""

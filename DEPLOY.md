@@ -374,6 +374,9 @@ bash deploy/provision.sh
 
 ## 7. macOS 本地常驻（launchd）
 
+> **生产真相源**: 只部署 / 监控 `scripts/scheduler.py`（周六 03:00 Asia/Shanghai → `web/static/reports/`）。  
+> `scripts/weekly_report_daemon.py` 是邮件旁路，不要当成站内周报的调度入口。详见 `docs/publishing.md`。
+
 周报调度器（`scripts/scheduler.py`，APScheduler，每周六 03:00 Asia/Shanghai 触发）可通过 launchd 常驻：
 
 ```bash

@@ -618,6 +618,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     try:
         from reports.learning import (
             apply_driver_hedge_nudge,
+            apply_driver_scenario_tilt,
             apply_driver_weights,
             apply_hedge_conviction,
             load_learned,
@@ -625,6 +626,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             ml_trust_multiplier,
             scale_analyst_event,
             scale_trusted_events,
+            sync_dominant_scenario_event,
         )
         learned = load_learned()
         memory = load_review_memory()
@@ -633,7 +635,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
         memory = {"hedge_conviction": 1.0, "driver_trust": {}}
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        apply_driver_hedge_nudge = scale_analyst_event = ml_trust_multiplier = None
+        apply_driver_hedge_nudge = apply_driver_scenario_tilt = scale_analyst_event = None
+        sync_dominant_scenario_event = ml_trust_multiplier = None
     trust = memory.get("driver_trust") or {}
     if ml:
         ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
@@ -679,6 +682,14 @@ def run(config: PipelineConfig) -> PredictionReport:
         effective_shrink = config.shrink_w if config.shrink_w > 0 else 0.0
     if effective_shrink > 0 and reference_class:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
+
+    # 复盘修正落在收缩之后，避免被参考类再抹平。没动概率就不重算套保。
+    if apply_driver_scenario_tilt is not None and apply_driver_scenario_tilt(
+        scenarios, bullish, bearish, trust,
+    ):
+        if sync_dominant_scenario_event is not None:
+            sync_dominant_scenario_event(report_events, scenarios)
+        hedge = compute_hedge_advice(market, scenarios, report_events) or hedge
 
     # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
     kelly_shadow = None

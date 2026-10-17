@@ -597,6 +597,47 @@ def test_apply_review_memory_changes_next_report():
     assert untouched.ratio == 0.80 and untouched.signal == "套保偏紧"
 
 
+def test_untrusted_driver_gives_its_scenario_to_flat():
+    """看跌却不可靠时，下跌概率让给横盘。RSI 不重复计算，空信任不改数字。"""
+    from reports.learning import apply_driver_scenario_tilt, sync_dominant_scenario_event
+    from reports.models import ResistParam, Scenario, SupportParam
+    from reports.report_events import scenario_event
+
+    def pack(up, flat, down):
+        return [
+            Scenario("涨", "上涨", 400, 420, up, []),
+            Scenario("盘", "横盘", 390, 410, flat, []),
+            Scenario("跌", "下跌", 370, 400, down, []),
+        ]
+
+    same = pack(0.25, 0.40, 0.35)
+    before = [(s.direction, s.probability) for s in same]
+    assert apply_driver_scenario_tilt(same, [], [], {}) is False
+    assert [(s.direction, s.probability) for s in same] == before
+
+    bearish = [ResistParam("技术", "均线空头排列", "MA", "看跌", "高", "空")]
+    moved = pack(0.25, 0.40, 0.35)
+    assert apply_driver_scenario_tilt(moved, [], bearish, {"均线空头排列": 0.5}) is True
+    by = {s.direction: s.probability for s in moved}
+    assert by["下跌"] == pytest.approx(0.31, abs=0.001)
+    assert by["横盘"] == pytest.approx(0.44, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.25, abs=0.001)
+    assert sum(by.values()) == pytest.approx(1.0)
+
+    rsi = [ResistParam("技术", "RSI超买", "70", "看跌", "高", "热")]
+    untouched = pack(0.25, 0.40, 0.35)
+    assert apply_driver_scenario_tilt(untouched, [], rsi, {"RSI超买": 0.5}) is False
+
+    crowded = [ResistParam("技术", f"因子{i}", "x", "看跌", "高", "x") for i in range(6)]
+    capped = pack(0.25, 0.40, 0.35)
+    apply_driver_scenario_tilt(capped, [], crowded, {f"因子{i}": 0.5 for i in range(6)})
+    assert {s.direction: s.probability for s in capped}["下跌"] == pytest.approx(0.29, abs=0.001)
+
+    events = [scenario_event(moved[2])]
+    sync_dominant_scenario_event(events, moved)
+    assert "横盘" in events[0].narrative
+
+
 def test_untrusted_driver_nudges_hedge_against_its_signal():
     """均线、气候这类没有单独数值通道的因子，不可靠时直接改下一期比率。"""
     from reports.learning import apply_driver_hedge_nudge, driver_hedge_nudge, scale_analyst_event
@@ -661,5 +702,6 @@ def test_track_record_shows_review_memory():
     assert "套保持信" in html and "hedge_conviction" in html and "0.90" in html
     assert "有方向的套保有效率 38%" in html
     assert "停在中性的周不给套保持信加分" in html
+    assert "情景概率让给横盘" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html

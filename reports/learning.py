@@ -11,7 +11,9 @@ reports/learning.py
                         只统计比率 ≥70% 或 ≤50% 的周，停在中性不加分。
 - driver_trust:         每个驱动因子的权重（0.5 ~ 1.0，只降不放大）
                         仍在出现、且没有单独数值通道的因子，会把下一期
-                        套保比率往反方向挪（每个满额 1 个百分点，合计不超过 6 个）
+                        套保比率往反方向挪，并把该方向的情景概率让给横盘
+                        （比率每个满额 1 个百分点，概率每个满额 8 个百分点，
+                        合计都不超过 6 个）
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -308,15 +310,11 @@ _NUDGE_CAP = 0.06
 _NUMERIC_DRIVER_NAMES = frozenset({"RSI超买", "RSI极端超卖", "RSI中性偏弱"})
 
 
-def driver_hedge_nudge(bullish, bearish, trust: dict | None) -> float:
-    """
-    仍在本期出现、且复盘里已经不可靠的驱动因子，把套保比率往它的反方向推。
-
-    看跌却不可靠 → 少套；看涨却不可靠 → 多套。信任为 1 或没有记录时返回 0。
-    """
+def _distrust_by_side(bullish, bearish, trust: dict | None) -> dict[str, float]:
+    """本期仍在说话、且没有单独数值通道的因子，按 up/down 累加 (1 - 信任)。"""
+    out = {"up": 0.0, "down": 0.0}
     if not trust:
-        return 0.0
-    total = 0.0
+        return out
     for param in list(bullish or []) + list(bearish or []):
         name = str(getattr(param, "param_name", "") or "")
         if not name or name not in trust or name in _NUMERIC_DRIVER_NAMES:
@@ -324,14 +322,22 @@ def driver_hedge_nudge(bullish, bearish, trust: dict | None) -> float:
         if getattr(param, "category", "") == "ML模型":
             continue
         signal = getattr(param, "signal", "")
-        if signal == "看跌":
-            sign = -1.0
-        elif signal == "看涨":
-            sign = 1.0
-        else:
+        side = {"看跌": "down", "看涨": "up"}.get(signal)
+        if side is None:
             continue
         factor = _clamp(_finite(trust.get(name), 1.0), _DRIVER_TRUST_BOUNDS)
-        total += sign * (1.0 - factor) * _NUDGE_FULL
+        out[side] += 1.0 - factor
+    return out
+
+
+def driver_hedge_nudge(bullish, bearish, trust: dict | None) -> float:
+    """
+    仍在本期出现、且复盘里已经不可靠的驱动因子，把套保比率往它的反方向推。
+
+    看跌却不可靠 → 少套；看涨却不可靠 → 多套。信任为 1 或没有记录时返回 0。
+    """
+    pull = _distrust_by_side(bullish, bearish, trust)
+    total = (pull["up"] - pull["down"]) * _NUDGE_FULL
     return max(-_NUDGE_CAP, min(_NUDGE_CAP, total))
 
 
@@ -343,6 +349,79 @@ def apply_driver_hedge_nudge(hedge, bullish, bearish, trust: dict | None):
     if nudge == 0.0:
         return hedge
     return _set_hedge_ratio(hedge, float(hedge.ratio) + nudge)
+
+
+# 信任从 1 降到 0 时，单个因子最多把该方向的情景概率挪走 8 个百分点。
+# 合计不超过 6 个，让出去的概率加到横盘上。情景概率不低于 5%。
+_PROB_FULL = 0.08
+_PROB_CAP = 0.06
+_PROB_FLOOR = 0.05
+
+
+def apply_driver_scenario_tilt(scenarios, bullish, bearish, trust: dict | None) -> bool:
+    """
+    把不可靠方向的概率让给横盘。没有可挪的概率时原样返回 False，不改数字。
+    """
+    if not scenarios or not trust:
+        return False
+    units = _distrust_by_side(bullish, bearish, trust)
+    shift = {side: amount * _PROB_FULL for side, amount in units.items()}
+    total = shift["up"] + shift["down"]
+    if total <= 1e-12:
+        return False
+    if total > _PROB_CAP:
+        scale = _PROB_CAP / total
+        shift = {side: amount * scale for side, amount in shift.items()}
+
+    from reports.models import normalize_direction
+
+    grouped: dict[str, list] = {}
+    for scenario in scenarios:
+        grouped.setdefault(normalize_direction(getattr(scenario, "direction", "")), []).append(scenario)
+    flat = grouped.get("flat") or []
+    if not flat:
+        return False
+
+    moved = 0.0
+    for side, amount in shift.items():
+        group = grouped.get(side) or []
+        if not group or amount <= 0:
+            continue
+        room = [max(0.0, float(s.probability) - _PROB_FLOOR) for s in group]
+        available = sum(room)
+        take = min(amount, available)
+        if take <= 0 or available <= 0:
+            continue
+        for scenario, share in zip(group, room):
+            scenario.probability = float(scenario.probability) - take * (share / available)
+        moved += take
+    if moved <= 0:
+        return False
+    share = moved / len(flat)
+    for scenario in flat:
+        scenario.probability = float(scenario.probability) + share
+    total_p = sum(float(s.probability) for s in scenarios)
+    if total_p <= 0:
+        return False
+    for scenario in scenarios:
+        scenario.probability = round(float(scenario.probability) / total_p, 4)
+    return True
+
+
+def sync_dominant_scenario_event(events, scenarios) -> None:
+    """情景概率改过之后，评分用的主导情景事件跟着改，避免两处各说各话。"""
+    if not events or not scenarios:
+        return
+    dominant = max(scenarios, key=lambda s: s.probability)
+    from reports.report_events import scenario_event
+
+    fresh = scenario_event(dominant)
+    for event in events:
+        if getattr(getattr(event, "event_type", None), "name", "") != "SCENARIO_DOMINANT":
+            continue
+        event.value = fresh.value
+        event.narrative = fresh.narrative
+        return
 
 
 def scale_analyst_event(event, trust: dict | None):

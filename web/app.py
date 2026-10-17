@@ -35,6 +35,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from reports.fonts import css_serif_stack
 from web.chat import build_chat_page
 from web.track_record import build_track_record_html
 
@@ -110,6 +111,7 @@ def _read_report_meta(report_date: str) -> dict:
 
 def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str = "zh") -> str:
     """Build the past-index HTML snippet to inject into report pages."""
+    serif = css_serif_stack()
     items_html = ""
     for r in recent_meta:
         current_cls = "past-item-current" if r["date"] == report_date else ""
@@ -150,7 +152,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   margin-bottom: 16px;
 }}
 .past-index-title {{
-  font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", serif;
+  font-family: {serif};
   font-size: 15px;
   font-weight: 600;
   color: #141413;
@@ -190,7 +192,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   outline-offset: -1.5px;
 }}
 .past-item-date {{
-  font-family: Charter, Georgia, "Source Han Serif SC", serif;
+  font-family: {serif};
   font-size: 13px;
   font-weight: 600;
   color: #141413;

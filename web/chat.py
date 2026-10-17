@@ -15,6 +15,8 @@ import html as html_lib
 import json
 from typing import Optional, Sequence
 
+from reports.fonts import css_sans_stack, css_serif_stack
+
 
 def build_chat_page(
     briefing: Optional[str] = None,
@@ -40,6 +42,8 @@ def build_chat_page(
         f'<a href="/reports/{date_label}/">查看周报</a></div>'
         if report_date else ""
     )
+    sans = css_sans_stack()
+    serif = css_serif_stack()
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -51,7 +55,7 @@ def build_chat_page(
   body {{
     background: #f5f4ed;
     color: #141413;
-    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", sans-serif;
+    font-family: {sans};
     font-size: 14px;
     margin: 0;
   }}
@@ -71,7 +75,7 @@ def build_chat_page(
     gap: 12px;
   }}
   .chat-title {{
-    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", serif;
+    font-family: {serif};
     font-size: 22px;
     font-weight: 600;
     color: #141413;

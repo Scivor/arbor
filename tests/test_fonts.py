@@ -50,6 +50,23 @@ def test_matplotlib_renders_cjk_without_glyph_warning(tmp_path):
 
 
 def test_css_stack_includes_linux_fallbacks():
+    from reports.fonts import css_serif_stack
+
     stack = css_sans_stack()
     assert "WenQuanYi Micro Hei" in stack
     assert "Droid Sans Fallback" in stack
+    serif = css_serif_stack()
+    assert "WenQuanYi Micro Hei" in serif
+    assert "Droid Sans Fallback" in serif
+
+
+def test_web_pages_use_shared_cjk_stacks():
+    from web.chat import build_chat_page
+    from web.track_record import build_track_record_html
+
+    chat = build_chat_page(briefing="测试简报")
+    assert "WenQuanYi Micro Hei" in chat
+    assert "Droid Sans Fallback" in chat
+    tr = build_track_record_html({"total": 0, "weeks": []})
+    assert "WenQuanYi Micro Hei" in tr
+    assert "Droid Sans Fallback" in tr

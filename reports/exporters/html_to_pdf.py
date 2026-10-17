@@ -941,6 +941,9 @@ def build_report_html(report, lang: str = "zh") -> str:
 
     html_lang = "en" if lang == "en" else "zh-CN"
     body_font = "var(--serif)" if lang == "en" else "var(--sans)"
+    from reports.fonts import css_sans_stack, css_serif_stack
+    serif_stack = css_serif_stack()
+    sans_stack = css_sans_stack()
 
     html = f"""<!DOCTYPE html>
 <html lang="{html_lang}">
@@ -970,8 +973,8 @@ def build_report_html(report, lang: str = "zh") -> str:
     --stone:       #6b6a64;
     --border:      #e8e6dc;
     --border-soft: #e5e3d8;
-    --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
-    --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --serif: {serif_stack};
+    --sans:  {sans_stack};
     --mono:  "SF Mono", Monaco, Consolas, monospace;
   }}
 

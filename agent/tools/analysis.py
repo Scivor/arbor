@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：ml_bias、scenario_band、套保持信、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度，以及最近 3 条调整。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -90,6 +90,13 @@ def get_learning_status() -> str:
             sharpness = 1.0
         if sharpness < 0.999:
             lines.append(f"概率锐度 {sharpness:.2f}")
+        try:
+            lean = float(memory.get("hedge_lean") or 0.0)
+        except (TypeError, ValueError):
+            lean = 0.0
+        if abs(lean) >= 0.005:
+            side = "少套" if lean < 0 else "多套"
+            lines.append(f"套保偏向 {side} {abs(lean) * 100:.2f} 个百分点")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

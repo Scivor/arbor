@@ -98,6 +98,12 @@ def _current_learned_scales() -> dict:
             sharpness = 1.0
         if sharpness < 0.999:
             scales["prob_sharpness"] = sharpness
+        try:
+            lean = float(memory.get("hedge_lean") or 0.0)
+        except (TypeError, ValueError):
+            lean = 0.0
+        if abs(lean) >= 0.005:
+            scales["hedge_lean"] = lean
         return scales
     except Exception:
         return {}

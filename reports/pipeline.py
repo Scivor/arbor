@@ -625,6 +625,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             apply_driver_scenario_tilt,
             apply_driver_weights,
             apply_hedge_conviction,
+            apply_hedge_lean,
             load_learned,
             load_review_memory,
             ml_trust_multiplier,
@@ -644,8 +645,9 @@ def run(config: PipelineConfig) -> PredictionReport:
             "band_center_shift": 0.0,
             "flat_trust": 1.0,
             "prob_sharpness": 1.0,
+            "hedge_lean": 0.0,
         }
-        apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
+        apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
         apply_band_center_shift = apply_flat_trust = apply_prob_sharpness = None
         apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
@@ -953,13 +955,15 @@ def run(config: PipelineConfig) -> PredictionReport:
             report_events + ([llm_ev] if llm_ev else []),
         ) or report.hedge_advice
 
-    # 点评重算会换掉前面的 HedgeAdvice。持信和因子修正必须落在这最后一次比率上。
+    # 点评重算会换掉前面的 HedgeAdvice。持信、因子修正和套保偏向必须落在这最后一次比率上。
     if apply_hedge_conviction is not None:
         apply_hedge_conviction(report.hedge_advice, memory.get("hedge_conviction", 1.0))
     if apply_driver_hedge_nudge is not None:
         apply_driver_hedge_nudge(
             report.hedge_advice, report.bullish_params, report.bearish_params, trust,
         )
+    if apply_hedge_lean is not None:
+        apply_hedge_lean(report.hedge_advice, memory.get("hedge_lean", 0.0))
 
     # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
     # 只重算到库成本本身（纯本地计算，不联网）；汇率/政策事件/ICO/GFEX 沿用

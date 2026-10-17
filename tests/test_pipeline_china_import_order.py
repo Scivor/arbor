@@ -284,3 +284,23 @@ def test_low_prob_sharpness_pulls_published_probabilities_together(synthetic_pip
     assert after[-1] < before[-1]
     assert after[0] > before[0]
     assert sum(after) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_negative_hedge_lean_lowers_published_ratio(synthetic_pipeline, monkeypatch):
+    """套保偏向 -2 个百分点时，公布的套保比率下降。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
+            "hedge_lean": -0.02,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio - 0.02, abs=0.011)
+    assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio

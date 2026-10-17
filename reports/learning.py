@@ -26,6 +26,9 @@ reports/learning.py
 - prob_sharpness:      情景概率离开均匀分布的幅度（0.6 ~ 1.0）。
                         近期 Brier 差于均匀猜测就往三情景均匀靠，
                         明显好于均匀再回到原来的锐度
+- hedge_lean:          套保比率的方向偏向（-4 ~ +4 个百分点）。
+                        偏紧却连涨就少套，偏松却连跌就多套。
+                        每步 1 个百分点；叫对了或没有偏向就回到 0
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -64,6 +67,10 @@ _FLAT_BOUNDS = (0.6, 1.0)
 _SHARPNESS_BOUNDS = (0.6, 1.0)
 # 低于这条才把锐度往 1 拉。均匀猜测的 Brier 约 0.667，贴着基准不算“已经准”。
 _SHARPNESS_BETTER = 0.50
+# 套保偏向。正数多套，负数少套。一步 1 个百分点，死区 ±0.20，最多 ±4 个。
+_HEDGE_LEAN_BOUNDS = (-0.04, 0.04)
+_HEDGE_LEAN_STEP = 0.01
+_HEDGE_LEAN_DEAD = 0.20
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -108,6 +115,7 @@ def _empty_memory() -> dict:
         "band_center_shift": 0.0,
         "flat_trust": 1.0,
         "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
     }
 
 
@@ -166,6 +174,7 @@ def _load_state() -> dict:
         "band_center_shift": _band_shift(data.get("band_center_shift", 0.0)),
         "flat_trust": _flat_trust(data.get("flat_trust", 1.0)),
         "prob_sharpness": _prob_sharpness(data.get("prob_sharpness", 1.0)),
+        "hedge_lean": _hedge_lean(data.get("hedge_lean", 0.0)),
     }
 
 
@@ -188,7 +197,13 @@ def load_review_memory() -> dict:
         "band_center_shift": state["band_center_shift"],
         "flat_trust": state["flat_trust"],
         "prob_sharpness": state["prob_sharpness"],
+        "hedge_lean": state["hedge_lean"],
     }
+
+
+def _hedge_lean(value) -> float:
+    """套保偏向。坏值当 0，越界钳到 ±4 个百分点。"""
+    return round(_clamp(_finite(value, 0.0), _HEDGE_LEAN_BOUNDS), 4)
 
 
 def _prob_sharpness(value) -> float:
@@ -429,6 +444,53 @@ def _sharpness_stats(pairs) -> dict:
     }
 
 
+def _hedge_lean_stats(pairs) -> dict:
+    """
+    有方向、且价格走出 ±1% 的周，近期加权的套保偏向。
+
+    偏紧却上涨记 -1（下一期少套），偏松却下跌记 +1（下一期多套）。叫对记 0。
+    价格停在 ±1% 里不说明套多了还是套少了，不计入。样本少于 4 对时不给误差。
+    """
+    from reports.history import compute_prediction_review, hedge_took_a_side
+
+    weights = _pair_weights(len(pairs))
+    total = scored = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        if not hedge_took_a_side(getattr(cur, "hedge_ratio", None)):
+            continue
+        try:
+            review = compute_prediction_review(cur, nxt.current_price)
+        except Exception as e:
+            logger.warning("memory: 套保偏向复盘失败 %s: %s", getattr(cur, "report_date", "?"), e)
+            continue
+        if review.direction_actual == "flat":
+            continue
+        try:
+            ratio = float(cur.hedge_ratio)
+        except (TypeError, ValueError):
+            continue
+        if ratio >= 0.70 and review.direction_actual == "up":
+            error = -1.0
+        elif ratio <= 0.50 and review.direction_actual == "down":
+            error = 1.0
+        elif review.hedge_advice_correct:
+            error = 0.0
+        else:
+            continue
+        total += weight
+        scored += weight * error
+        if error == 0.0:
+            hit += weight
+        samples += 1
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "accuracy": (hit / total) if ready else None,
+        "error": (scored / total) if ready else None,
+    }
+
+
 def _step_band_shift(current: float, error: float) -> float:
     """误差越过 ±1% 就朝那边走 0.5 个百分点；落在死区则向 0 退一步。"""
     current = _band_shift(current)
@@ -443,6 +505,22 @@ def _step_band_shift(current: float, error: float) -> float:
     else:
         return 0.0
     return _band_shift(0.0 if abs(stepped) < _BAND_SHIFT_STEP / 2 else stepped)
+
+
+def _step_hedge_lean(current: float, error: float) -> float:
+    """偏向越过 ±0.20 就朝那边走 1 个百分点；落在死区则向 0 退一步。"""
+    current = _hedge_lean(current)
+    if error > _HEDGE_LEAN_DEAD:
+        stepped = current + _HEDGE_LEAN_STEP
+    elif error < -_HEDGE_LEAN_DEAD:
+        stepped = current - _HEDGE_LEAN_STEP
+    elif current > 0:
+        stepped = current - _HEDGE_LEAN_STEP
+    elif current < 0:
+        stepped = current + _HEDGE_LEAN_STEP
+    else:
+        return 0.0
+    return _hedge_lean(0.0 if abs(stepped) < _HEDGE_LEAN_STEP / 2 else stepped)
 
 
 def _step_toward(current: float, good: bool, bounds: tuple[float, float]) -> float:
@@ -523,6 +601,16 @@ def apply_hedge_conviction(hedge, conviction: float):
         return hedge
     ratio = _HEDGE_BASELINE + (float(hedge.ratio) - _HEDGE_BASELINE) * factor
     return _set_hedge_ratio(hedge, ratio)
+
+
+def apply_hedge_lean(hedge, lean: float):
+    """在已经算完的比率上加减偏向。0 不改数字。正数多套，负数少套。"""
+    if hedge is None:
+        return hedge
+    shift = _hedge_lean(lean)
+    if shift == 0.0:
+        return hedge
+    return _set_hedge_ratio(hedge, float(hedge.ratio) + shift)
 
 
 # 信任从 1 降到 0 时，单个因子最多把套保比率挪 10 个百分点；合计不超过 6 个。
@@ -893,6 +981,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     center_error = _band_center_error(pairs)
     flat_stats = _flat_call_stats(pairs)
     sharp_stats = _sharpness_stats(pairs)
+    lean_stats = _hedge_lean_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -908,6 +997,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "band_center_shift": state["band_center_shift"],
         "flat_trust": state["flat_trust"],
         "prob_sharpness": state["prob_sharpness"],
+        "hedge_lean": state["hedge_lean"],
     }
     changed: list[dict] = []
 
@@ -949,6 +1039,43 @@ def recalibrate(min_samples: int = 8) -> dict:
     if reason and new_values["hedge_conviction"] != state["hedge_conviction"]:
         changed.append({"param": "hedge_conviction", "old": state["hedge_conviction"],
                         "new": new_values["hedge_conviction"], "reason": reason})
+
+    # ── hedge_lean: 连续偏紧就少套，连续偏松就多套；叫对或没有偏向则回到 0 ──
+    old_lean = new_values["hedge_lean"]
+    lean_samples = lean_stats["samples"]
+    lean_error = lean_stats["error"]
+    lean_accuracy = lean_stats["accuracy"]
+    if lean_samples >= _DRIVER_MIN_SAMPLES and lean_error is not None and lean_accuracy is not None:
+        if lean_accuracy > 0.65:
+            reason = "近期套保有效率高，偏向向中性回归"
+            new_lean = _step_hedge_lean(old_lean, 0.0)
+        elif abs(lean_error) <= _HEDGE_LEAN_DEAD:
+            reason = "套保偏向不明显，向中性回归"
+            new_lean = _step_hedge_lean(old_lean, 0.0)
+        elif lean_accuracy < 0.45 and lean_error < -_HEDGE_LEAN_DEAD:
+            reason = "有方向的套保连续偏紧，比率少套 1 个百分点"
+            new_lean = _step_hedge_lean(old_lean, lean_error)
+        elif lean_accuracy < 0.45 and lean_error > _HEDGE_LEAN_DEAD:
+            reason = "有方向的套保连续偏松，比率多套 1 个百分点"
+            new_lean = _step_hedge_lean(old_lean, lean_error)
+        else:
+            new_lean = old_lean
+            reason = ""
+    elif lean_samples == 0 and old_lean != 0.0:
+        reason = "本期没有有方向的价格变动，偏向向中性回归"
+        new_lean = _step_hedge_lean(old_lean, 0.0)
+    else:
+        new_lean = old_lean
+        reason = ""
+    new_lean = _hedge_lean(new_lean)
+    if reason and new_lean != old_lean:
+        new_values["hedge_lean"] = new_lean
+        changed.append({
+            "param": "hedge_lean",
+            "old": old_lean,
+            "new": new_lean,
+            "reason": reason,
+        })
 
     # ── driver_trust: 样本够了才动；本期没再出现的旧因子慢慢忘掉 ──
     trust = new_values["driver_trust"]
@@ -1134,6 +1261,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "band_center_shift": new_values["band_center_shift"],
         "flat_trust": new_values["flat_trust"],
         "prob_sharpness": new_values["prob_sharpness"],
+        "hedge_lean": new_values["hedge_lean"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

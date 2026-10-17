@@ -865,7 +865,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         provenance=prov,
     )
 
-    # ── Step 6: AI 分析师点评（中英双语；失败静默，报告不含此板块）──
+    # ── Step 6: 采购下一步建议（中英双语；失败静默，报告不含此板块）──
     try:
         _attach_llm_commentary(report)
     except Exception as e:
@@ -925,10 +925,10 @@ def run(config: PipelineConfig) -> PredictionReport:
                  notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
     if report.llm_commentary:
-        prov.add("ai_commentary", "AI 分析师点评",
+        prov.add("ai_commentary", "采购下一步建议",
                  "DeepSeek", "https://api.deepseek.com",
                  latency="实时生成", reliability="C",
-                 notes="LLM 单轮合成，非实时检索")
+                 notes="LLM 单轮合成采购行动建议，非实时检索")
 
     return report
 
@@ -939,7 +939,7 @@ def run(config: PipelineConfig) -> PredictionReport:
 
 def _attach_llm_commentary(report: PredictionReport) -> None:
     """
-    生成中英双语 AI 点评并挂到报告（每期 2 次 LLM 单轮调用，成本可忽略）。
+    生成中英双语「采购下一步建议」并挂到报告（每期 2 次 LLM 单轮调用，成本可忽略）。
     任一语言失败静默跳过，不影响另一语言与出报主流程。
     """
     from reports.llm_commentary import generate_commentary

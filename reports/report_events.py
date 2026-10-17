@@ -29,7 +29,7 @@ _LLM_DIRECTION_BIAS = {"下跌": 0.08, "上涨": -0.08}
 
 def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
     """
-    AI 分析师点评方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
+    采购建议方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
     看跌 → 正贡献（增套保）；看涨 → 负贡献。
     """
     bias = _LLM_DIRECTION_BIAS.get(direction)
@@ -41,7 +41,7 @@ def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
         timestamp=datetime.now(),
         severity=3,
         value=bias,
-        narrative=f"AI 分析师点评方向: {direction}",
+        narrative=f"采购建议方向: {direction}",
         source="llm_analyst",
     )
 

@@ -162,7 +162,7 @@ _TRANSLATIONS = {
     # Outlook
     "no_outlook": {"zh": "暂无展望", "en": "No outlook available"},
     "risk_warnings": {"zh": "⚠ 风险提示 Risk Warnings", "en": "⚠ Risk Warnings"},
-    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
+    "ai_commentary": {"zh": "采购下一步建议", "en": "Next Procurement Steps"},
 
     # Footer
     "data_sources": {"zh": "数据来源", "en": "Data Sources"},
@@ -876,15 +876,15 @@ def _build_metrics_html(metric_ctx: dict[str, str], lang: str) -> str:
 
 
 def _build_ai_commentary_html(report, lang: str) -> str:
-    """AI 分析师点评 section（None 不渲染；en 模式优先 llm_commentary_en，缺省回退中文并标注）。"""
+    """采购下一步建议 section（None 不渲染；en 模式优先 llm_commentary_en，缺省回退中文并标注）。"""
     text = getattr(report, "llm_commentary", None)
-    tag = "AI Analyst"
+    tag = "Procurement Advisor"
     if lang == "en":
         en_text = getattr(report, "llm_commentary_en", None)
         if en_text:
             text = en_text
         elif text:
-            tag = "AI Analyst · 中文"  # 英文版缺失时回退中文点评并标注
+            tag = "Procurement Advisor · 中文"  # 英文版缺失时回退中文建议并标注
     if not text:
         return ""
     body = _html.escape(text).replace("\n", "<br>")
@@ -1776,7 +1776,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   </div>''' if report.risk_warnings else ''}
 </div>
 
-<!-- ══ AI Analyst Commentary ══ -->
+<!-- ══ Next Procurement Steps ══ -->
 {_build_ai_commentary_html(report, lang)}
 
 <!-- ══ Footer ══ -->

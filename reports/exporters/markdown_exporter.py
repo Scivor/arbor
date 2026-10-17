@@ -31,7 +31,7 @@ _T = {
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
     "outlook": {"zh": "核心观点", "en": "Outlook"},
     "risk_warnings": {"zh": "风险提示", "en": "Risk Warnings"},
-    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
+    "ai_commentary": {"zh": "采购下一步建议", "en": "Next Procurement Steps"},
     "policy_events": {"zh": "政策事件", "en": "Policy Events"},
     "no_policy_events": {"zh": "近 7 日无显著政策事件", "en": "No significant policy events in the past 7 days"},
     "support": {"zh": "支撑", "en": "Support"},
@@ -352,7 +352,7 @@ def _md_china_import(report: "Report", lang: str) -> list[str]:
 
 
 def _md_ai_commentary(report: "Report", lang: str) -> list[str]:
-    """AI 分析师点评小节（en 模式优先 llm_commentary_en，缺省回退中文并标注）"""
+    """采购下一步建议小节（en 模式优先 llm_commentary_en，缺省回退中文并标注）"""
     text = getattr(report, "llm_commentary", None)
     suffix = ""
     if lang == "en":

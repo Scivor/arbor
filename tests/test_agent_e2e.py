@@ -76,7 +76,7 @@ class _MockOpenAIHandler(BaseHTTPRequestHandler):
         if not has_tool_result:
             data = _sse_body(tool_name="fetch_market_price", finish="tool_calls")
         else:
-            data = _sse_body(content="【核心判断】KC=F 横盘，概率 55%", finish="stop")
+            data = _sse_body(content="【现在怎么做】分批观望，套保偏紧。【时机好不好】暂不宜一次性锁满。", finish="stop")
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -116,13 +116,17 @@ def test_analyst_e2e_tool_calling_loop(mock_openai_server, monkeypatch):
     fake_src.fetch.return_value = SimpleNamespace(current=285.25, change_1d_pct=-0.012)
     monkeypatch.setattr("sources.coffee.yfinance_price.PriceSource", lambda: fake_src)
 
-    from agent.agents.analyst import CoffeeAnalyst
+    from agent.agents.analyst import CoffeeAnalyst, _SYSTEM_PROMPT
+    assert "采购顾问" in _SYSTEM_PROMPT
+    assert "【现在怎么做】" in _SYSTEM_PROMPT
+    assert "不是聊天机器人" in _SYSTEM_PROMPT
+
     analyst = CoffeeAnalyst(model="deepseek-chat")
-    out = analyst.chat("咖啡怎么看")
+    out = analyst.chat("这周该怎么买")
 
     # 1) 最终文本输出
-    assert "核心判断" in out
-    assert "55%" in out
+    assert "现在怎么做" in out
+    assert "分批观望" in out
 
     # 2) mock 服务恰好收到 2 次请求（tool_call 一轮 + 最终结果一轮）
     assert len(requests_log) == 2

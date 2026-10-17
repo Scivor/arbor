@@ -1,6 +1,6 @@
 """
 tests/test_llm_commentary.py
-周报 AI 分析师点评 — 无网络（mock _load_api_key 与 ChatOpenAI）
+周报采购下一步建议 — 无网络（mock _load_api_key 与 ChatOpenAI）
 """
 
 from types import SimpleNamespace
@@ -148,19 +148,31 @@ def test_html_none_hides_section():
 
 def test_to_text_and_to_dict():
     report = demo_report()
-    report.llm_commentary = "【核心判断】KC=F 横盘，概率 55%"
-    assert "[ AI ANALYST ]" in report.to_text()
-    assert "KC=F 横盘" in report.to_text()
-    assert report.to_dict()["llm_commentary"] == "【核心判断】KC=F 横盘，概率 55%"
+    report.llm_commentary = "【现在怎么做】分批观望，套保偏紧"
+    assert "[ PROCUREMENT ADVICE ]" in report.to_text()
+    assert "分批观望" in report.to_text()
+    assert report.to_dict()["llm_commentary"] == "【现在怎么做】分批观望，套保偏紧"
 
 
 def test_markdown_commentary():
     report = demo_report()
-    report.llm_commentary = "【核心判断】KC=F 横盘，概率 55%"
+    report.llm_commentary = "【现在怎么做】分批观望，套保偏紧"
     md = export_markdown(report)
-    assert "## AI 分析师点评" in md
-    assert "KC=F 横盘" in md
-    assert export_markdown(demo_report()).count("AI 分析师点评") == 0
+    assert "## 采购下一步建议" in md
+    assert "分批观望" in md
+    assert export_markdown(demo_report()).count("采购下一步建议") == 0
+
+
+def test_procurement_advisor_system_prompt():
+    """人设与输出骨架必须是采购顾问，而非行情聊天口吻。"""
+    from reports.llm_commentary import _SYSTEM_PROMPT, _SYSTEM_PROMPT_EN
+
+    assert "采购顾问" in _SYSTEM_PROMPT
+    assert "【现在怎么做】" in _SYSTEM_PROMPT
+    assert "【时机好不好】" in _SYSTEM_PROMPT
+    assert "不是聊天" in _SYSTEM_PROMPT
+    assert "Procurement Advisor" in _SYSTEM_PROMPT_EN
+    assert "[Do now]" in _SYSTEM_PROMPT_EN
 
 
 # ── 点评入归因（LLM 方向作为驱动因子）─────────────────────────────────────────

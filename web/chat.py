@@ -1,6 +1,6 @@
 """
 web/chat.py
-AI 分析师聊天页渲染 — 纯字符串拼装，无 fastapi 依赖（便于测试）。
+采购顾问追问页渲染 — 纯字符串拼装，无 fastapi 依赖（便于测试）。
 
 风格对齐 web/track_record.py：手写 HTML + 内联 <style> + 原生 JS，
 复用 Kami 设计 token（parchment/brand/olive/stone/border），零外部依赖。
@@ -10,13 +10,13 @@ from __future__ import annotations
 
 
 def build_chat_page() -> str:
-    """渲染 AI 分析师聊天页（消息列表 + 输入框，fetch POST /api/chat）。"""
+    """渲染采购顾问追问页（消息列表 + 输入框，fetch POST /api/chat）。"""
     return """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AI 分析师 · Arbor</title>
+<title>采购顾问 · Arbor</title>
 <style>
   body {
     background: #f5f4ed;
@@ -136,14 +136,14 @@ def build_chat_page() -> str:
 <body>
 <div class="chat-wrap">
   <div class="chat-hdr">
-    <span class="chat-title">AI 分析师</span>
+    <span class="chat-title">采购顾问</span>
     <a class="chat-back" href="/">← 返回最新周报</a>
   </div>
   <div class="chat-list" id="chatList">
-    <div class="chat-empty" id="chatEmpty">向分析师提问，如「咖啡怎么看」「当前套保建议合理吗」</div>
+    <div class="chat-empty" id="chatEmpty">追问采购建议，如「这周该不该买」「套保要紧还是松」「到库成本怎么看」</div>
   </div>
   <div class="chat-input-row">
-    <textarea id="chatInput" rows="2" placeholder="输入问题，回车发送（Shift+Enter 换行）"></textarea>
+    <textarea id="chatInput" rows="2" placeholder="追问建议中不清楚的点，回车发送（Shift+Enter 换行）"></textarea>
     <button id="chatSend" type="button">发送</button>
   </div>
 </div>
@@ -171,7 +171,7 @@ async function send() {
   sendBtn.disabled = true;
   addBubble(msg, 'user');
   input.value = '';
-  const thinking = addBubble('分析师思考中…', 'assistant pending');
+  const thinking = addBubble('顾问思考中…', 'assistant pending');
   try {
     const resp = await fetch('/api/chat', {
       method: 'POST',

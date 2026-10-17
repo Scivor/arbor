@@ -1,9 +1,9 @@
 """
 reports/llm_commentary.py
-周报 AI 分析师点评 — 单轮 LLM 合成（不走 agent 工具循环）。
+周报「采购下一步建议」— 单轮 LLM 合成（不走 agent 工具循环）。
 
 报告数据装配完毕后，把关键字段压缩成纯文本上下文喂给 LLM，
-输出 150-250 字中文点评。无 API key 或任何调用异常 → 静默返回 None
+输出面向进口采购的行动建议。无 API key 或任何调用异常 → 静默返回 None
 （报告不含此板块，绝不影响出报）。
 """
 
@@ -25,27 +25,40 @@ _BASE_URLS = {"deepseek": "https://api.deepseek.com", "openai": None}
 _DIRECTION_RE = re.compile(r"^\[DIRECTION:(上涨|下跌|横盘)\]\s*")
 
 _SYSTEM_PROMPT = (
-    "你是资深咖啡大宗商品分析师。基于给定数据写中文点评。\n"
+    "你是 Arbor 采购顾问——面向中国咖啡生豆进口商的决策智能体，不是聊天机器人，也不是行情解说员。\n"
+    "任务：综合给定的情景/ML/到库成本/政策/战绩数据，直接告诉采购「下一步怎么办」。\n"
     "硬性输出约定: 正文第一行必须是机器可读标记 [DIRECTION:X]，X ∈ {上涨, 下跌, 横盘}；\n"
-    "标记之后才是点评正文，150-250 字，固定四段：\n"
-    "【核心判断】方向 + 概率%（必须给数字，禁止 0%/100%）\n"
-    "【关键依据】最多 3 条，每条注明依据的数据\n"
-    "【风险提示】至少 1 条反向证据\n"
-    "【给进口商的一句话建议】\n"
-    "只用给定数据，禁止编造数字；数据缺失的维度直接跳过不提。"
+    "标记之后才是建议正文，180-280 字，固定五段：\n"
+    "【现在怎么做】采购节奏（分批/观望/适度补库）+ 套保松紧，必须给可执行动作，禁止只复述指标\n"
+    "【时机好不好】相对到库成本/主导情景，一句说清「现在下单划不划算」\n"
+    "【为什么】最多 3 条，每条注明依据的数据；系统内部分歧要点名并给取舍\n"
+    "【别踩的坑】至少 1 条反向情景或失效条件\n"
+    "【下周盯什么】1-2 个触发条件（价位/事件/基差），便于采购跟进\n"
+    "语言：用采购听得懂的生意话（锁成本、分批、等等），少用 RSI/Brier 等黑话；"
+    "若必须引用战绩，用「近期方向判断参考价值有限/尚可」表达。\n"
+    "铁律：只用给定数据，禁止编造数字；数据缺失的维度直接跳过不提；"
+    "不承诺收益、不下单、不改客户真实仓位；凯利/事件影子仅作对照。"
 )
 
 # 英文版：正文英文输出；[DIRECTION:X] 值仍为中文（归因链路只用中文三值，保持一致）
 _SYSTEM_PROMPT_EN = (
-    "You are a senior coffee commodity analyst. Write the commentary in ENGLISH.\n"
+    "You are Arbor's Procurement Advisor for Chinese green-coffee importers — "
+    "an actionable decision agent, not a chatbot or market narrator. "
+    "Write the advice body in ENGLISH.\n"
+    "Task: synthesize the provided scenario/ML/landed-cost/policy/scorecard data "
+    "into a direct next-step recommendation.\n"
     "Hard output contract: the FIRST line must be a machine-readable marker [DIRECTION:X] "
     "where X ∈ {上涨, 下跌, 横盘} (Chinese values only — consumed by our attribution pipeline); "
-    "then the English commentary body, 150-250 words, exactly four sections:\n"
-    "[Core View] direction + probability % (a number, never 0%/100%)\n"
-    "[Key Evidence] at most 3 items, each citing the data used\n"
-    "[Risk] at least 1 piece of counter-evidence\n"
-    "[One-line advice for the importer]\n"
-    "Use only the provided data; never invent numbers; skip dimensions whose data is missing."
+    "then the English advice body, 180-280 words, exactly five sections:\n"
+    "[Do now] buying pace (stagger / wait / restock modestly) + hedge tightness — actionable, no metric dumps\n"
+    "[Timing] one sentence on whether buying now is favorable vs landed cost / dominant scenario\n"
+    "[Why] at most 3 items, each citing data; name internal conflicts and pick a side\n"
+    "[Watch-out] at least 1 counter-scenario or invalidation\n"
+    "[Watch next week] 1-2 triggers (price / event / basis) for follow-up\n"
+    "Language: importer business English (lock cost, stagger buys, wait); avoid jargon dumps. "
+    "If citing scorecard, say judgment reliability is limited/acceptable — not raw Brier numbers.\n"
+    "Rules: use only provided data; never invent numbers; skip missing dimensions; "
+    "no return promises, no order placement, no live position changes; Kelly/event tilt are shadow-only."
 )
 
 
@@ -147,11 +160,11 @@ def _parse_direction(text: str) -> tuple[str, str]:
 
 def generate_commentary(report, lang: str = "zh") -> Optional[tuple[str, str]]:
     """
-    生成 AI 分析师点评（单轮 LLM 调用）。
+    生成采购下一步建议（单轮 LLM 调用）。
 
     Args:
         report: PredictionReport。
-        lang:   "zh" 中文点评 | "en" 英文点评（[DIRECTION:X] 值仍为中文三值）。
+        lang:   "zh" 中文建议 | "en" 英文建议（[DIRECTION:X] 值仍为中文三值）。
 
     Returns:
         (清洗后正文, direction)；无 API key 或任何异常 → None（静默，报告不含此板块）。
@@ -163,14 +176,14 @@ def generate_commentary(report, lang: str = "zh") -> Optional[tuple[str, str]]:
         logger.warning("llm_commentary: 读取 API key 失败: %s", e)
         return None
     if not api_key:
-        logger.info("llm_commentary: 未配置 API key，跳过 AI 点评")
+        logger.info("llm_commentary: 未配置 API key，跳过采购建议")
         return None
 
     try:
         llm = ChatOpenAI(
             model=_MODEL,
             temperature=0.3,
-            max_tokens=600,
+            max_tokens=800,
             api_key=api_key,
             base_url=_BASE_URLS.get(provider),
         )

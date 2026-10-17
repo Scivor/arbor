@@ -244,9 +244,9 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
     recent_meta = [_read_report_meta(d) for d in recent]
     past_index_html = _build_past_index_html(report_date, recent_meta, lang=lang)
 
-    # 首页入口: 指向预测战绩页 / AI 分析师聊天页
+    # 首页入口: 指向预测战绩页 / 采购顾问追问页
     if is_latest:
-        chat_text = "AI Analyst →" if lang == "en" else "AI 分析师 →"
+        chat_text = "Procurement Advisor →" if lang == "en" else "采购顾问 →"
         past_index_html = past_index_html.replace(
             '<a class="past-index-all"',
             f'<a class="past-index-all" style="margin-right:14px;" href="/chat/">{chat_text}</a><a class="past-index-all"',
@@ -343,13 +343,13 @@ async def track_record():
     return HTMLResponse(content=build_track_record_html(record, driver_stats, learning))
 
 
-# ── AI 分析师聊天 ─────────────────────────────────────────────────────────────
+# ── 采购顾问追问 ─────────────────────────────────────────────────────────────
 
 _analyst = None  # 进程级 CoffeeAnalyst 单例（lazy 首次构造）
 
 
 def _get_analyst():
-    """lazy 构造 CoffeeAnalyst 单例；无 API key 时 RuntimeError 向上抛。"""
+    """lazy 构造采购顾问单例；无 API key 时 RuntimeError 向上抛。"""
     global _analyst
     if _analyst is None:
         from agent.agents.analyst import CoffeeAnalyst
@@ -375,7 +375,7 @@ def _chat_rate_ok(ip: str) -> bool:
 
 @app.get("/chat/", response_class=HTMLResponse)
 async def chat_page():
-    """AI 分析师聊天页。"""
+    """采购顾问追问页。"""
     return HTMLResponse(content=build_chat_page())
 
 

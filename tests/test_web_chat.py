@@ -29,17 +29,17 @@ def client():
 
 def test_build_chat_page_elements():
     html = build_chat_page()
-    assert "AI 分析师" in html
+    assert "采购顾问" in html
     assert 'id="chatInput"' in html
     assert 'id="chatSend"' in html
     assert "/api/chat" in html          # fetch 路径
-    assert "分析师思考中" in html        # pending 态文案
+    assert "顾问思考中" in html        # pending 态文案
 
 
 def test_chat_page_route(client):
     resp = client.get("/chat/")
     assert resp.status_code == 200
-    assert "AI 分析师" in resp.text
+    assert "采购顾问" in resp.text
 
 
 # ── POST /api/chat ────────────────────────────────────────────────────────────
@@ -52,13 +52,13 @@ def test_api_chat_empty_message(client):
 
 
 def test_api_chat_success(client, monkeypatch):
-    fake = SimpleNamespace(chat=lambda q: f"【核心判断】横盘，概率 55%（{q}）")
+    fake = SimpleNamespace(chat=lambda q: f"【现在怎么做】分批观望（{q}）")
     monkeypatch.setattr(web_app, "_get_analyst", lambda: fake)
-    resp = client.post("/api/chat", json={"message": "咖啡怎么看"})
+    resp = client.post("/api/chat", json={"message": "这周该不该买"})
     assert resp.status_code == 200
     data = resp.json()
-    assert "核心判断" in data["output"]
-    assert "咖啡怎么看" in data["output"]
+    assert "现在怎么做" in data["output"]
+    assert "这周该不该买" in data["output"]
 
 
 def test_api_chat_no_api_key(client, monkeypatch):

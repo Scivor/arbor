@@ -91,7 +91,8 @@ def save_report_summary(report) -> Path:
     # Dominant scenario
     dominant = max(report.scenarios, key=lambda s: s.probability) if report.scenarios else None
 
-    # 驱动因子（含 LLM 点评方向：作为一个驱动因子入归因记分）
+    # 驱动因子（含采购建议方向：作为一个驱动因子入归因记分）
+    # param_name 保持「AI 分析师点评」以兼容历史 summary 归因连续性
     drivers = [{"param_name": p.param_name, "signal": p.signal,
                 "weight": p.weight, "category": p.category}
                for p in (report.bullish_params + report.bearish_params)]

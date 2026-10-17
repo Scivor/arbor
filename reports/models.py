@@ -233,7 +233,7 @@ class PredictionReport:
     # 事件倾斜影子情景（气候/供给/政策/Polymarket/期限结构 → 概率倾斜；不改 hedge_advice）
     scenario_event_tilt: Optional[dict] = None
 
-    # AI 分析师点评（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
+    # 采购下一步建议（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
     llm_commentary: Optional[str] = None
 
     # AI 点评英文版（lang="en" 展示面优先使用；缺省回退中文版）
@@ -466,9 +466,9 @@ class PredictionReport:
                 lines.append(f"      • {rw}")
         lines.append("")
 
-        # ─── AI 分析师点评 ──────────────────────────────────────────
+        # ─── 采购下一步建议 ──────────────────────────────────────────
         if self.llm_commentary:
-            lines.append(f"  {'[ AI ANALYST ]':─^74}")
+            lines.append(f"  {'[ PROCUREMENT ADVICE ]':─^74}")
             for w in textwrap.wrap(self.llm_commentary, width=68):
                 lines.append(f"  {w}")
             lines.append("")

@@ -96,7 +96,7 @@ def test_english_markdown_commentary_fallback():
     report.llm_commentary = "中文点评内容"
     # llm_commentary_en = None → 回退中文并标注
     md = export_markdown(report, lang="en")
-    assert "## AI Analyst Commentary（中文）" in md
+    assert "## Next Procurement Steps（中文）" in md
     assert "中文点评内容" in md
     # 有英文版时不标注
     report.llm_commentary_en = "English body"
@@ -126,7 +126,8 @@ def test_generate_commentary_en_prompt_and_return(monkeypatch):
     assert direction == "横盘"  # DIRECTION 值保持中文（归因链路一致）
     system_msg = _RecLLM.last_messages[0][1]
     assert "ENGLISH" in system_msg
-    assert "[Core View]" in system_msg
+    assert "[Do now]" in system_msg
+    assert "Procurement Advisor" in system_msg
 
 
 def test_attach_bilingual_commentary(monkeypatch):
@@ -171,7 +172,7 @@ def test_html_en_uses_english_commentary():
     html = build_report_html(report, lang="en")
     assert "English commentary body" in html
     assert "中文点评内容XYZ" not in html
-    assert "AI Analyst Commentary" in html
+    assert "Next Procurement Steps" in html
 
 
 def test_html_en_fallback_chinese_tag():

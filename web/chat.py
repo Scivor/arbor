@@ -15,7 +15,7 @@ import html as html_lib
 import json
 from typing import Optional, Sequence
 
-from reports.fonts import css_sans_stack, css_serif_stack
+from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack
 
 
 def build_chat_page(
@@ -44,6 +44,8 @@ def build_chat_page(
     )
     sans = css_sans_stack()
     serif = css_serif_stack()
+    display = css_display_stack()
+    from reports.fonts import comfortaa_font_face_css
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -52,6 +54,7 @@ def build_chat_page(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>采购顾问 · Arbor</title>
 <style>
+{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
@@ -74,12 +77,22 @@ def build_chat_page(
     margin-bottom: 18px;
     gap: 12px;
   }}
+  .chat-brand {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .chat-logo {{
+    height: 22px;
+    width: auto;
+    display: block;
+  }}
   .chat-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 22px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
   }}
   .chat-hdr-actions {{
     display: flex;
@@ -222,7 +235,10 @@ def build_chat_page(
 <body>
 <div class="chat-wrap">
   <div class="chat-hdr">
-    <span class="chat-title">采购顾问</span>
+    <div class="chat-brand">
+      <img class="chat-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
+      <span class="chat-title">采购顾问</span>
+    </div>
     <div class="chat-hdr-actions">
       <button type="button" class="chat-reset" id="chatReset">清空追问</button>
       <a class="chat-back" href="/">← 返回最新周报</a>

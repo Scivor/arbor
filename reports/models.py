@@ -548,13 +548,10 @@ def build_report(
     ml_snapshot: Optional[MLSnapshot] = None,
 ) -> PredictionReport:
     """构建预测报告的便捷工厂函数"""
+    from reports.forecast_week import resolve_forecast_week
+
     today = date.today()
-    # 找到下周一
-    days_ahead = (7 - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    week_start = today + timedelta(days=days_ahead)
-    week_end = week_start + timedelta(days=4)
+    week_start, week_end = resolve_forecast_week(today, offset=0)
 
     return PredictionReport(
         ticker=ticker,

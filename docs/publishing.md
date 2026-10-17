@@ -2,9 +2,11 @@
 
 每周一篇，全流程约 5 分钟手工。
 
-## 1. 自动出报（周六 03:00 CST）
+## 1. 自动出报（周六 03:00 Asia/Shanghai）
 
-launchd / systemd 调度的 `scripts/scheduler.py` 每周六 03:00 自动生成周报，
+launchd / systemd 调度的 `scripts/scheduler.py` 每周六 **03:00 Asia/Shanghai** 自动生成周报
+（Cron 显式绑定时区，避免主机落在 UTC 时跑成 03:00 UTC = 11:00 北京时间）。
+预测周默认 `forecast_offset=0`：即将到来的 Mon–Fri（勿用 1，否则会跳过一周）。
 产物写入 `web/static/reports/<YYYY-MM-DD>/`：
 
 | 文件 | 用途 |
@@ -41,8 +43,8 @@ python scripts/subscribers.py remove user@example.com # 退订（保留记录）
 python scripts/subscribers.py list                    # 查看 active 订阅者
 ```
 
-`scripts/weekly_report_daemon.py` 每周一 09:00 生成报告并通过 SMTP 发送给
-active 订阅者；订阅表为空时回退 `COFFEE_SMTP_TO` 环境变量。
+`scripts/weekly_report_daemon.py` 每周一 **09:00 Asia/Shanghai** 生成报告并通过 SMTP 发送给
+active 订阅者（邮件渠道；主出报仍以周六 scheduler 为准）；订阅表为空时回退 `COFFEE_SMTP_TO`。
 SMTP 通过 `COFFEE_SMTP_HOST/PORT/USER/PASS` 配置。
 
 ## 故障排查

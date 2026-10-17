@@ -32,7 +32,7 @@ def test_run_daemon_passes_output_format(monkeypatch, tmp_path):
         daemon.run_daemon(tmp_path, cron_hour=3, cron_minute=0, output_format="pdf")
 
     assert calls["output_format"] == "pdf"
-    assert calls["forecast_offset"] == 1
+    assert calls["forecast_offset"] == 0
     assert calls["output_dir"] == tmp_path
 
 

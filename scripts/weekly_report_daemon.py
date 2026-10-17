@@ -4,13 +4,14 @@ scripts/weekly_report_daemon.py
 咖啡期货周报定时生成守护进程
 
 功能:
-  - 每周一早上 9:00 自动生成下周预测报告 (HTML)
-  - 接入 ML 模型预测结果
+  - 每周一早上 9:00 Asia/Shanghai 生成「下周」预测报告 (HTML)（邮件渠道）
+  - 主出报路径仍是 scripts/scheduler.py（周六 03:00 Asia/Shanghai）
+  - forecast_offset 默认 0：周一跑时覆盖下一完整 Mon–Fri
   - 支持立即运行一次 (--now)
   - 支持自定义输出目录 (--output-dir)
 
 用法:
-  python scripts/weekly_report_daemon.py              # 守护模式，每周一 9:00 执行
+  python scripts/weekly_report_daemon.py              # 守护模式，每周一 9:00 Asia/Shanghai
   python scripts/weekly_report_daemon.py --now        # 立即生成一份报告
   python scripts/weekly_report_daemon.py --now --output-dir ./reports_output
   python scripts/weekly_report_daemon.py --cron-hour 8 --cron-minute 30  # 自定义时间
@@ -128,7 +129,7 @@ ML信号: {report.ml_snapshot.signal if report.ml_snapshot else 'N/A'}
 
 def generate_weekly_report(
     output_dir: Path,
-    forecast_offset: int = 1,
+    forecast_offset: int = 0,
     output_format: str = "html",
 ) -> Path:
     """
@@ -136,7 +137,7 @@ def generate_weekly_report(
 
     Args:
         output_dir: 输出目录
-        forecast_offset: 0=本周, 1=下周, 2=下下周
+        forecast_offset: 0=即将到来的 Mon–Fri，1=再推一周
         output_format: 'html' | 'pdf'
 
     Returns:
@@ -205,40 +206,53 @@ def generate_weekly_report(
 # Scheduling
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _next_monday_9am(hour: int, minute: int) -> datetime:
-    """计算下一个周一的指定时间。"""
-    now = datetime.now()
-    days_ahead = 7 - now.weekday()  # Monday = 0
-    if days_ahead == 7 and now.hour < hour:
-        days_ahead = 0
-    elif days_ahead == 7 and now.hour == hour and now.minute < minute:
-        days_ahead = 0
-    next_run = (now + timedelta(days=days_ahead)).replace(
-        hour=hour, minute=minute, second=0, microsecond=0
+def _next_monday_at(hour: int, minute: int, now: datetime | None = None) -> datetime:
+    """计算下一个周一的指定时间（Asia/Shanghai）。"""
+    try:
+        from zoneinfo import ZoneInfo
+    except ImportError:  # pragma: no cover
+        from backports.zoneinfo import ZoneInfo  # type: ignore
+
+    from reports.forecast_week import REPORT_TZ
+
+    tz = ZoneInfo(REPORT_TZ)
+    now = now.astimezone(tz) if now is not None else datetime.now(tz)
+    days_ahead = (7 - now.weekday()) % 7  # Monday = 0 → 0 if already Monday
+    candidate = (now + timedelta(days=days_ahead)).replace(
+        hour=hour, minute=minute, second=0, microsecond=0,
     )
-    if next_run <= now:
-        next_run += timedelta(days=7)
-    return next_run
+    if candidate <= now:
+        candidate += timedelta(days=7)
+    return candidate
 
 
 def run_daemon(output_dir: Path, cron_hour: int = 9, cron_minute: int = 0,
-               output_format: str = "both") -> None:
+               output_format: str = "both", forecast_offset: int = 0) -> None:
     """
-    守护模式：每周一早上生成报告。
+    守护模式：每周一早上 Asia/Shanghai 生成报告。
     """
+    from reports.forecast_week import REPORT_TZ
+
     logger.info("Weekly Report Daemon started")
-    logger.info("Schedule: Every Monday at %02d:%02d", cron_hour, cron_minute)
+    logger.info(
+        "Schedule: Every Monday at %02d:%02d %s (forecast_offset=%d)",
+        cron_hour, cron_minute, REPORT_TZ, forecast_offset,
+    )
     logger.info("Output dir: %s", output_dir)
 
     while True:
-        next_run = _next_monday_9am(cron_hour, cron_minute)
-        sleep_seconds = (next_run - datetime.now()).total_seconds()
+        next_run = _next_monday_at(cron_hour, cron_minute)
+        sleep_seconds = (next_run - datetime.now(next_run.tzinfo)).total_seconds()
 
         logger.info("Next run at %s (sleeping %.0f seconds)...", next_run, sleep_seconds)
-        time.sleep(sleep_seconds)
+        time.sleep(max(sleep_seconds, 0))
 
         try:
-            generate_weekly_report(output_dir, forecast_offset=1, output_format=output_format)
+            generate_weekly_report(
+                output_dir,
+                forecast_offset=forecast_offset,
+                output_format=output_format,
+            )
         except Exception as e:
             logger.error("Report generation failed: %s", e, exc_info=True)
 
@@ -264,15 +278,15 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--cron-hour", type=int, default=9,
-        help="Hour for weekly execution (default: 9)",
+        help="Hour for weekly execution in Asia/Shanghai (default: 9)",
     )
     parser.add_argument(
         "--cron-minute", type=int, default=0,
         help="Minute for weekly execution (default: 0)",
     )
     parser.add_argument(
-        "--forecast-offset", type=int, default=1,
-        help="Week offset: 0=current, 1=next (default: 1)",
+        "--forecast-offset", type=int, default=0,
+        help="Week offset: 0=upcoming Mon–Fri, 1=skip one week (default: 0)",
     )
     parser.add_argument(
         "--format", type=str, default="html", choices=["html", "pdf"],
@@ -307,8 +321,13 @@ def main(argv=None) -> int:
 
     # Daemon mode
     try:
-        run_daemon(output_dir, cron_hour=args.cron_hour, cron_minute=args.cron_minute,
-                   output_format=args.format)
+        run_daemon(
+            output_dir,
+            cron_hour=args.cron_hour,
+            cron_minute=args.cron_minute,
+            output_format=args.format,
+            forecast_offset=args.forecast_offset,
+        )
     except KeyboardInterrupt:
         logger.info("Daemon stopped by user.")
         return 0

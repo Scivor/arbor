@@ -3,8 +3,9 @@
 scripts/scheduler.py
 Coffee Futures Report — APScheduler-based weekly publisher.
 
-Trigger: Every Saturday at 03:00 CST (Beijing time).
-Rationale: ICE Coffee futures close Friday 13:30 ET ≈ Saturday 02:30 CST.
+Trigger: Every Saturday at 03:00 Asia/Shanghai (CST).
+Rationale: ICE Coffee 周五 13:30 ET 收盘 → 周六 01:30 CST(EDT) / 02:30 CST(EST)；
+           留缓冲后在周六 03:00 北京时间出报，预测即将到来的 Mon–Fri（forecast_offset=0）。
 
 Usage:
   python scripts/scheduler.py              # Daemon mode (runs forever)
@@ -48,7 +49,7 @@ def _ensure_dir(path: Path) -> Path:
 def generate_and_publish(
     output_dir: Path,
     output_format: str = "both",  # 'html' | 'pdf' | 'both'
-    forecast_offset: int = 1,
+    forecast_offset: int = 0,
     use_demo_data: bool = False,
 ) -> Path:
     """Generate report and publish to web directory."""
@@ -224,8 +225,9 @@ def run_scheduler(
     hour: int = 3,
     minute: int = 0,
     output_format: str = "both",
+    forecast_offset: int = 0,
 ) -> None:
-    """Run APScheduler in blocking mode."""
+    """Run APScheduler in blocking mode（固定 Asia/Shanghai，避免 UTC 主机跑偏 8 小时）。"""
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
         from apscheduler.triggers.cron import CronTrigger
@@ -233,15 +235,22 @@ def run_scheduler(
         logger.error("APScheduler not installed: %s", e)
         sys.exit(1)
 
-    scheduler = BlockingScheduler()
+    from reports.forecast_week import REPORT_TZ
+
+    scheduler = BlockingScheduler(timezone=REPORT_TZ)
 
     scheduler.add_job(
         _job_with_alerts,
-        trigger=CronTrigger(day_of_week="sat", hour=hour, minute=minute),
+        trigger=CronTrigger(
+            day_of_week="sat",
+            hour=hour,
+            minute=minute,
+            timezone=REPORT_TZ,
+        ),
         kwargs={
             "output_dir": output_dir,
             "output_format": output_format,
-            "forecast_offset": 1,
+            "forecast_offset": forecast_offset,
         },
         id="weekly_report",
         name="Arbor Weekly Report",
@@ -250,7 +259,10 @@ def run_scheduler(
         coalesce=True,
     )
 
-    logger.info("Scheduler started. Next run: Saturday %02d:%02d CST", hour, minute)
+    logger.info(
+        "Scheduler started. Next run: Saturday %02d:%02d %s (forecast_offset=%d)",
+        hour, minute, REPORT_TZ, forecast_offset,
+    )
     logger.info("Output directory: %s", output_dir)
 
     try:
@@ -280,15 +292,15 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--hour", type=int, default=3,
-        help="Hour for weekly execution, 0-23 (default: 3)",
+        help="Hour for weekly execution in Asia/Shanghai, 0-23 (default: 3)",
     )
     parser.add_argument(
         "--minute", type=int, default=0,
         help="Minute for weekly execution, 0-59 (default: 0)",
     )
     parser.add_argument(
-        "--forecast-offset", type=int, default=1,
-        help="Week offset: 0=current, 1=next (default: 1)",
+        "--forecast-offset", type=int, default=0,
+        help="Week offset: 0=upcoming Mon–Fri, 1=skip one week (default: 0)",
     )
     parser.add_argument(
         "--alert-test", action="store_true",
@@ -340,6 +352,7 @@ def main(argv=None) -> int:
         hour=args.hour,
         minute=args.minute,
         output_format=args.format,
+        forecast_offset=args.forecast_offset,
     )
     return 0
 

@@ -122,7 +122,7 @@ config/  scripts/  deploy/  tests/
 
 ## 周报与战绩页
 
-- **周报站** (`web/`): FastAPI 静态站，`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩页；`scripts/scheduler.py` 每周六 03:00 CST 自动生成 HTML (中英双语) + PDF + Markdown 并写入 `web/static/reports/<日期>/`。
+- **周报站** (`web/`): FastAPI 静态站，`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩页；`scripts/scheduler.py` 每周六 03:00 Asia/Shanghai 自动生成 HTML (中英双语) + PDF + Markdown 并写入 `web/static/reports/<日期>/`（预测即将到来的 Mon–Fri）。
 - **战绩页** (`/track-record/`): 区间命中/方向/套保三率、平均 Brier 与概率校准桶、驱动因子应验率、系数自校准状态（learning.py changelog）、凯利影子账本。
 - **无人值守**: macOS 用 launchd（`deploy/com.arbor.weekly-report.plist`），Linux 用 systemd（`deploy/coffee-*.service`）；数据源降级/生成失败时 Telegram 告警（`core/notify/ops_alert.py`，验证：`python scripts/scheduler.py --alert-test`）。详见 DEPLOY.md。
 

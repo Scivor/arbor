@@ -46,7 +46,7 @@ class PipelineConfig:
     ticker: str = "KC=F"
     use_demo_data: bool = False       # If True, skip live fetches
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
-    forecast_week_offset: int = 0     # 0 = current week, 1 = next week, etc.
+    forecast_week_offset: int = 0     # 0=即将到来的 Mon–Fri；1=再推一周（见 reports.forecast_week）
     shrink_w: float = 0.0             # 参考类收缩：<=0 自动（有技能才启用 0.2）；>0 显式但仍要求有技能
     live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
@@ -721,12 +721,10 @@ def run(config: PipelineConfig) -> PredictionReport:
         logger.warning(f"scenario_event_tilt failed: {e}")
 
     # ── Step 3: Compute forecast week ────────────────────────────
+    from reports.forecast_week import resolve_forecast_week
+
     today = date.today()
-    days_ahead = (7 - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    week_start = today + timedelta(days=days_ahead + 7 * config.forecast_week_offset)
-    week_end = week_start + timedelta(days=4)
+    week_start, week_end = resolve_forecast_week(today, config.forecast_week_offset)
 
     # ── Step 4: Build provenance ledger ─────────────────────────
     from reports.provenance import ReportProvenance

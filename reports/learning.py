@@ -23,6 +23,9 @@ reports/learning.py
 - flat_trust:          横盘主张的信任（0.6 ~ 1.0）。
                         只统计区间罩住当时现价、且半宽不超过 8% 的周。
                         说错时横盘概率乘以信任系数，分给上涨和下跌
+- prob_sharpness:      情景概率离开均匀分布的幅度（0.6 ~ 1.0）。
+                        近期 Brier 差于均匀猜测就往三情景均匀靠，
+                        明显好于均匀再回到原来的锐度
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -58,6 +61,9 @@ _BAND_SHIFT_DEAD = 0.01
 _BAND_SHIFT_ANCHOR = 0.15
 _BAND_SHIFT_WINSOR = 0.08
 _FLAT_BOUNDS = (0.6, 1.0)
+_SHARPNESS_BOUNDS = (0.6, 1.0)
+# 低于这条才把锐度往 1 拉。均匀猜测的 Brier 约 0.667，贴着基准不算“已经准”。
+_SHARPNESS_BETTER = 0.50
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -101,6 +107,7 @@ def _empty_memory() -> dict:
         "direction_trust": {},
         "band_center_shift": 0.0,
         "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
     }
 
 
@@ -158,6 +165,7 @@ def _load_state() -> dict:
         "direction_trust": _direction_map(data.get("direction_trust")),
         "band_center_shift": _band_shift(data.get("band_center_shift", 0.0)),
         "flat_trust": _flat_trust(data.get("flat_trust", 1.0)),
+        "prob_sharpness": _prob_sharpness(data.get("prob_sharpness", 1.0)),
     }
 
 
@@ -171,7 +179,7 @@ def load_learned() -> dict:
 
 
 def load_review_memory() -> dict:
-    """读取近期记忆：套保持信、驱动因子、方向信任、区间中心、横盘信任。缺省为不干预。"""
+    """读取近期记忆。缺省为不干预。"""
     state = _load_state()
     return {
         "hedge_conviction": state["hedge_conviction"],
@@ -179,7 +187,13 @@ def load_review_memory() -> dict:
         "direction_trust": dict(state["direction_trust"]),
         "band_center_shift": state["band_center_shift"],
         "flat_trust": state["flat_trust"],
+        "prob_sharpness": state["prob_sharpness"],
     }
+
+
+def _prob_sharpness(value) -> float:
+    """概率锐度。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _SHARPNESS_BOUNDS), 4)
 
 
 def _flat_trust(value) -> float:
@@ -379,6 +393,39 @@ def _flat_call_stats(pairs) -> dict:
     return {
         "samples": samples,
         "rate": (hit / total) if samples >= _DRIVER_MIN_SAMPLES and total else None,
+    }
+
+
+def _sharpness_stats(pairs) -> dict:
+    """
+    有情景概率快照的周，近期加权 Brier。没有快照的周不计入。
+
+    样本少于 4 对时 brier 为 None。越小越好，均匀猜测约 0.667。
+    """
+    from reports.history import _BRIER_BASELINE, compute_brier, compute_prediction_review
+
+    weights = _pair_weights(len(pairs))
+    total = scored = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        scenarios = getattr(cur, "scenarios", None) or []
+        if not scenarios:
+            continue
+        try:
+            review = compute_prediction_review(cur, nxt.current_price)
+            brier = float(compute_brier(scenarios, review.direction_actual))
+        except Exception as e:
+            logger.warning("memory: 概率锐度复盘失败 %s: %s", getattr(cur, "report_date", "?"), e)
+            continue
+        if brier != brier:
+            continue
+        total += weight
+        scored += weight * brier
+        samples += 1
+    return {
+        "samples": samples,
+        "brier": (scored / total) if samples >= _DRIVER_MIN_SAMPLES and total else None,
+        "baseline": _BRIER_BASELINE,
     }
 
 
@@ -667,6 +714,33 @@ def apply_flat_trust(scenarios, flat_trust) -> bool:
     return True
 
 
+def apply_prob_sharpness(scenarios, sharpness) -> bool:
+    """
+    把情景概率往均匀拉。sharpness 为 1 时原样返回。
+
+    每个情景 p' = sharpness·p + (1-sharpness)/n，n 是情景个数。
+    """
+    if not scenarios:
+        return False
+    factor = _prob_sharpness(sharpness)
+    if factor >= 1.0:
+        return False
+    n = len(scenarios)
+    share = (1.0 - factor) / n
+    for scenario in scenarios:
+        try:
+            current = float(scenario.probability)
+        except (TypeError, ValueError):
+            return False
+        scenario.probability = factor * current + share
+    total_p = sum(float(s.probability) for s in scenarios)
+    if total_p <= 0:
+        return False
+    for scenario in scenarios:
+        scenario.probability = round(float(scenario.probability) / total_p, 4)
+    return True
+
+
 _DIRECTION_LABELS = {"up": "上涨", "down": "下跌"}
 
 
@@ -818,6 +892,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     direction_rates = _direction_rates(pairs)
     center_error = _band_center_error(pairs)
     flat_stats = _flat_call_stats(pairs)
+    sharp_stats = _sharpness_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -832,6 +907,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "direction_trust": dict(state["direction_trust"]),
         "band_center_shift": state["band_center_shift"],
         "flat_trust": state["flat_trust"],
+        "prob_sharpness": state["prob_sharpness"],
     }
     changed: list[dict] = []
 
@@ -997,6 +1073,37 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── prob_sharpness: Brier 差于均匀就往均匀靠；明显更好或本期没有概率快照则回到 1 ──
+    old_sharp = new_values["prob_sharpness"]
+    sharp_samples = sharp_stats["samples"]
+    sharp_brier = sharp_stats["brier"]
+    baseline = sharp_stats["baseline"]
+    if sharp_samples >= _DRIVER_MIN_SAMPLES and sharp_brier is not None:
+        if sharp_brier > baseline:
+            reason = f"情景概率 Brier {sharp_brier:.2f} > {baseline:.2f}，往均匀靠"
+            new_sharp = _step_toward(old_sharp, False, _SHARPNESS_BOUNDS)
+        elif sharp_brier < _SHARPNESS_BETTER:
+            reason = f"情景概率 Brier {sharp_brier:.2f} < {_SHARPNESS_BETTER:.2f}，锐度向基准回归"
+            new_sharp = _step_toward(old_sharp, True, _SHARPNESS_BOUNDS)
+        else:
+            new_sharp = old_sharp
+            reason = ""
+    elif sharp_samples == 0 and old_sharp < 1.0:
+        reason = "本期没有情景概率快照，锐度向基准回归"
+        new_sharp = _step_toward(old_sharp, True, _SHARPNESS_BOUNDS)
+    else:
+        new_sharp = old_sharp
+        reason = ""
+    new_sharp = _prob_sharpness(new_sharp)
+    if reason and new_sharp != old_sharp:
+        new_values["prob_sharpness"] = new_sharp
+        changed.append({
+            "param": "prob_sharpness",
+            "old": old_sharp,
+            "new": new_sharp,
+            "reason": reason,
+        })
+
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1026,6 +1133,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "direction_trust": dict(new_values["direction_trust"]),
         "band_center_shift": new_values["band_center_shift"],
         "flat_trust": new_values["flat_trust"],
+        "prob_sharpness": new_values["prob_sharpness"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

@@ -348,7 +348,8 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
 # ── 近期记忆：套保持信 / 驱动因子信任 ─────────────────────────────────────────
 
 def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
-                band_min=0.0, band_max=9999.0, drivers=None, direction="横盘"):
+                band_min=0.0, band_max=9999.0, drivers=None, direction="横盘",
+                scenarios=None):
     data = {
         "report_date": report_date,
         "forecast_week_start": report_date,
@@ -369,6 +370,8 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
         "outlook": "测试",
         "drivers": drivers or [],
     }
+    if scenarios is not None:
+        data["scenarios"] = scenarios
     (dir_path / f"weekly_summary_{report_date}.json").write_text(
         json.dumps(data, ensure_ascii=False), encoding="utf-8"
     )
@@ -549,6 +552,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "direction_trust": {"up": 0.1, "down": 1.0, "flat": 0.7, "nope": 0.5},
         "band_center_shift": 9,
         "flat_trust": 0.1,
+        "prob_sharpness": 0.1,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -557,6 +561,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["direction_trust"] == {"up": 0.6}
     assert memory["band_center_shift"] == 0.03
     assert memory["flat_trust"] == 0.6
+    assert memory["prob_sharpness"] == 0.6
 
 
 def test_apply_review_memory_changes_next_report():
@@ -712,6 +717,7 @@ def test_track_record_shows_review_memory():
             "direction_trust": {"up": 0.9},
             "band_center_shift": -0.005,
             "flat_trust": 0.9,
+            "prob_sharpness": 0.9,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -727,6 +733,8 @@ def test_track_record_shows_review_memory():
     assert "0.00 → -0.005" in html
     assert "横盘信任" in html and ">0.90<" in html
     assert "分给上涨和下跌" in html
+    assert "概率锐度" in html
+    assert "往三个情景均匀靠" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -1081,3 +1089,111 @@ def test_wrong_flat_gives_its_probability_to_the_two_sides():
     ]
     assert apply_flat_trust(untouched, 1.0) is False
     assert [s.probability for s in untouched] == [0.30, 0.40, 0.30]
+
+
+def _seed_sharp(dir_path, *, bad: bool, limit=None):
+    """
+    价格每步跌 2%。偶数对用罩住一切的宽区间（命中，但半宽太大，不算横盘主张），
+    奇数对脱靶。情景概率要么把 80% 押在横盘上（bad），要么押在下跌上。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    if bad:
+        snap = [
+            {"direction": "横盘", "probability": 0.80, "price_min": 1, "price_max": 2},
+            {"direction": "上涨", "probability": 0.10, "price_min": 1, "price_max": 2},
+            {"direction": "下跌", "probability": 0.10, "price_min": 1, "price_max": 2},
+        ]
+    else:
+        snap = [
+            {"direction": "下跌", "probability": 0.80, "price_min": 1, "price_max": 2},
+            {"direction": "横盘", "probability": 0.10, "price_min": 1, "price_max": 2},
+            {"direction": "上涨", "probability": 0.10, "price_min": 1, "price_max": 2},
+        ]
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = 0.0, 9999.0
+        _write_case(
+            dir_path, f"2026-10-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax,
+            scenarios=snap if nxt is not None and (limit is None or i < limit) else None,
+        )
+
+
+def test_recalibrate_overconfident_probs_lower_sharpness(learn_env):
+    """八周都把 80% 押在横盘上、价格却下跌：锐度降到 0.9。区间和套保不动。"""
+    _seed_sharp(learn_env / "history", bad=True)
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.9)
+    assert result["memory"]["flat_trust"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    changed = [c for c in result["changed"] if c["param"] == "prob_sharpness"]
+    assert len(changed) == 1
+    assert "往均匀靠" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["prob_sharpness"] == 0.6
+    assert all(c["param"] != "prob_sharpness" for c in floored["changed"])
+
+
+def test_recalibrate_sharp_and_right_probs_recover(learn_env):
+    _seed_sharp(learn_env / "history", bad=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.9,
+    }))
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.945)
+    assert [c["param"] for c in result["changed"]] == ["prob_sharpness"]
+
+
+def test_recalibrate_few_probability_snapshots_hold_sharpness(learn_env):
+    _seed_sharp(learn_env / "history", bad=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.8,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.8)
+
+
+def test_recalibrate_no_probability_snapshots_fade_sharpness(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "prob_sharpness": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["prob_sharpness"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+
+
+def test_low_sharpness_pulls_probabilities_toward_uniform():
+    from reports.learning import apply_prob_sharpness
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("盘", "横盘", 390, 410, 0.80, []),
+        Scenario("涨", "上涨", 400, 420, 0.10, []),
+        Scenario("跌", "下跌", 370, 400, 0.10, []),
+    ]
+    assert apply_prob_sharpness(bands, 0.6) is True
+    by = {s.direction: s.probability for s in bands}
+    assert by["横盘"] == pytest.approx(0.6134, abs=0.001)
+    assert by["上涨"] == pytest.approx(0.1933, abs=0.001)
+    assert by["下跌"] == pytest.approx(0.1933, abs=0.001)
+    assert sum(by.values()) == pytest.approx(1.0, abs=0.001)
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.80, [])]
+    assert apply_prob_sharpness(same, 1.0) is False
+    assert same[0].probability == 0.80

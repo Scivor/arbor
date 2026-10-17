@@ -620,6 +620,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             apply_band_center_shift,
             apply_direction_trust,
             apply_flat_trust,
+            apply_prob_sharpness,
             apply_driver_hedge_nudge,
             apply_driver_scenario_tilt,
             apply_driver_weights,
@@ -642,9 +643,10 @@ def run(config: PipelineConfig) -> PredictionReport:
             "direction_trust": {},
             "band_center_shift": 0.0,
             "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
         }
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        apply_band_center_shift = apply_flat_trust = None
+        apply_band_center_shift = apply_flat_trust = apply_prob_sharpness = None
         apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
         sync_dominant_scenario_event = ml_trust_multiplier = None
@@ -700,9 +702,13 @@ def run(config: PipelineConfig) -> PredictionReport:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 
     # 复盘修正落在收缩之后，避免被参考类再抹平。
-    # 先按方向信任和不可靠因子把概率让给横盘，横盘自己也说错时再分回去。
-    # 没动就不重算套保。
+    # 先把过度自信的概率往均匀拉，再按方向信任和不可靠因子让给横盘，
+    # 横盘自己也说错时再分回去。没动就不重算套保。
     tilted = False
+    if apply_prob_sharpness is not None and apply_prob_sharpness(
+        scenarios, memory.get("prob_sharpness", 1.0),
+    ):
+        tilted = True
     if apply_direction_trust is not None and apply_direction_trust(
         scenarios, memory.get("direction_trust") or {},
     ):

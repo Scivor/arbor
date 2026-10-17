@@ -92,6 +92,12 @@ def _current_learned_scales() -> dict:
             flat_trust = 1.0
         if flat_trust < 0.999:
             scales["flat_trust"] = flat_trust
+        try:
+            sharpness = float(memory.get("prob_sharpness", 1.0))
+        except (TypeError, ValueError):
+            sharpness = 1.0
+        if sharpness < 0.999:
+            scales["prob_sharpness"] = sharpness
         return scales
     except Exception:
         return {}

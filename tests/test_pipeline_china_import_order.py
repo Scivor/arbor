@@ -262,3 +262,25 @@ def test_distrusted_flat_forecast_splits_probability_to_both_sides(synthetic_pip
     assert _scenario_p(adjusted, "上涨") > _scenario_p(baseline, "上涨")
     assert _scenario_p(adjusted, "下跌") > _scenario_p(baseline, "下跌")
     assert sum(s.probability for s in adjusted.scenarios) == pytest.approx(1.0, abs=1e-3)
+
+
+def test_low_prob_sharpness_pulls_published_probabilities_together(synthetic_pipeline, monkeypatch):
+    """锐度 0.5 时，公布的最高概率下降，最低概率上升。"""
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 0.5,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    before = sorted(s.probability for s in baseline.scenarios)
+    after = sorted(s.probability for s in adjusted.scenarios)
+    assert after[-1] < before[-1]
+    assert after[0] > before[0]
+    assert sum(after) == pytest.approx(1.0, abs=1e-3)

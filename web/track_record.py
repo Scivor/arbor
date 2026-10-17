@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from html import escape as _esc
 
-from reports.fonts import css_sans_stack, css_serif_stack
+from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack, comfortaa_font_face_css
 
 
 def _build_learning_html(learning: dict | None) -> str:
@@ -182,6 +182,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 
     sans = css_sans_stack()
     serif = css_serif_stack()
+    display = css_display_stack()
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -189,6 +190,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>预测战绩 · Arbor</title>
 <style>
+{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
@@ -207,12 +209,22 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     justify-content: space-between;
     margin-bottom: 24px;
   }}
+  .tr-brand {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .tr-logo {{
+    height: 22px;
+    width: auto;
+    display: block;
+  }}
   .tr-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 22px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
   }}
   .tr-back {{
     font-size: 12px;
@@ -294,11 +306,11 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin-top: 14px;
   }}
   .tr-drivers-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 15px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
     margin: 28px 0 12px;
   }}
   .tr-drivers {{ margin-bottom: 4px; }}
@@ -363,7 +375,10 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <body>
 <div class="tr-wrap">
   <div class="tr-hdr">
-    <span class="tr-title">预测战绩</span>
+    <div class="tr-brand">
+      <img class="tr-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
+      <span class="tr-title">预测战绩</span>
+    </div>
     <a class="tr-back" href="/">← 返回最新周报</a>
   </div>
   {body}

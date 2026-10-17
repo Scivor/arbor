@@ -135,7 +135,10 @@ def test_build_report_html_handles_missing_market_snapshot():
 
     html = build_report_html(report, lang="zh")
 
-    assert "Arbor 咖啡期货下周预测" in html
+    assert "咖啡期货下周预测" in html
+    assert 'alt="Arbor"' in html
+    assert "hero-logo" in html
+    assert "Comfortaa" in html
     assert "N/A" in html
 
 

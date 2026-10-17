@@ -7,7 +7,8 @@ reports/learning.py
 - scenario_band_scale:  情景价格区间宽度（0.7 ~ 1.5）
 
 近期记忆（半衰期 4 对，旧的对错会淡）:
-- hedge_conviction:     套保比率偏离 65% 中性的幅度（0.6 ~ 1.0）
+- hedge_conviction:     套保比率偏离 65% 中性的幅度（0.6 ~ 1.0）。
+                        只统计比率 ≥70% 或 ≤50% 的周，停在中性不加分。
 - driver_trust:         每个驱动因子的权重（0.5 ~ 1.0，只降不放大）
                         仍在出现、且没有单独数值通道的因子，会把下一期
                         套保比率往反方向挪（每个满额 1 个百分点，合计不超过 6 个）
@@ -46,8 +47,9 @@ _HEDGE_BASELINE = 0.65
 _RECENCY_HALF_LIFE = 4.0
 _DRIVER_MIN_SAMPLES = 4
 
-# 信任低于这些档位时，报告里的「高 / 中 / 弱」降一档或直接落到「弱」。
-_WEIGHT_STEP = 0.85
+# 第一次降权是 ×0.9 = 0.90，低于这一档就让报告里的「高 / 中 / 弱」降一档。
+# 0.70 及以下直接落到「弱」。
+_WEIGHT_STEP = 0.95
 _WEIGHT_FLOOR = 0.70
 _WEIGHT_RANK = {"高": 3, "中": 2, "弱": 1}
 _RANK_WEIGHT = {3: "高", 2: "中", 1: "弱"}
@@ -172,14 +174,16 @@ def _memory_signals(pairs) -> tuple[float | None, dict[str, dict]]:
     """
     近期加权的套保有效率，以及每个驱动因子的应验率。
 
-    套保沿用 history.compute_prediction_review：中性仓位算「安全」。
+    套保只统计真正表过态的周（比率 ≥70% 或 ≤50%）。停在中性不算叫对，也不算叫错。
+    有方向的样本少于 4 对时不给有效率，避免一两周就改持信。
     驱动沿用 history.compute_attribution：中性判定不计入样本。
     权重只影响比率，samples 仍是未加权的对错次数。
     """
-    from reports.history import compute_attribution, compute_prediction_review
+    from reports.history import compute_attribution, compute_prediction_review, hedge_took_a_side
 
     weights = _pair_weights(len(pairs))
     hedge_hit = hedge_weight = 0.0
+    hedge_samples = 0
     drivers: dict[str, list] = {}
     for (cur, nxt), weight in zip(pairs, weights):
         try:
@@ -187,9 +191,11 @@ def _memory_signals(pairs) -> tuple[float | None, dict[str, dict]]:
         except Exception as e:
             logger.warning("memory: 套保复盘失败 %s: %s", getattr(cur, "report_date", "?"), e)
         else:
-            hedge_weight += weight
-            if review.hedge_advice_correct:
-                hedge_hit += weight
+            if hedge_took_a_side(getattr(cur, "hedge_ratio", None)):
+                hedge_weight += weight
+                hedge_samples += 1
+                if review.hedge_advice_correct:
+                    hedge_hit += weight
         try:
             attr = compute_attribution(cur, nxt.current_price)
         except Exception as e:
@@ -206,7 +212,7 @@ def _memory_signals(pairs) -> tuple[float | None, dict[str, dict]]:
             slot[1] += weight if verdict["verdict"] == "应验" else 0.0
             slot[2] += 1
 
-    hedge_accuracy = (hedge_hit / hedge_weight) if hedge_weight else None
+    hedge_accuracy = (hedge_hit / hedge_weight) if hedge_samples >= _DRIVER_MIN_SAMPLES and hedge_weight else None
     rates = {
         name: {"samples": samples, "rate": (hit / total) if total else 0.0}
         for name, (total, hit, samples) in drivers.items()

@@ -374,7 +374,7 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
     )
 
 
-def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None):
+def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None, hedge_for=None):
     """
     moves: 每一对的价格方向，"up" 或 "down"（幅度 2%，超过 ±1% 判定线）。
     最后一期没有下一跳，只用来给倒数第二期当实际价。
@@ -397,9 +397,10 @@ def _seed_hedges(dir_path, moves, hedge_ratio=0.80, drivers_for=None):
         drivers = []
         if drivers_for is not None and i < len(moves):
             drivers = drivers_for(i, moves[i])
+        ratio = hedge_for(i) if hedge_for is not None and i < len(moves) else hedge_ratio
         _write_case(
             dir_path, f"2026-07-{i + 1:02d}", current,
-            hedge_ratio=hedge_ratio, band_min=bmin, band_max=bmax, drivers=drivers,
+            hedge_ratio=ratio, band_min=bmin, band_max=bmax, drivers=drivers,
         )
 
 
@@ -449,6 +450,31 @@ def test_recalibrate_recent_hedges_outweigh_old_misses(learn_env):
     assert result["memory"]["hedge_accuracy"] > 0.65
     assert result["memory"]["hedge_conviction"] == pytest.approx(0.945)
     assert "向基准回归" in result["changed"][0]["reason"]
+
+
+def test_neutral_hedges_do_not_dilute_conviction(learn_env):
+    """停在 65% 的周不再算叫对。四次偏紧叫错就够降持信，即使另外四周中性。"""
+    def ratio(i):
+        return 0.80 if i < 4 else 0.65
+
+    _seed_hedges(learn_env / "history", ["up"] * 8, hedge_for=ratio)
+    result = recalibrate()
+    assert result["memory"]["hedge_accuracy"] == 0.0
+    assert result["memory"]["hedge_conviction"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+
+    for path in (learn_env / "history").glob("weekly_summary_*.json"):
+        path.unlink()
+    (learn_env / "learned_adjustments.json").unlink()
+    # 只有两次表态：样本不够，持信不动
+    _seed_hedges(
+        learn_env / "history", ["up"] * 8,
+        hedge_for=lambda i: 0.80 if i < 2 else 0.65,
+    )
+    short = recalibrate()
+    assert short["memory"]["hedge_accuracy"] is None
+    assert short["changed"] == []
+    assert short["memory"]["hedge_conviction"] == 1.0
 
 
 def test_recalibrate_driver_trust_shrinks_and_fades(learn_env):
@@ -542,6 +568,10 @@ def test_apply_review_memory_changes_next_report():
     assert bearish[0].weight == "中"
     assert bullish[0].weight == "高"  # 0.95 还在原档
 
+    fresh = [ResistParam("技术", "RSI超买", "70", "看跌", "高", "热")]
+    apply_driver_weights([], fresh, {"RSI超买": 0.9})
+    assert fresh[0].weight == "中"  # 第一次降权就改报告里的档
+
     apply_driver_weights(bearish, [], {"RSI超买": 0.7})
     assert bearish[0].weight == "弱"
 
@@ -629,6 +659,7 @@ def test_track_record_shows_review_memory():
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
     html = build_track_record_html(record, stats, learning)
     assert "套保持信" in html and "hedge_conviction" in html and "0.90" in html
-    assert "近期套保有效率 38%" in html
+    assert "有方向的套保有效率 38%" in html
+    assert "停在中性的周不给套保持信加分" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html

@@ -203,6 +203,15 @@ class PredictionReview:
     review_badge: str  # '命中' | '部分命中' | '偏离'
 
 
+def hedge_took_a_side(ratio: float) -> bool:
+    """比率落到 50%–70% 之外，才算这次套保做了方向主张。"""
+    try:
+        ratio = float(ratio)
+    except (TypeError, ValueError):
+        return False
+    return ratio >= 0.70 or ratio <= 0.50
+
+
 def compute_prediction_review(
     last: ReportSummary,
     current_price: float,
@@ -231,6 +240,7 @@ def compute_prediction_review(
     # Hedge advice correctness
     # If hedge was tight (high ratio) and price went down → correct
     # If hedge was loose (low ratio) and price went up → correct
+    # 中性仓位（hedge_took_a_side 为假）仍算安全，战绩页的套保有效率不变。
     hedge_tight = last.hedge_ratio >= 0.70
     hedge_loose = last.hedge_ratio <= 0.50
     if hedge_tight and direction_actual == "down":

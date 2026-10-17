@@ -37,7 +37,7 @@ def _build_learning_html(learning: dict | None) -> str:
         conviction = 1.0
     conviction_base = ' <span class="tr-learn-base">未校准</span>' if abs(conviction - 1.0) < 1e-9 else ""
     hedge_acc = memory.get("hedge_accuracy")
-    hedge_acc_text = f" · 近期套保有效率 {hedge_acc:.0%}" if isinstance(hedge_acc, (int, float)) else ""
+    hedge_acc_text = f" · 有方向的套保有效率 {hedge_acc:.0%}" if isinstance(hedge_acc, (int, float)) else ""
     trust = memory.get("driver_trust") or {}
     if trust:
         discounted = " · ".join(
@@ -53,7 +53,7 @@ def _build_learning_html(learning: dict | None) -> str:
         trust_html = ""
     if learning.get("memory") is not None:
         trust_html += """
-    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期套保：看跌少套，看涨多套。每个约 1 到 5 个百分点，合计不超过 6 个。机器学习和 RSI 走各自的系数，不在这里重复计算。</div>"""
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期套保：看跌少套，看涨多套。每个约 1 到 5 个百分点，合计不超过 6 个。机器学习和 RSI 走各自的系数。停在中性的周不给套保持信加分。</div>"""
 
     rows = f"""
     <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>

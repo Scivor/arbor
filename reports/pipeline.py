@@ -925,10 +925,11 @@ def run(config: PipelineConfig) -> PredictionReport:
                  notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
     if report.llm_commentary:
+        # 有 LLM key 时通常是 DeepSeek；规则兜底时 source 仍标 Arbor（可靠性同级）
         prov.add("ai_commentary", "采购下一步建议",
-                 "DeepSeek", "https://api.deepseek.com",
+                 "Arbor / DeepSeek", "",
                  latency="实时生成", reliability="C",
-                 notes="LLM 单轮合成采购行动建议，非实时检索")
+                 notes="优先 LLM 合成；无 key 时规则拼装，均为行动建议非实时检索")
 
     return report
 
@@ -939,10 +940,13 @@ def run(config: PipelineConfig) -> PredictionReport:
 
 def _attach_llm_commentary(report: PredictionReport) -> None:
     """
-    生成中英双语「采购下一步建议」并挂到报告（每期 2 次 LLM 单轮调用，成本可忽略）。
-    任一语言失败静默跳过，不影响另一语言与出报主流程。
+    生成中英双语「采购下一步建议」并挂到报告。
+
+    优先 LLM 单轮合成；无 key / 失败时回退规则版（reports.procurement_briefing），
+    保证周报始终有可执行的采购简报。规则版不参与「LLM 评分因子」时可仍带方向。
     """
     from reports.llm_commentary import generate_commentary
+    from reports.procurement_briefing import build_procurement_briefing
 
     commentary = generate_commentary(report, lang="zh")
     if commentary:
@@ -953,6 +957,18 @@ def _attach_llm_commentary(report: PredictionReport) -> None:
                 report.llm_commentary_en = en[0]  # direction 共用中文标记，无需重复存
         except Exception as e:
             logger.warning(f"english commentary failed: {e}")
+        return
+
+    # LLM 不可用 → 规则兜底（始终有五段行动建议）
+    try:
+        text, direction = build_procurement_briefing(report, lang="zh")
+        report.llm_commentary = text
+        report.llm_direction = direction
+        en_text, _ = build_procurement_briefing(report, lang="en")
+        report.llm_commentary_en = en_text
+        logger.info("procurement briefing: used rule-based fallback (no LLM)")
+    except Exception as e:
+        logger.warning(f"rule-based procurement briefing failed: {e}")
 
 
 def generate_demo_report() -> PredictionReport:

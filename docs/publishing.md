@@ -50,5 +50,5 @@ SMTP 通过 `COFFEE_SMTP_HOST/PORT/USER/PASS` 配置。
   确认出报是否成功；再用 `python scripts/scheduler.py --alert-test` 验证 Telegram 链路。
 - **提醒收到但没有 report.md**：markdown 只在 `--format html|both` 下产出，
   确认调度命令的 `--format` 为 both。
-- **AI 点评缺席**：`DEEPSEEK_API_KEY` 未配置或调用失败（静默降级），
-  检查 `~/.arbor/.env`。
+- **采购建议只有规则版、文风偏模板**：`DEEPSEEK_API_KEY` 未配置或调用失败时
+  会回退规则拼装（仍有五段行动建议）；要 LLM 润色请检查 `~/.arbor/.env`。

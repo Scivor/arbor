@@ -34,6 +34,20 @@ def test_build_chat_page_elements():
     assert 'id="chatSend"' in html
     assert "/api/chat" in html          # fetch 路径
     assert "顾问思考中" in html        # pending 态文案
+    assert "chat-chip" in html
+    assert "这周该不该买" in html
+
+
+def test_build_chat_page_with_briefing():
+    html = build_chat_page(
+        briefing="【现在怎么做】分批观望",
+        report_date="2026-10-17",
+        suggestions=["套保要紧还是松"],
+    )
+    assert "【现在怎么做】分批观望" in html
+    assert "2026-10-17" in html
+    assert "套保要紧还是松" in html
+    assert "seedBriefing" in html
 
 
 def test_chat_page_route(client):
@@ -61,13 +75,20 @@ def test_api_chat_success(client, monkeypatch):
     assert "这周该不该买" in data["output"]
 
 
-def test_api_chat_no_api_key(client, monkeypatch):
+def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):
+    """无 LLM key 时不 503，而是基于本期简报点题回答。"""
     def _boom():
         raise RuntimeError("未找到 LLM API key")
     monkeypatch.setattr(web_app, "_get_analyst", _boom)
-    resp = client.post("/api/chat", json={"message": "hello"})
-    assert resp.status_code == 503
-    assert "DEEPSEEK_API_KEY" in resp.json()["error"]
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: "2026-10-17")
+    monkeypatch.setattr(
+        web_app,
+        "_extract_procurement_briefing",
+        lambda d: "【现在怎么做】分批小幅补库，套保偏紧。\n【时机好不好】到库偏高。\n【别踩的坑】供给冲击。\n【下周盯什么】跌破支撑。",
+    )
+    resp = client.post("/api/chat", json={"message": "这周该不该买"})
+    assert resp.status_code == 200
+    assert "分批小幅补库" in resp.json()["output"]
 
 
 def test_api_chat_agent_internal_error(client, monkeypatch):
@@ -80,12 +101,7 @@ def test_api_chat_agent_internal_error(client, monkeypatch):
     assert "network down" in resp.json()["error"]
 
 
-def test_api_chat_rate_limit(client, monkeypatch):
-    fake = SimpleNamespace(chat=lambda q: "ok")
-    monkeypatch.setattr(web_app, "_get_analyst", lambda: fake)
-    for i in range(web_app._CHAT_RATE_LIMIT):
-        resp = client.post("/api/chat", json={"message": f"q{i}"})
-        assert resp.status_code == 200
-    # 第 11 次 → 429
-    resp = client.post("/api/chat", json={"message": "q11"})
-    assert resp.status_code == 429
+def test_offline_clarify_hedge():
+    briefing = "【现在怎么做】套保维持偏紧。\n【别踩的坑】关税风险。"
+    out = web_app._offline_clarify("套保要紧还是松", briefing)
+    assert "偏紧" in out

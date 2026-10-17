@@ -161,7 +161,7 @@ def _build_publish_notice(report, report_dir: Path, today_str: str) -> str:
     return (
         f"📰 <b>Arbor 周报已生成 {today_str}</b>\n"
         f"现价 {price} | 套保 {hedge} | ML {ml}\n"
-        f"AI 点评: {commentary or '无'}\n"
+        f"采购建议: {commentary or '无'}\n"
         f"公众号 markdown: {report_dir}/report.md\n"
         f"在线版: http://<host>/reports/{today_str}/"
     )

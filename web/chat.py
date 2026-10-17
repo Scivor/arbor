@@ -111,10 +111,24 @@ def build_chat_page(
     background: #faf9f5;
     border: 1px solid #e8e6dc;
     border-radius: 6px;
-    padding: 28px 20px;
-    text-align: center;
+    padding: 22px 20px 18px;
+    text-align: left;
+    color: #504e49;
+    font-size: 13.5px;
+    line-height: 1.65;
+  }}
+  .chat-empty-kicker {{
+    font-family: {serif};
+    font-size: 18px;
+    font-weight: 600;
+    color: #141413;
+    margin-bottom: 8px;
+  }}
+  .chat-empty p {{ margin: 0; }}
+  .chat-empty-ask {{
+    margin-top: 8px;
     color: #6b6a64;
-    font-size: 13px;
+    font-size: 12.5px;
   }}
   .chat-brief-meta {{
     font-size: 11px;
@@ -229,7 +243,11 @@ def build_chat_page(
     </div>
   </div>
   <div class="chat-list" id="chatList">
-    <div class="chat-empty" id="chatEmpty">追问采购建议，如「这周该不该买」「套保要紧还是松」「到库成本怎么看」</div>
+    <div class="chat-empty" id="chatEmpty">
+      <div class="chat-empty-kicker">顾问在岗，简报未到</div>
+      <p>没有本期采购简报时，我只接问题，不编数字，也不替你下单。周六周报靠岸之后，开场白会换成五段采购建议。</p>
+      <p class="chat-empty-ask">可以先点下面的句子。没有简报时，我会老实说还不能回答。</p>
+    </div>
   </div>
   <div class="chat-chips" id="chatChips" hidden></div>
   <div class="chat-input-row">

@@ -318,21 +318,99 @@ body {
   margin: 0 !important;
 }
 
-/* ── Empty State ── */
-.empty-state {
+/* ── No-report page: one drawing, one handwritten line ── */
+@font-face {
+  font-family: "Quiet Hand";
+  src: url("/static/fonts/quiet-hand-zh.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+3002, U+4E0A, U+5468, U+5728, U+62A5, U+6D77, U+8FD8;
+}
+@font-face {
+  font-family: "Quiet Hand";
+  src: url("/static/fonts/quiet-hand-en.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0020, U+002E, U+0054, U+0061, U+0065, U+0068-0069, U+006C, U+006F-0070, U+0072-0074;
+}
+.quiet {
+  min-height: calc(100vh - 56px - 72px - 208px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   text-align: center;
-  padding: 80px 24px;
+  padding: 12px 0 8px;
+}
+.quiet img {
+  width: min(340px, 78vw);
+  height: auto;
+  display: block;
+  border: 1px solid #d4d0c3;
+  background: #f7f5ee;
+  padding: 18px;
+}
+.quiet p {
+  margin-top: 28px;
+  font-family: "Quiet Hand", cursive;
+  font-size: 42px;
+  font-weight: 400;
+  letter-spacing: 0.03em;
+  line-height: 1.3;
+  color: #3a322c;
+}
+.specimen-note {
+  font-size: 14px;
+  color: var(--olive);
+  margin: -8px 0 18px;
+  max-width: 62ch;
+}
+.specimen-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.specimen {
+  background: var(--ivory);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 16px 16px 14px;
+}
+.specimen-tag {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--brand);
+  background: #E4ECF5;
+  border-radius: 4px;
+  padding: 2px 8px;
+  margin-bottom: 12px;
+}
+.specimen-date {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+.specimen-sig {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  color: var(--brand);
+  margin-bottom: 4px;
+}
+.specimen-price {
+  font-size: 13px;
   color: var(--stone);
 }
-.empty-state h2 {
-  font-family: var(--serif);
-  font-size: 22px;
-  font-weight: 600;
-  color: var(--dark-warm);
-  margin-bottom: 8px;
-}
-.empty-state p {
-  font-size: 14px;
+.specimen-hedge {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 12px;
   color: var(--olive);
 }
 
@@ -356,4 +434,6 @@ body {
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .report-item { flex-direction: column; align-items: flex-start; gap: 10px; }
   .report-item-actions { width: 100%; justify-content: flex-end; }
+  .specimen-grid { grid-template-columns: 1fr; }
+  .quiet p { font-size: 34px; margin-top: 22px; }
 }

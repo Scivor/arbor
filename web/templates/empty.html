@@ -1,10 +1,10 @@
 {% extends "base.html" %}
 
-{% block title %}Arbor{% endblock %}
+{% block title %}{% if lang == 'en' %}The report is still at sea · Arbor{% else %}周报还在海上 · Arbor{% endif %}{% endblock %}
 
 {% block content %}
-<div class="empty-state">
-  <h2>{% if lang == 'en' %}No reports yet{% else %}暂无报告{% endif %}</h2>
-  <p>{% if lang == 'en' %}Reports are auto-generated every Saturday. Please check back later.{% else %}报告将在每周六凌晨自动生成。请稍后再来。{% endif %}</p>
-</div>
+<section class="quiet">
+  <img src="/static/img/empty-desk.jpg" alt="{% if lang == 'en' %}Ink sketch of an empty desk, a lamp, a coffee cup, and a blank sheet.{% else %}钢笔速写：空桌子、吊灯、咖啡杯和一张白纸。{% endif %}">
+  <p>{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
+</section>
 {% endblock %}

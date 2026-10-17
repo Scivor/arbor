@@ -29,6 +29,14 @@
     margin-bottom: 8px;
     letter-spacing: 0.3px;
   }
+  .error-quip {
+    font-family: var(--serif);
+    font-size: 16px;
+    line-height: 1.5;
+    color: var(--olive);
+    margin: 0 auto 28px;
+    max-width: 36ch;
+  }
   .error-desc {
     font-size: 14px;
     color: var(--olive);
@@ -66,6 +74,29 @@
   <div class="error-wrap">
     <div class="error-code">{{ status_code }}</div>
     <div class="error-title">{{ title }}</div>
+    <p class="error-quip">
+      {% if lang == 'en' %}
+        {% if status_code == 404 %}The lot tag does not match a shelf. The issue may not exist yet.
+        {% elif status_code == 400 %}The request looks like a cupping sheet filled in the wrong column.
+        {% elif status_code == 403 %}This warehouse is not open to you.
+        {% elif status_code == 422 %}The form can be read. The shape of the numbers cannot.
+        {% elif status_code == 500 %}The roaster shorted. The ledger is still here.
+        {% elif status_code == 502 %}The upstream dock is not answering.
+        {% elif status_code == 503 %}The floor is being swept before Saturday.
+        {% else %}This page has no state to hand over. The error itself is certain.
+        {% endif %}
+      {% else %}
+        {% if status_code == 404 %}货单上的批号对不上架位。也许这期还没生成。
+        {% elif status_code == 400 %}请求像一份填错栏位的杯测表。
+        {% elif status_code == 403 %}这间仓库不对你开放。
+        {% elif status_code == 422 %}表格能读，数字的形状不对。
+        {% elif status_code == 500 %}烘焙炉这边短路了，账本还在。
+        {% elif status_code == 502 %}上游码头暂时没回信号。
+        {% elif status_code == 503 %}周六之前，地板正在打扫。
+        {% else %}这页没有状态可交。错误本身倒是确定的。
+        {% endif %}
+      {% endif %}
+    </p>
     <div class="error-desc">{{ description }}</div>
     <div class="error-actions">
       <a href="{% if lang == 'en' %}/?lang=en{% else %}/{% endif %}" class="btn btn-primary">{% if lang == 'en' %}Back to Latest{% else %}返回最新报告{% endif %}</a>

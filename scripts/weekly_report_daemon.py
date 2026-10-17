@@ -4,8 +4,9 @@ scripts/weekly_report_daemon.py
 咖啡期货周报定时生成守护进程
 
 功能:
-  - 每周一早上 9:00 Asia/Shanghai 生成「下周」预测报告 (HTML)（邮件渠道）
-  - 主出报路径仍是 scripts/scheduler.py（周六 03:00 Asia/Shanghai）
+  - 邮件旁路：每周一 9:00 Asia/Shanghai 生成 HTML 并 SMTP 投递
+  - **非生产真相源** — 不写入 web/static/reports/；站内周报以
+    scripts/scheduler.py（周六 03:00 Asia/Shanghai）为准（见 docs/publishing.md）
   - forecast_offset 默认 0：周一跑时覆盖下一完整 Mon–Fri
   - 支持立即运行一次 (--now)
   - 支持自定义输出目录 (--output-dir)

@@ -2,6 +2,22 @@
 
 每周一篇，全流程约 5 分钟手工。
 
+## 出报真相源（必读）
+
+| 角色 | 脚本 | 时刻 | 产物去向 | 是否生产真相源 |
+|------|------|------|----------|----------------|
+| **主出报** | `scripts/scheduler.py` | 每周六 **03:00 Asia/Shanghai** | `web/static/reports/<date>/`（站内周报 / PDF / MD / briefing.json） | **是** |
+| 邮件旁路 | `scripts/weekly_report_daemon.py` | 每周一 **09:00 Asia/Shanghai** | 本地 HTML + SMTP | **否**（只服务订阅邮件，不覆盖站内周报） |
+
+运维与排障以周六 `scheduler` 为准。不要把周一 daemon 的输出当成「最新一期周报」。
+手动补发也请用：
+
+```bash
+python scripts/scheduler.py --now --format both
+```
+
+---
+
 ## 1. 自动出报（周六 03:00 Asia/Shanghai）
 
 launchd / systemd 调度的 `scripts/scheduler.py` 每周六 **03:00 Asia/Shanghai** 自动生成周报
@@ -30,10 +46,10 @@ launchd / systemd 调度的 `scripts/scheduler.py` 每周六 **03:00 Asia/Shangh
 3. 重点检查三块：
    - **表格**（市场快照 / 关键价位 / 情景分析）是否渲染正常；
    - **情景分析**的概率与区间数字；
-   - **采购下一步建议**小节是否存在（无 LLM key 时该节缺席，属正常降级）。
+   - **采购下一步建议**小节（无 LLM key 时为规则五段简报，属正常降级；有 `DEEPSEEK_API_KEY` 时会 LLM 润色）。
 4. 发布到小报童 / 知识星球。
 
-## 4. 邮件订阅渠道
+## 4. 邮件订阅渠道（旁路，非真相源）
 
 订阅者管理（数据存 `~/.arbor/subscribers.json`，用户数据不进 git）：
 
@@ -43,9 +59,9 @@ python scripts/subscribers.py remove user@example.com # 退订（保留记录）
 python scripts/subscribers.py list                    # 查看 active 订阅者
 ```
 
-`scripts/weekly_report_daemon.py` 每周一 **09:00 Asia/Shanghai** 生成报告并通过 SMTP 发送给
-active 订阅者（邮件渠道；主出报仍以周六 scheduler 为准）；订阅表为空时回退 `COFFEE_SMTP_TO`。
-SMTP 通过 `COFFEE_SMTP_HOST/PORT/USER/PASS` 配置。
+`scripts/weekly_report_daemon.py` 每周一 **09:00 Asia/Shanghai** 另生成一份 HTML 并通过 SMTP 发给
+active 订阅者。**该路径不写入 `web/static/reports/`，不能替代周六主出报。**
+订阅表为空时回退 `COFFEE_SMTP_TO`。SMTP 通过 `COFFEE_SMTP_HOST/PORT/USER/PASS` 配置。
 
 ## 故障排查
 
@@ -55,3 +71,4 @@ SMTP 通过 `COFFEE_SMTP_HOST/PORT/USER/PASS` 配置。
   确认调度命令的 `--format` 为 both。
 - **采购建议只有规则版、文风偏模板**：`DEEPSEEK_API_KEY` 未配置或调用失败时
   会回退规则拼装（仍有五段行动建议）；要 LLM 润色请检查 `~/.arbor/.env`。
+- **站内周报与邮件内容不一致**：以 `web/static/reports/<date>/`（周六 scheduler）为准。

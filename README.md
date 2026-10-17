@@ -16,7 +16,7 @@
     金融域: KC=F价格 / USD/CNY / Polymarket概率
     政策域: 关税 / 贸易战 / LDC地位 / 政策新闻
          ↓
-  评分引擎 (core/state/scoring.py) → 动态套保比率 (20%~95%)
+  评分引擎 (arbor/domain/scoring.py) → 动态套保比率 (20%~95%)
     事件按类型半衰期衰减 → 14 个因子簇内递减求和 → tanh 软饱和
     CLI / 周报 / 回测共用同一个纯函数
 
@@ -24,13 +24,15 @@
     市场快照 / 情景分析 / ML预测 / 套保建议
     + 中国进口商视角 (汇率·到库成本·政策事件)
     + 参考类基础概率 / 凯利仓位影子（只读）
-    → HTML (双语) / PDF / Markdown / 文本
+    + 采购下一步建议（规则五段简报；有 LLM key 时润色）
+    → HTML (双语) / PDF / Markdown / briefing.json
+    主出报: scripts/scheduler.py（周六 03:00 Asia/Shanghai → web/static/reports/）
 
 战绩复盘 (reports/history + web/track_record)
     Brier 概率校准 / 驱动因子应验率 / 系数自校准 / 凯利影子账本
 
 LLM 智能体 (agent/)
-    CoffeeAnalyst (LangChain Tools Agent) + 6 个查询工具
+    CoffeeAnalyst（采购顾问人设）+ 13 个查询工具；追问页 /chat/
 
 回测引擎 (backtest/)
     事件驱动回测: 无套保 / 静态65% / 事件驱动 三策略对比
@@ -113,18 +115,23 @@ config/  scripts/  deploy/  tests/
 
 ---
 
-## Agent 工具 (6 个)
+## Agent 工具 (13 个)
 
 `agent/tools/system.py`: `query_system_status` / `get_recent_events` / `scan_all_domains`
-`agent/tools/market.py`: `fetch_market_price` / `get_ml_advice` / `get_landed_cost`
+
+`agent/tools/market.py`: `fetch_market_price` / `get_ml_advice` / `get_landed_cost` / `get_procurement_briefing`
+
+`agent/tools/analysis.py`: `get_track_record` / `get_driver_stats` / `get_learning_status` / `get_kelly_shadow` / `get_reference_class` / `get_policy_events`
 
 ---
 
 ## 周报与战绩页
 
-- **周报站** (`web/`): FastAPI 静态站，`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩页；`scripts/scheduler.py` 每周六 03:00 Asia/Shanghai 自动生成 HTML (中英双语) + PDF + Markdown 并写入 `web/static/reports/<日期>/`（预测即将到来的 Mon–Fri）。
-- **战绩页** (`/track-record/`): 区间命中/方向/套保三率、平均 Brier 与概率校准桶、驱动因子应验率、系数自校准状态（learning.py changelog）、凯利影子账本。
-- **无人值守**: macOS 用 launchd（`deploy/com.arbor.weekly-report.plist`），Linux 用 systemd（`deploy/coffee-*.service`）；数据源降级/生成失败时 Telegram 告警（`core/notify/ops_alert.py`，验证：`python scripts/scheduler.py --alert-test`）。详见 DEPLOY.md。
+- **生产真相源**: `scripts/scheduler.py` 每周六 **03:00 Asia/Shanghai** 写入 `web/static/reports/<日期>/`（HTML 中英 + PDF + Markdown + `briefing.json`；预测即将到来的 Mon–Fri）。站内 `/`、公众号稿、采购顾问都以这里为准。
+- **邮件旁路**（非真相源）: `scripts/weekly_report_daemon.py` 每周一 09:00 Asia/Shanghai 仅用于 SMTP 订阅投递，**不覆盖**站内周报。详见 `docs/publishing.md`。
+- **周报站** (`web/`): FastAPI；`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩，`/chat/` 采购顾问追问。
+- **战绩页** (`/track-record/`): 区间命中/方向/套保三率、平均 Brier 与概率校准桶、驱动因子应验率、系数自校准状态、凯利影子账本。
+- **无人值守**: macOS launchd（`deploy/com.arbor.weekly-report.plist`）或 Linux systemd（`deploy/coffee-*.service`）拉起 **scheduler**；数据源降级/生成失败时 Telegram 告警（验证：`python scripts/scheduler.py --alert-test`）。详见 DEPLOY.md。
 
 ---
 
@@ -144,7 +151,7 @@ PDF 导出另需 `playwright`（`python -m playwright install chromium`）。
 ## 测试
 
 ```bash
-python -m pytest tests/ -q    # 150 个测试（无网络依赖，合成数据）
+python -m pytest tests/ -q    # 364 个测试（无网络依赖，合成数据）
 ```
 
 ---

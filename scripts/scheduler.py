@@ -82,7 +82,7 @@ def generate_and_publish(
         md_en_path.write_text(export_markdown(report, lang="en"), encoding="utf-8")
         logger.info("Markdown saved: %s (zh) + %s (en)", md_path, md_en_path)
 
-    # ── Generate PDF ──
+    # ── Generate PDF（缺 playwright/textutil 时降级：HTML 已出，不阻断发布）──
     if output_format in ("pdf", "both"):
         html = build_report_html(report, lang="zh")
         with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
@@ -91,6 +91,8 @@ def generate_and_publish(
         try:
             html_to_pdf(tmp_html, str(pdf_path))
             logger.info("PDF saved: %s", pdf_path)
+        except Exception as e:
+            logger.warning("PDF skipped (HTML/Markdown still published): %s", e)
         finally:
             os.unlink(tmp_html)
 

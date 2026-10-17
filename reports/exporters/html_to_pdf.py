@@ -183,13 +183,19 @@ def html_to_pdf(html_path: str, pdf_path: str) -> None:
     """Convert HTML file to PDF using Playwright (headless Chromium).
 
     Falls back to macOS textutil if Playwright is unavailable.
-    Preserves CSS colors, fonts, and layout via print-background.
+    Raises RuntimeError if no backend works (caller may soft-skip).
     """
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
-        _html_to_pdf_textutil(html_path, pdf_path)
-        return
+        if _textutil_available():
+            _html_to_pdf_textutil(html_path, pdf_path)
+            return
+        raise RuntimeError(
+            "PDF backend unavailable: install playwright "
+            "(pip install playwright && playwright install chromium) "
+            "or run on macOS with textutil"
+        )
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -206,6 +212,11 @@ def html_to_pdf(html_path: str, pdf_path: str) -> None:
 
     if not os.path.exists(pdf_path):
         raise RuntimeError(f"PDF not created: {pdf_path}")
+
+
+def _textutil_available() -> bool:
+    from shutil import which
+    return which("textutil") is not None
 
 
 def _html_to_pdf_textutil(html_path: str, pdf_path: str) -> None:

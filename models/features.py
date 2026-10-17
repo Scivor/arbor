@@ -189,22 +189,21 @@ class FeatureEngine:
         price_dates = df.reset_index()
         idx_name = price_dates.columns[0]
         price_dates = price_dates.rename(columns={idx_name: 'date'})
-        price_dates['date'] = pd.to_datetime(price_dates['date']).dt.floor('s')
 
         # 统一 ONI 列名
         if 'timestamp' in oni_work.columns:
             oni_work = oni_work.rename(columns={'timestamp': 'date'})
 
-        # Normalize datetime precision
+        # Normalize datetime precision（yfinance 可能是 [s]，ONI 可能是 [us]/
+        # merge_asof 要求两侧 dtype 完全一致）
+        price_dates['date'] = pd.to_datetime(price_dates['date']).astype('datetime64[ns]')
         oni_work = oni_work.sort_values('date').copy()
-        oni_work['date'] = pd.to_datetime(oni_work['date']).dt.floor('s')
+        oni_work['date'] = pd.to_datetime(oni_work['date']).astype('datetime64[ns]')
         price_dates = price_dates.sort_values('date')
 
         merged = pd.merge_asof(
             price_dates,
-            oni_work[['date', 'oni', 'phase']].assign(
-                date=lambda x: pd.to_datetime(x['date']).dt.floor('s')
-            ),
+            oni_work[['date', 'oni', 'phase']],
             left_on='date',
             right_on='date',
             direction='backward',

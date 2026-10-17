@@ -4,7 +4,12 @@ tests/test_procurement_briefing.py
 """
 
 from reports.demo_data import demo_report
-from reports.procurement_briefing import build_procurement_briefing
+from reports.procurement_briefing import (
+    build_procurement_briefing,
+    extract_briefing_from_html,
+    format_followup_context,
+    load_latest_published_briefing,
+)
 from reports.pipeline import _attach_llm_commentary
 
 
@@ -13,6 +18,11 @@ def test_rule_briefing_has_five_sections():
     assert direction in ("上涨", "下跌", "横盘")
     for title in ("【现在怎么做】", "【时机好不好】", "【为什么】", "【别踩的坑】", "【下周盯什么】"):
         assert title in text
+
+
+def test_rule_briefing_includes_landed_when_china_present():
+    text, _ = build_procurement_briefing(demo_report(with_china=True), lang="zh")
+    assert "CNY/斤" in text or "到库" in text
 
 
 def test_rule_briefing_en_sections():
@@ -35,3 +45,39 @@ def test_attach_falls_back_without_llm(monkeypatch):
     assert report.llm_commentary_en is not None
     assert "[Do now]" in report.llm_commentary_en
     assert report.llm_direction in ("上涨", "下跌", "横盘")
+
+
+def test_extract_and_load_published_briefing(tmp_path):
+    day = tmp_path / "2026-10-17"
+    day.mkdir()
+    (day / "report.html").write_text(
+        '<div class="outlook-box ai-commentary">【现在怎么做】分批观望</div>',
+        encoding="utf-8",
+    )
+    assert extract_briefing_from_html((day / "report.html").read_text()) == "【现在怎么做】分批观望"
+    loaded = load_latest_published_briefing(tmp_path)
+    assert loaded == ("2026-10-17", "【现在怎么做】分批观望")
+
+
+def test_format_followup_context():
+    ctx = format_followup_context("【现在怎么做】观望", "套保要紧还是松", "2026-10-17")
+    assert "本期已发布采购简报" in ctx
+    assert "套保要紧还是松" in ctx
+    assert "2026-10-17" in ctx
+
+
+def test_get_procurement_briefing_tool(tmp_path, monkeypatch):
+    day = tmp_path / "2026-10-17"
+    day.mkdir()
+    (day / "report.html").write_text(
+        '<div class="outlook-box ai-commentary">【现在怎么做】观望为主</div>',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "reports.procurement_briefing._DEFAULT_REPORTS_DIR",
+        tmp_path,
+    )
+    from agent.tools.market import get_procurement_briefing
+    out = get_procurement_briefing.invoke({})
+    assert "2026-10-17" in out
+    assert "观望为主" in out

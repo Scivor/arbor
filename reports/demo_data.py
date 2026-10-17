@@ -6,7 +6,7 @@ Seed / demo data for testing and demonstration.
 from reports.models import (
     MarketSnapshot, ClimateSnapshot, Level, Scenario,
     SupportParam, ResistParam, HedgeAdvice, PredictionReport,
-    MLSnapshot, build_report,
+    MLSnapshot, ChinaImportSnapshot, build_report,
 )
 
 
@@ -134,10 +134,41 @@ def demo_hedge_advice() -> HedgeAdvice:
     )
 
 
-def demo_report() -> PredictionReport:
+def demo_china_import(hedge_ratio: float = 0.65) -> ChinaImportSnapshot:
+    """Demo 中国进口快照（汇率 + 到库成本 + 政策），供完整演示/简报测试。"""
+    from core.cost.landed_cost import LandedCostCalculator
+
+    landed = LandedCostCalculator().calculate(293.70, 7.25, hedge_ratio)
+    return ChinaImportSnapshot(
+        fx_rate=7.25,
+        fx_source="Yahoo Finance",
+        landed=landed,
+        policy_events=[
+            {
+                "event_type": "china_tariff_change",
+                "severity": 3,
+                "narrative": "近7日无新增关税上调；维持现行进口税率观察",
+                "source": "PolicyNews",
+                "timestamp": "2026-10-15T09:00:00",
+            }
+        ],
+        ico_spot={
+            "date": "15-Oct",
+            "icip": 286.87,
+            "month_avg": 290.60,
+            "dod_change_pct": -1.2,
+            "source": "ICO I-CIP",
+        },
+    )
+
+
+def demo_report(*, with_china: bool = False) -> PredictionReport:
     """
     Return a fully-populated demo PredictionReport.
     Suitable for testing all export formats.
+
+    Args:
+        with_china: True 时挂上汇率/到库成本/政策（默认 False，保持「板块可隐藏」测试）。
     """
     market = demo_market_snapshot()
     climate = demo_climate_snapshot()
@@ -176,7 +207,7 @@ def demo_report() -> PredictionReport:
         ],
     )
 
-    return build_report(
+    report = build_report(
         ticker="KC=F",
         market=market,
         related_markets={"Gold (GC=F)": -6.9, "Sugar (SB=F)": -1.3, "DJIA": -4.0},
@@ -191,3 +222,8 @@ def demo_report() -> PredictionReport:
         outlook=outlook,
         risk_warnings=risk_warnings,
     )
+    if with_china:
+        report.china_import = demo_china_import(
+            hedge_ratio=hedge.ratio if hedge else 0.65
+        )
+    return report

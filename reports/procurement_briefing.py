@@ -4,11 +4,17 @@ reports/procurement_briefing.py
 
 不替代 LLM 文案质量，只保证：没 key / 调用失败时，周报与聊天页仍有可执行简报。
 方向三值与归因链路一致：上涨 / 下跌 / 横盘。
+
+另提供：从已发布周报 HTML 读取本期简报（供 web 聊天页与 Agent 工具共用）。
 """
 
 from __future__ import annotations
 
-from typing import Optional
+import re
+from pathlib import Path
+from typing import Optional, Tuple
+
+_DEFAULT_REPORTS_DIR = Path(__file__).resolve().parent.parent / "web" / "static" / "reports"
 
 
 def _dominant_direction(report) -> str:
@@ -227,3 +233,71 @@ DEFAULT_SUGGESTIONS_EN = [
     "How to read landed cost?",
     "What if support breaks?",
 ]
+
+
+def extract_briefing_from_html(html: str) -> Optional[str]:
+    """从周报 HTML 抽出「采购下一步建议」纯文本。"""
+    m = re.search(
+        r'class="outlook-box ai-commentary"[^>]*>(.*?)</div>',
+        html,
+        re.S,
+    )
+    if not m:
+        return None
+    raw = m.group(1)
+    raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
+    raw = re.sub(r"<[^>]+>", "", raw)
+    raw = (
+        raw.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+        .replace("&quot;", '"')
+        .replace("&#39;", "'")
+    )
+    return raw.strip() or None
+
+
+def load_latest_published_briefing(
+    reports_dir: Optional[Path] = None,
+) -> Optional[Tuple[str, str]]:
+    """
+    读取最新已发布周报中的采购简报。
+
+    Returns:
+        (report_date, briefing_text) 或 None
+    """
+    root = Path(reports_dir) if reports_dir else _DEFAULT_REPORTS_DIR
+    if not root.exists():
+        return None
+    dates = sorted(
+        (
+            p.name
+            for p in root.iterdir()
+            if p.is_dir() and re.match(r"^\d{4}-\d{2}-\d{2}$", p.name)
+        ),
+        reverse=True,
+    )
+    for d in dates:
+        html_path = root / d / "report.html"
+        if not html_path.exists():
+            continue
+        try:
+            text = extract_briefing_from_html(html_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if text:
+            return d, text
+    return None
+
+
+def format_followup_context(briefing: str, user_message: str, report_date: str = "") -> str:
+    """把本期简报与用户追问拼成 Agent 输入（简报为已发布立场，追问只澄清）。"""
+    date_line = f"（报告日 {report_date}）" if report_date else ""
+    return (
+        f"【本期已发布采购简报】{date_line}\n"
+        f"{briefing.strip()}\n\n"
+        f"【用户追问】\n"
+        f"{user_message.strip()}\n\n"
+        "请以本期简报为默认立场作答；若用户在追问某一点，只澄清该点，"
+        "必要时用工具核对最新数字；不要推翻简报除非工具显示数据已显著变化。"
+    )

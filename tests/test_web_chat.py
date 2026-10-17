@@ -66,13 +66,28 @@ def test_api_chat_empty_message(client):
 
 
 def test_api_chat_success(client, monkeypatch):
-    fake = SimpleNamespace(chat=lambda q: f"【现在怎么做】分批观望（{q}）")
+    seen = {}
+
+    def _chat(q):
+        seen["q"] = q
+        return f"【现在怎么做】分批观望（{q}）"
+
+    fake = SimpleNamespace(chat=_chat)
     monkeypatch.setattr(web_app, "_get_analyst", lambda: fake)
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: "2026-10-17")
+    monkeypatch.setattr(
+        web_app,
+        "_extract_procurement_briefing",
+        lambda d: "【现在怎么做】观望为主、套保中性。",
+    )
     resp = client.post("/api/chat", json={"message": "这周该不该买"})
     assert resp.status_code == 200
     data = resp.json()
     assert "现在怎么做" in data["output"]
     assert "这周该不该买" in data["output"]
+    # Agent 输入应带上本期简报上下文
+    assert "本期已发布采购简报" in seen["q"]
+    assert "观望为主" in seen["q"]
 
 
 def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):

@@ -375,30 +375,13 @@ def _chat_rate_ok(ip: str) -> bool:
 
 def _extract_procurement_briefing(report_date: str) -> Optional[str]:
     """从已发布周报 HTML 抽出「采购下一步建议」正文。"""
+    from reports.procurement_briefing import extract_briefing_from_html
+
     html_path = REPORTS_DIR / report_date / "report.html"
     if not html_path.exists():
         return None
     try:
-        text = html_path.read_text(encoding="utf-8")
-        m = re.search(
-            r'class="outlook-box ai-commentary"[^>]*>(.*?)</div>',
-            text,
-            re.S,
-        )
-        if not m:
-            return None
-        # HTML 可能含 <br> / 实体，压成纯文本
-        raw = m.group(1)
-        raw = re.sub(r"<br\s*/?>", "\n", raw, flags=re.I)
-        raw = re.sub(r"<[^>]+>", "", raw)
-        raw = (
-            raw.replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", '"')
-            .replace("&#39;", "'")
-        )
-        return raw.strip() or None
+        return extract_briefing_from_html(html_path.read_text(encoding="utf-8"))
     except Exception:
         return None
 
@@ -407,10 +390,7 @@ def _offline_clarify(message: str, briefing: Optional[str]) -> str:
     """无 LLM 时的简短澄清：从本期简报里点题回答，不编造数字。"""
     msg = message.strip()
     if not briefing:
-        return (
-            "当前没有可用的本期采购简报，也未配置 LLM。"
-            "请先生成周报，或设置 DEEPSEEK_API_KEY 后再追问。"
-        )
+        return "当前没有可用的本期采购简报。请先生成周报后再追问。"
 
     def _section(title: str) -> Optional[str]:
         for line in briefing.splitlines():
@@ -421,19 +401,15 @@ def _offline_clarify(message: str, briefing: Optional[str]) -> str:
     if any(k in msg for k in ("该不该买", "买不买", "采购", "补库", "怎么买")):
         return _section("现在怎么做") or _section("时机好不好") or briefing
     if any(k in msg for k in ("套保", "对冲", "要紧", "偏松", "偏紧")):
-        line = _section("现在怎么做")
-        return (line or "") + "\n（套保松紧见「现在怎么做」；更深追问需配置 LLM。）"
+        return _section("现在怎么做") or briefing
     if any(k in msg for k in ("到库", "成本", "CIF", "落地")):
         line = _section("时机好不好") or _section("为什么")
-        return line or "本期简报未单独拆出到库数字，请打开周报中国进口板块。"
+        return line or "本期简报未单独拆出到库数字，请打开周报「进口成本与政策」板块。"
     if any(k in msg for k in ("跌破", "支撑", "怎么办", "风险", "坑")):
         return "\n".join(
             x for x in (_section("别踩的坑"), _section("下周盯什么")) if x
         ) or briefing
-    return (
-        "以下为本期采购简报，可点选上方芯片追问；完整推理需配置 DEEPSEEK_API_KEY。\n\n"
-        + briefing
-    )
+    return briefing
 
 
 @app.get("/chat/", response_class=HTMLResponse)
@@ -461,15 +437,22 @@ async def chat_api(request: Request):
     if not message:
         return JSONResponse({"error": "消息不能为空"}, status_code=400)
 
+    latest = _latest_report_date()
+    briefing = _extract_procurement_briefing(latest) if latest else None
+
     try:
         analyst = _get_analyst()
     except RuntimeError:
-        latest = _latest_report_date()
-        briefing = _extract_procurement_briefing(latest) if latest else None
         return {"output": _offline_clarify(message, briefing)}
 
+    # 有 LLM：把本期简报塞进追问上下文，避免与周报立场打架
+    agent_input = message
+    if briefing:
+        from reports.procurement_briefing import format_followup_context
+        agent_input = format_followup_context(briefing, message, report_date=latest or "")
+
     try:
-        output = await asyncio.to_thread(analyst.chat, message)
+        output = await asyncio.to_thread(analyst.chat, agent_input)
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
     return {"output": output}

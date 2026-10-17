@@ -46,6 +46,9 @@ def test_build_chat_page_elements():
     assert "setChipsEnabled" in html
     # 发送后芯片应保持可点（不再 chipsRow.hidden = true 永久藏起）
     assert "chipsRow.hidden = false" in html
+    assert 'id="chatReset"' in html
+    assert "resetChat" in html
+    assert "清空追问" in html
 
 
 def test_build_chat_page_with_briefing():

@@ -138,6 +138,8 @@ def test_html_escapes_llm_output():
     assert 'class="outlook-box ai-commentary"' in html
     assert "<script>alert(1)</script>" not in html
     assert "&lt;script&gt;" in html
+    assert 'href="/chat/"' in html
+    assert "追问采购建议" in html
 
 
 def test_html_none_hides_section():

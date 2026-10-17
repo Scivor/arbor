@@ -246,7 +246,7 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
 
     # 首页入口: 指向预测战绩页 / 采购顾问追问页
     if is_latest:
-        chat_text = "Procurement Advisor →" if lang == "en" else "采购顾问 →"
+        chat_text = "Next procurement steps →" if lang == "en" else "采购下一步建议 →"
         past_index_html = past_index_html.replace(
             '<a class="past-index-all"',
             f'<a class="past-index-all" style="margin-right:14px;" href="/chat/">{chat_text}</a><a class="past-index-all"',

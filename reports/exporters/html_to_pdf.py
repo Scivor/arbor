@@ -888,10 +888,16 @@ def _build_ai_commentary_html(report, lang: str) -> str:
     if not text:
         return ""
     body = _html.escape(text).replace("\n", "<br>")
+    ask = (
+        '<a class="advisor-ask" href="/chat/">Ask follow-ups →</a>'
+        if lang == "en"
+        else '<a class="advisor-ask" href="/chat/">追问采购建议 →</a>'
+    )
     return f"""
 <div class="section">
   <div class="section-title">{_t("ai_commentary", lang)} <span>{tag}</span></div>
   <div class="outlook-box ai-commentary">{body}</div>
+  <div class="advisor-ask-row">{ask}</div>
 </div>"""
 
 
@@ -1531,6 +1537,17 @@ def build_report_html(report, lang: str = "zh") -> str:
     color: var(--dark-warm);
     page-break-inside: avoid;
   }}
+  .advisor-ask-row {{
+    margin-top: 1.6mm;
+    text-align: right;
+  }}
+  .advisor-ask {{
+    font-family: var(--sans);
+    font-size: 7pt;
+    color: var(--brand, #1B365D);
+    text-decoration: none;
+  }}
+  .advisor-ask:hover {{ text-decoration: underline; }}
   .risk-box {{
     margin-top: 1.8mm;
     padding: 2.2mm 2.4mm;

@@ -73,29 +73,44 @@ def _hedge_line(report, lang: str = "zh") -> Optional[str]:
     return f"{h.ratio:.0%}（{sig_label}）"
 
 
-def _scenario_line(report) -> Optional[str]:
+def _scenario_line(report, lang: str = "zh") -> Optional[str]:
     if not report.scenarios:
         return None
     top = max(report.scenarios, key=lambda s: s.probability)
-    # 展示用中文方向（demo 情景可能是 BEARISH/NEUTRAL/BULLISH）
     d = _dominant_direction(report)
+    if lang == "en":
+        d_en = {"上涨": "up", "下跌": "down", "横盘": "sideways"}.get(d, d)
+        return f"{d_en} {top.probability:.0%} ({top.price_min:.0f}–{top.price_max:.0f})"
     return f"{d} {top.probability:.0%}（{top.price_min:.0f}–{top.price_max:.0f}）"
 
 
-def _ml_line(report) -> Optional[str]:
+def _ml_line(report, lang: str = "zh") -> Optional[str]:
     ml = report.ml_snapshot
     if not ml:
         return None
-    return f"{ml.signal}（置信度 {ml.confidence:.0%}）"
+    sig = (ml.signal or "").upper()
+    if lang == "en":
+        soft = {"BEARISH": "soft", "BULLISH": "firm", "NEUTRAL": "neutral"}.get(sig, ml.signal)
+        return f"{soft} ({ml.confidence:.0%} conf.)"
+    soft = {"BEARISH": "偏弱", "BULLISH": "偏强", "NEUTRAL": "中性"}.get(sig, ml.signal)
+    return f"{soft}（置信度 {ml.confidence:.0%}）"
 
 
-def _scorecard_soft(report) -> Optional[str]:
+def _scorecard_soft(report, lang: str = "zh") -> Optional[str]:
     sc = getattr(report, "scenario_scorecard", None)
     if not sc or not sc.get("n"):
         return None
     if sc.get("has_skill"):
-        return "近期情景方向判断尚可参考"
-    return "近期情景方向判断参考价值有限，动作宜保守"
+        return (
+            "recent scenario calls are usable"
+            if lang == "en"
+            else "近期情景方向判断尚可参考"
+        )
+    return (
+        "recent scenario skill is weak — stay conservative"
+        if lang == "en"
+        else "近期情景方向判断参考价值有限，动作宜保守"
+    )
 
 
 def build_procurement_briefing(report, lang: str = "zh") -> tuple[str, str]:
@@ -114,9 +129,9 @@ def build_procurement_briefing(report, lang: str = "zh") -> tuple[str, str]:
 def _build_zh(report, direction: str) -> str:
     landed = _landed_line(report)
     hedge = _hedge_line(report, lang="zh")
-    scenario = _scenario_line(report)
-    ml = _ml_line(report)
-    soft = _scorecard_soft(report)
+    scenario = _scenario_line(report, lang="zh")
+    ml = _ml_line(report, lang="zh")
+    soft = _scorecard_soft(report, lang="zh")
 
     if direction == "下跌":
         do_now = "本周现货分批小幅补库，不宜一次性锁满；套保维持偏紧。"
@@ -141,9 +156,7 @@ def _build_zh(report, direction: str) -> str:
     if scenario:
         why_parts.append(f"主导情景 {scenario}")
     if ml:
-        # ML 信号转成采购话：BEARISH→偏弱
-        ml_soft = ml.replace("BEARISH", "偏弱").replace("BULLISH", "偏强").replace("NEUTRAL", "中性")
-        why_parts.append(f"模型 {ml_soft}")
+        why_parts.append(f"模型 {ml}")
     if landed:
         why_parts.append(f"到库 {landed}")
     if soft:
@@ -176,9 +189,9 @@ def _build_zh(report, direction: str) -> str:
 def _build_en(report, direction: str) -> str:
     landed = _landed_line(report)
     hedge = _hedge_line(report, lang="en")
-    scenario = _scenario_line(report)
-    ml = _ml_line(report)
-    soft = _scorecard_soft(report)
+    scenario = _scenario_line(report, lang="en")
+    ml = _ml_line(report, lang="en")
+    soft = _scorecard_soft(report, lang="en")
 
     if direction == "下跌":
         do_now = "Stagger small spot restocks this week; keep hedge on the tight side."

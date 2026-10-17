@@ -26,10 +26,14 @@ def test_rule_briefing_includes_landed_when_china_present():
 
 
 def test_rule_briefing_en_sections():
-    text, direction = build_procurement_briefing(demo_report(), lang="en")
+    text, direction = build_procurement_briefing(demo_report(with_china=True), lang="en")
     assert direction in ("上涨", "下跌", "横盘")
     for title in ("[Do now]", "[Timing]", "[Why]", "[Watch-out]", "[Watch next week]"):
         assert title in text
+    # 英文版不用生硬 BEARISH / 中文套保标签
+    assert "BEARISH" not in text
+    assert "偏紧" not in text
+    assert "CNY" in text or "landed" in text.lower()
 
 
 def test_attach_falls_back_without_llm(monkeypatch):

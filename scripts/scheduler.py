@@ -49,16 +49,20 @@ def generate_and_publish(
     output_dir: Path,
     output_format: str = "both",  # 'html' | 'pdf' | 'both'
     forecast_offset: int = 1,
+    use_demo_data: bool = False,
 ) -> Path:
     """Generate report and publish to web directory."""
     today_str = date.today().strftime("%Y-%m-%d")
     report_dir = _ensure_dir(output_dir / today_str)
 
-    logger.info("Generating report (date=%s, format=%s)...", today_str, output_format)
+    logger.info(
+        "Generating report (date=%s, format=%s, demo=%s)...",
+        today_str, output_format, use_demo_data,
+    )
 
     config = PipelineConfig(
         ticker="KC=F",
-        use_demo_data=False,
+        use_demo_data=use_demo_data,
         output_format="html",
         forecast_week_offset=forecast_offset,
     )
@@ -291,6 +295,10 @@ def main(argv=None) -> int:
         help="Send a test ops alert via Telegram and exit",
     )
     parser.add_argument(
+        "--demo", action="store_true",
+        help="Use demo data (no live market fetch); still writes briefing.json",
+    )
+    parser.add_argument(
         "--verbose", "-v", action="store_true",
         help="Enable verbose logging",
     )
@@ -317,6 +325,7 @@ def main(argv=None) -> int:
                 output_dir=output_dir,
                 output_format=args.format,
                 forecast_offset=args.forecast_offset,
+                use_demo_data=args.demo,
             )
             print(f"\n✓ Report published: {dest}")
             return 0

@@ -68,6 +68,7 @@ def build_chat_page(
     align-items: baseline;
     justify-content: space-between;
     margin-bottom: 18px;
+    gap: 12px;
   }}
   .chat-title {{
     font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
@@ -76,6 +77,21 @@ def build_chat_page(
     color: #141413;
     letter-spacing: 0.3px;
   }}
+  .chat-hdr-actions {{
+    display: flex;
+    align-items: center;
+    gap: 14px;
+  }}
+  .chat-reset {{
+    border: 0;
+    background: transparent;
+    color: #504e49;
+    font-size: 12px;
+    cursor: pointer;
+    font-family: inherit;
+    padding: 0;
+  }}
+  .chat-reset:hover {{ color: #1B365D; }}
   .chat-back {{
     font-size: 12px;
     color: #504e49;
@@ -203,7 +219,10 @@ def build_chat_page(
 <div class="chat-wrap">
   <div class="chat-hdr">
     <span class="chat-title">采购顾问</span>
-    <a class="chat-back" href="/">← 返回最新周报</a>
+    <div class="chat-hdr-actions">
+      <button type="button" class="chat-reset" id="chatReset">清空追问</button>
+      <a class="chat-back" href="/">← 返回最新周报</a>
+    </div>
   </div>
   <div class="chat-list" id="chatList">
     <div class="chat-empty" id="chatEmpty">追问采购建议，如「这周该不该买」「套保要紧还是松」「到库成本怎么看」</div>
@@ -225,18 +244,37 @@ const SUGGESTIONS = {chips_json};
 const DATE_NOTE_HTML = {json.dumps(date_note, ensure_ascii=False)};
 let pending = false;
 
+function newSessionId() {{
+  try {{
+    const sid = (crypto.randomUUID && crypto.randomUUID()) ||
+      ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+    sessionStorage.setItem('arbor_chat_sid', sid);
+    return sid;
+  }} catch (e) {{
+    return 'anon-' + Date.now();
+  }}
+}}
+
 function getSessionId() {{
   try {{
     let sid = sessionStorage.getItem('arbor_chat_sid');
-    if (!sid) {{
-      sid = (crypto.randomUUID && crypto.randomUUID()) ||
-        ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
-      sessionStorage.setItem('arbor_chat_sid', sid);
-    }}
+    if (!sid) sid = newSessionId();
     return sid;
   }} catch (e) {{
     return 'anon';
   }}
+}}
+
+function resetChat() {{
+  if (pending) return;
+  newSessionId();
+  list.querySelectorAll('.chat-msg').forEach((el) => {{
+    if (!el.classList.contains('briefing')) el.remove();
+  }});
+  if (!INITIAL_BRIEFING && emptyHint) emptyHint.style.display = '';
+  renderChips();
+  input.value = '';
+  input.focus();
 }}
 
 function addBubble(text, cls) {{
@@ -319,6 +357,7 @@ async function send() {{
 }}
 
 sendBtn.addEventListener('click', send);
+document.getElementById('chatReset').addEventListener('click', resetChat);
 input.addEventListener('keydown', (e) => {{
   if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); send(); }}
 }});

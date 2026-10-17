@@ -567,8 +567,13 @@ def run(config: PipelineConfig) -> PredictionReport:
 
     if config.use_demo_data:
         logger.info("Using demo data — skipping live fetches")
-        report = demo_report()
+        # with_china=True：规则简报可写到库成本；LLM 不可用时仍有五段行动建议
+        report = demo_report(with_china=True)
         report.ticker = config.ticker
+        try:
+            _attach_llm_commentary(report)
+        except Exception as e:
+            logger.warning("demo commentary attach failed: %s", e)
         return report
 
     # ── Step 1: Fetch raw data ──────────────────────────────────

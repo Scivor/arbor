@@ -614,22 +614,42 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2: ML prediction (needed for scenario + driver logic) ─
     ml = fetch_ml_snapshot(current_price=market.current if market else None)
 
-    # ── Step 2b: 自校准系数（Phase B；失败回退 1.0 不影响出报）───────
+    # ── Step 2b: 自校准系数（失败回退 1.0，不影响出报）──────────────
     try:
-        from reports.learning import load_learned
+        from reports.learning import (
+            apply_driver_weights,
+            apply_hedge_conviction,
+            load_learned,
+            load_review_memory,
+            ml_trust_multiplier,
+            scale_trusted_events,
+        )
         learned = load_learned()
+        memory = load_review_memory()
     except Exception as e:
         logger.warning(f"load_learned failed, fallback to 1.0: {e}")
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+        memory = {"hedge_conviction": 1.0, "driver_trust": {}}
+        apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
+        ml_trust_multiplier = None
+    trust = memory.get("driver_trust") or {}
     if ml:
         ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
+        if ml_trust_multiplier is not None:
+            ml.bias *= ml_trust_multiplier(ml.model_type, ml.signal, trust)
 
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
+    if apply_driver_weights is not None:
+        apply_driver_weights(bullish, bearish, trust)
     report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
+    if scale_trusted_events is not None:
+        scale_trusted_events(report_events, trust)
     hedge = compute_hedge_advice(market, scenarios, report_events)
+    if apply_hedge_conviction is not None:
+        apply_hedge_conviction(hedge, memory.get("hedge_conviction", 1.0))
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
     # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────

@@ -29,8 +29,32 @@ def _build_learning_html(learning: dict | None) -> str:
         base = ' <span class="tr-learn-base">未校准</span>' if abs(v - 1.0) < 1e-9 else ""
         return f"{name} <b>{v:.2f}</b>{base}"
 
+    memory = learning.get("memory") or {}
+    conviction = memory.get("hedge_conviction", cur.get("hedge_conviction", 1.0))
+    try:
+        conviction = float(conviction)
+    except (TypeError, ValueError):
+        conviction = 1.0
+    conviction_base = ' <span class="tr-learn-base">未校准</span>' if abs(conviction - 1.0) < 1e-9 else ""
+    hedge_acc = memory.get("hedge_accuracy")
+    hedge_acc_text = f" · 近期套保有效率 {hedge_acc:.0%}" if isinstance(hedge_acc, (int, float)) else ""
+    trust = memory.get("driver_trust") or {}
+    if trust:
+        discounted = " · ".join(
+            f"{_esc(str(name))} {float(value):.2f}"
+            for name, value in list(trust.items())[:8]
+        )
+        trust_html = f"""
+    <div class="tr-learn-metrics">压低的驱动 {discounted}</div>"""
+    elif learning.get("memory") is not None:
+        trust_html = """
+    <div class="tr-learn-metrics tr-learn-dim">驱动因子维持原权重</div>"""
+    else:
+        trust_html = ""
+
     rows = f"""
-    <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>"""
+    <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>
+    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{trust_html}"""
 
     if acc is not None and hit is not None:
         rows += f"""
@@ -136,21 +160,31 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 
         # ── 驱动因子应验率（仅显示样本 ≥2 的因子，按样本数降序）──
         qualified = [s for s in (driver_stats or []) if s.get("samples", 0) >= 2]
+        trust_map = ((learning or {}).get("memory") or {}).get("driver_trust") or {}
         if qualified:
             drv_rows = ""
             for s in qualified:
                 rate_color = "#1B365D" if s["rate"] >= 0.5 else "#504e49"
+                name = str(s["param_name"])
+                if name in trust_map:
+                    trust_cell = f'<td class="tr-num">{float(trust_map[name]):.2f}</td>'
+                elif trust_map:
+                    trust_cell = '<td class="tr-num">1.00</td>'
+                else:
+                    trust_cell = ""
                 drv_rows += f"""
         <tr>
-          <td class="tr-date">{_esc(str(s["param_name"]))}</td>
+          <td class="tr-date">{_esc(name)}</td>
           <td class="tr-num" style="color:{rate_color};">{s["rate"]:.0%}</td>
           <td class="tr-num">{s["samples"]}</td>
+          {trust_cell}
         </tr>"""
+            trust_head = "<th>信任</th>" if trust_map else ""
             drivers_html = f"""
   <div class="tr-drivers-title">驱动因子应验率</div>
   <table class="tr-table tr-drivers">
     <thead>
-      <tr><th>因子</th><th>应验率</th><th>样本数</th></tr>
+      <tr><th>因子</th><th>应验率</th><th>样本数</th>{trust_head}</tr>
     </thead>
     <tbody>{drv_rows}
     </tbody>

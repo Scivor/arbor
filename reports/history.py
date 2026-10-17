@@ -72,8 +72,13 @@ def summary_path(report_date: date) -> Path:
 def _current_learned_scales() -> dict:
     """读取当期生效的自校准系数快照（惰性导入避免循环依赖；失败回退空 dict）。"""
     try:
-        from reports.learning import load_learned
-        return load_learned()
+        from reports.learning import load_learned, load_review_memory
+        scales = load_learned()
+        memory = load_review_memory()
+        scales["hedge_conviction"] = memory["hedge_conviction"]
+        if memory["driver_trust"]:
+            scales["driver_trust"] = memory["driver_trust"]
+        return scales
     except Exception:
         return {}
 

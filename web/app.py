@@ -284,9 +284,21 @@ ERROR_MESSAGES = {
 }
 
 
+# Starlette 对未匹配路由给出的英文原因，不要盖掉中文说明。
+_STOCK_HTTP_DETAILS = {
+    "Bad Request",
+    "Forbidden",
+    "Not Found",
+    "Unprocessable Entity",
+    "Internal Server Error",
+    "Bad Gateway",
+    "Service Unavailable",
+}
+
+
 def _error_response(status_code: int, detail: str | None = None, lang: str = "zh") -> HTMLResponse:
     title, desc = ERROR_MESSAGES.get(status_code, ("出错了", "发生未知错误。"))
-    if detail and detail not in (str(status_code), ""):
+    if detail and detail not in (str(status_code), "") and detail not in _STOCK_HTTP_DETAILS:
         desc = detail
     # Build minimal request-like object for template context
     class _DummyReq:

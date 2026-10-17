@@ -554,6 +554,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "flat_trust": 0.1,
         "prob_sharpness": 0.1,
         "hedge_lean": 9,
+        "fan_width": 9,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -564,6 +565,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["flat_trust"] == 0.6
     assert memory["prob_sharpness"] == 0.6
     assert memory["hedge_lean"] == 0.04
+    assert memory["fan_width"] == 1.25
 
 
 def test_apply_review_memory_changes_next_report():
@@ -721,6 +723,7 @@ def test_track_record_shows_review_memory():
             "flat_trust": 0.9,
             "prob_sharpness": 0.9,
             "hedge_lean": -0.01,
+            "fan_width": 1.05,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -740,6 +743,8 @@ def test_track_record_shows_review_memory():
     assert "往三个情景均匀靠" in html
     assert "套保偏向" in html and "少套" in html and ">1.00<" in html
     assert "再挪 1 个百分点" in html
+    assert "扇面宽度" in html and ">1.05<" in html
+    assert "整段扇面加宽" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -1311,3 +1316,114 @@ def test_hedge_lean_shifts_the_finished_ratio():
     assert same.ratio == 0.80
     apply_hedge_lean(same, 9)
     assert same.ratio == pytest.approx(0.84)
+
+
+def _fan_ranges(current, nxt, *, miss: bool):
+    lo = (nxt + 2) if miss else (nxt - 4)
+    return [
+        {"direction": "下跌", "probability": 0.34, "price_min": lo, "price_max": lo + 8},
+        {"direction": "横盘", "probability": 0.33, "price_min": lo + 8, "price_max": lo + 16},
+        {"direction": "上涨", "probability": 0.33, "price_min": lo + 16, "price_max": lo + 24},
+    ]
+
+
+def _seed_fan(dir_path, *, miss: bool, limit=None):
+    """
+    价格每步跌 2%。主导区间奇偶交替，命中率 50%。
+    情景快照的三段区间要么全在下一周价格上方（miss），要么有一段罩住它。
+    """
+    price = 400.0
+    prices = [price]
+    for _ in range(8):
+        price = round(price * 0.98, 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        scenarios = None
+        if nxt is not None and (limit is None or i < limit):
+            scenarios = _fan_ranges(current, nxt, miss=miss)
+        _write_case(
+            dir_path, f"2026-12-{i + 1:02d}", current,
+            hedge_ratio=0.65, band_min=bmin, band_max=bmax, scenarios=scenarios,
+        )
+
+
+def test_recalibrate_fan_misses_widen_the_next_ranges(learn_env):
+    """八段区间都没罩住实际价格：扇面宽度升到 1.05。旧的区间系数不动。"""
+    _seed_fan(learn_env / "history", miss=True)
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.05)
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["band_hit_rate"] == 0.5
+    changed = [c for c in result["changed"] if c["param"] == "fan_width"]
+    assert len(changed) == 1
+    assert "扇面加宽" in changed[0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.25,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["fan_width"] == 1.25
+    assert all(c["param"] != "fan_width" for c in floored["changed"])
+
+
+def test_recalibrate_covered_fan_shrinks_width_toward_one(learn_env):
+    _seed_fan(learn_env / "history", miss=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.045)
+    assert result["current"]["scenario_band_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["fan_width"]
+
+
+def test_recalibrate_few_fans_hold_width(learn_env):
+    _seed_fan(learn_env / "history", miss=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["fan_width"] == pytest.approx(1.10)
+
+
+def test_recalibrate_no_fan_snapshots_shrink_width(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "fan_width": 1.10,
+    }))
+    result = recalibrate()
+    assert result["memory"]["fan_width"] == pytest.approx(1.045)
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["current"]["ml_bias_scale"] == 1.0
+
+
+def test_fan_width_widens_ranges_around_the_same_center():
+    from reports.learning import apply_fan_width
+    from reports.models import Scenario
+
+    bands = [
+        Scenario("涨", "上涨", 400, 440, 0.33, []),
+        Scenario("盘", "横盘", 380, 420, 0.34, []),
+        Scenario("跌", "下跌", 360, 400, 0.33, []),
+    ]
+    assert apply_fan_width(bands, 1.05) is True
+    assert [(s.price_min, s.price_max) for s in bands] == [
+        (399, 441), (379, 421), (359, 401),
+    ]
+    assert [s.probability for s in bands] == [0.33, 0.34, 0.33]
+
+    same = [Scenario("盘", "横盘", 390, 410, 0.34, [])]
+    assert apply_fan_width(same, 1.0) is False
+    assert same[0].price_min == 390 and same[0].price_max == 410
+    assert apply_fan_width(same, 0.5) is False
+    assert same[0].price_min == 390

@@ -104,6 +104,12 @@ def _current_learned_scales() -> dict:
             lean = 0.0
         if abs(lean) >= 0.005:
             scales["hedge_lean"] = lean
+        try:
+            fan_width = float(memory.get("fan_width", 1.0))
+        except (TypeError, ValueError):
+            fan_width = 1.0
+        if fan_width > 1.001:
+            scales["fan_width"] = fan_width
         return scales
     except Exception:
         return {}

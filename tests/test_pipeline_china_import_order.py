@@ -304,3 +304,53 @@ def test_negative_hedge_lean_lowers_published_ratio(synthetic_pipeline, monkeypa
     adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
     assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio - 0.02, abs=0.011)
     assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio
+
+
+def test_wide_fan_widens_published_ranges_without_moving_probability(synthetic_pipeline, monkeypatch):
+    """扇面宽度 1.2 时，公布的价格区间变宽，概率和中心不动。"""
+    base = _synthetic_market()
+    price = 300.0
+    closes = []
+    for i in range(30):
+        price = round(price * (1.02 if i % 2 == 0 else 1 / 1.02), 2)
+        closes.append(price)
+    market = MarketSnapshot(
+        ticker=base.ticker,
+        current=closes[-1],
+        change_1d_pct=base.change_1d_pct,
+        change_30d_pct=base.change_30d_pct,
+        high_30d=max(closes),
+        low_30d=min(closes),
+        volume_ratio=base.volume_ratio,
+        ma20=base.ma20,
+        ma60=base.ma60,
+        rsi_14=base.rsi_14,
+        close_5d=base.close_5d,
+        vol_ratio_5d=base.vol_ratio_5d,
+        close_30d=closes,
+    )
+    monkeypatch.setattr("reports.pipeline.fetch_market_snapshot", lambda ticker: market)
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
+            "hedge_lean": 0.0,
+            "fan_width": 1.2,
+        },
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    widened = False
+    for before, after in zip(baseline.scenarios, adjusted.scenarios):
+        before_mid = (before.price_min + before.price_max) / 2
+        after_mid = (after.price_min + after.price_max) / 2
+        assert after_mid == pytest.approx(before_mid, abs=0.6)
+        assert after.probability == pytest.approx(before.probability)
+        if (after.price_max - after.price_min) > (before.price_max - before.price_min):
+            widened = True
+    assert widened

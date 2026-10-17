@@ -29,6 +29,9 @@ reports/learning.py
 - hedge_lean:          套保比率的方向偏向（-4 ~ +4 个百分点）。
                         偏紧却连涨就少套，偏松却连跌就多套。
                         每步 1 个百分点；叫对了或没有偏向就回到 0
+- fan_width:           三个情景合在一起的价格扇面（1.0 ~ 1.25）。
+                        实际价格落在每一段区间外面时加宽，罩住了再收回。
+                        只统计扇面中心离当时现价 15% 以内、半宽不超过 30% 的周
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -71,6 +74,11 @@ _SHARPNESS_BETTER = 0.50
 _HEDGE_LEAN_BOUNDS = (-0.04, 0.04)
 _HEDGE_LEAN_STEP = 0.01
 _HEDGE_LEAN_DEAD = 0.20
+# 三个情景合起来的扇面。只许加宽，罩住了再回到 1。半宽超过现价 30% 的快照不算。
+_FAN_BOUNDS = (1.0, 1.25)
+_FAN_HALF_CAP = 0.30
+_FAN_MISS = 0.55
+_FAN_COVER = 0.30
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -116,6 +124,7 @@ def _empty_memory() -> dict:
         "flat_trust": 1.0,
         "prob_sharpness": 1.0,
         "hedge_lean": 0.0,
+        "fan_width": 1.0,
     }
 
 
@@ -175,6 +184,7 @@ def _load_state() -> dict:
         "flat_trust": _flat_trust(data.get("flat_trust", 1.0)),
         "prob_sharpness": _prob_sharpness(data.get("prob_sharpness", 1.0)),
         "hedge_lean": _hedge_lean(data.get("hedge_lean", 0.0)),
+        "fan_width": _fan_width(data.get("fan_width", 1.0)),
     }
 
 
@@ -198,7 +208,13 @@ def load_review_memory() -> dict:
         "flat_trust": state["flat_trust"],
         "prob_sharpness": state["prob_sharpness"],
         "hedge_lean": state["hedge_lean"],
+        "fan_width": state["fan_width"],
     }
+
+
+def _fan_width(value) -> float:
+    """情景扇面宽度。坏值当 1，越界钳到 1.0–1.25。"""
+    return round(_clamp(_finite(value, 1.0), _FAN_BOUNDS), 4)
 
 
 def _hedge_lean(value) -> float:
@@ -491,6 +507,71 @@ def _hedge_lean_stats(pairs) -> dict:
     }
 
 
+def _fan_ranges(cur) -> list[tuple[float, float]] | None:
+    """可用的情景扇面。中心离现价太远，或半宽超过现价 30%，返回 None。"""
+    scenarios = getattr(cur, "scenarios", None) or []
+    if len(scenarios) < 2:
+        return None
+    try:
+        price = float(cur.current_price)
+    except (TypeError, ValueError):
+        return None
+    if price <= 0:
+        return None
+    ranges: list[tuple[float, float]] = []
+    for item in scenarios:
+        if not isinstance(item, dict):
+            return None
+        try:
+            lo = float(item.get("price_min"))
+            hi = float(item.get("price_max"))
+        except (TypeError, ValueError):
+            return None
+        if lo != lo or hi != hi or hi <= lo:
+            return None
+        ranges.append((lo, hi))
+    lo = min(a for a, _ in ranges)
+    hi = max(b for _, b in ranges)
+    mid = (lo + hi) / 2
+    half = (hi - lo) / 2
+    if abs(mid - price) / price > _BAND_SHIFT_ANCHOR:
+        return None
+    if half / price > _FAN_HALF_CAP:
+        return None
+    return ranges
+
+
+def _fan_stats(pairs) -> dict:
+    """
+    有可用情景扇面的周，近期加权的「三个区间都没罩住」比例。
+
+    没有快照、扇面中心离现价超过 15%、或半宽超过 30% 的周不计入。
+    样本少于 4 对时 miss 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = missed = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        ranges = _fan_ranges(cur)
+        if ranges is None:
+            continue
+        try:
+            actual = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if actual != actual:
+            continue
+        total += weight
+        if not any(lo <= actual <= hi for lo, hi in ranges):
+            missed += weight
+        samples += 1
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "miss": (missed / total) if ready else None,
+    }
+
+
 def _step_band_shift(current: float, error: float) -> float:
     """误差越过 ±1% 就朝那边走 0.5 个百分点；落在死区则向 0 退一步。"""
     current = _band_shift(current)
@@ -521,6 +602,11 @@ def _step_hedge_lean(current: float, error: float) -> float:
     else:
         return 0.0
     return _hedge_lean(0.0 if abs(stepped) < _HEDGE_LEAN_STEP / 2 else stepped)
+
+
+def _step_fan(current: float, widen: bool) -> float:
+    """没罩住 ×1.05，罩住了 ×0.95 向 1 收回，然后钳制。"""
+    return _fan_width(current * (1.05 if widen else 0.95))
 
 
 def _step_toward(current: float, good: bool, bounds: tuple[float, float]) -> float:
@@ -601,6 +687,35 @@ def apply_hedge_conviction(hedge, conviction: float):
         return hedge
     ratio = _HEDGE_BASELINE + (float(hedge.ratio) - _HEDGE_BASELINE) * factor
     return _set_hedge_ratio(hedge, ratio)
+
+
+def apply_fan_width(scenarios, scale) -> bool:
+    """把三个情景的价格区间按扇面宽度放宽，中心不动。宽度为 1 时不改。"""
+    factor = _fan_width(scale)
+    if factor <= 1.0 or not scenarios:
+        return False
+    updates = []
+    for scenario in scenarios:
+        try:
+            lo = float(scenario.price_min)
+            hi = float(scenario.price_max)
+        except (TypeError, ValueError):
+            return False
+        center = (lo + hi) / 2
+        half = (hi - lo) / 2 * factor
+        new_lo = int(round(center - half))
+        new_hi = int(round(center + half))
+        if new_hi <= new_lo:
+            continue
+        updates.append((scenario, new_lo, new_hi))
+    changed = False
+    for scenario, new_lo, new_hi in updates:
+        if new_lo == scenario.price_min and new_hi == scenario.price_max:
+            continue
+        scenario.price_min = new_lo
+        scenario.price_max = new_hi
+        changed = True
+    return changed
 
 
 def apply_hedge_lean(hedge, lean: float):
@@ -982,6 +1097,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     flat_stats = _flat_call_stats(pairs)
     sharp_stats = _sharpness_stats(pairs)
     lean_stats = _hedge_lean_stats(pairs)
+    fan_stats = _fan_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -998,6 +1114,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "flat_trust": state["flat_trust"],
         "prob_sharpness": state["prob_sharpness"],
         "hedge_lean": state["hedge_lean"],
+        "fan_width": state["fan_width"],
     }
     changed: list[dict] = []
 
@@ -1231,6 +1348,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── fan_width: 三个区间都没罩住就加宽；罩住了或没有可用扇面则回到 1 ──
+    old_fan = new_values["fan_width"]
+    fan_samples = fan_stats["samples"]
+    fan_miss = fan_stats["miss"]
+    if fan_samples >= _DRIVER_MIN_SAMPLES and fan_miss is not None:
+        if fan_miss > _FAN_MISS:
+            reason = f"三个情景都没罩住的周占 {fan_miss:.0%}，扇面加宽"
+            new_fan = _step_fan(old_fan, True)
+        elif fan_miss < _FAN_COVER:
+            reason = f"情景扇面近期覆盖 {1 - fan_miss:.0%}，宽度向基准回归"
+            new_fan = _step_fan(old_fan, False)
+        else:
+            new_fan = old_fan
+            reason = ""
+    elif fan_samples == 0 and old_fan > 1.0:
+        reason = "本期没有可用的情景区间，扇面向基准回归"
+        new_fan = _step_fan(old_fan, False)
+    else:
+        new_fan = old_fan
+        reason = ""
+    new_fan = _fan_width(new_fan)
+    if reason and new_fan != old_fan:
+        new_values["fan_width"] = new_fan
+        changed.append({
+            "param": "fan_width",
+            "old": old_fan,
+            "new": new_fan,
+            "reason": reason,
+        })
+
     if changed:
         try:
             LEARNED_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1262,6 +1409,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "flat_trust": new_values["flat_trust"],
         "prob_sharpness": new_values["prob_sharpness"],
         "hedge_lean": new_values["hedge_lean"],
+        "fan_width": new_values["fan_width"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

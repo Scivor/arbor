@@ -618,6 +618,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     try:
         from reports.learning import (
             apply_band_center_shift,
+            apply_fan_width,
             apply_direction_trust,
             apply_flat_trust,
             apply_prob_sharpness,
@@ -646,9 +647,10 @@ def run(config: PipelineConfig) -> PredictionReport:
             "flat_trust": 1.0,
             "prob_sharpness": 1.0,
             "hedge_lean": 0.0,
+            "fan_width": 1.0,
         }
         apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
-        apply_band_center_shift = apply_flat_trust = apply_prob_sharpness = None
+        apply_band_center_shift = apply_fan_width = apply_flat_trust = apply_prob_sharpness = None
         apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
         sync_dominant_scenario_event = ml_trust_multiplier = None
@@ -661,7 +663,9 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
-    # 只平移价格区间，不改概率，所以这里不重算套保。
+    # 扇面加宽和中心平移都只改价格，不改概率，所以这里不重算套保。
+    if apply_fan_width is not None:
+        apply_fan_width(scenarios, memory.get("fan_width", 1.0))
     if apply_band_center_shift is not None and market is not None:
         apply_band_center_shift(
             scenarios, memory.get("band_center_shift", 0.0), market.current,

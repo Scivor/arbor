@@ -374,7 +374,7 @@ bash deploy/provision.sh
 
 ## 7. macOS 本地常驻（launchd）
 
-周报调度器（`scripts/scheduler.py`，APScheduler，每周六 03:00 CST 触发）可通过 launchd 常驻：
+周报调度器（`scripts/scheduler.py`，APScheduler，每周六 03:00 Asia/Shanghai 触发）可通过 launchd 常驻：
 
 ```bash
 cp deploy/com.arbor.weekly-report.plist ~/Library/LaunchAgents/

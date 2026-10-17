@@ -52,6 +52,10 @@ class ReportSummary:
     scenarios: list[dict] = field(default_factory=list)  # {direction, probability, price_min, price_max}
     # 凯利仓位影子快照（旧 JSON 无此键 → 空 dict，向后兼容）
     kelly_shadow: dict = field(default_factory=dict)  # {suggested_ratio, edge, active}
+    # 情景记分卡轻量快照（旧 JSON 无此键 → 空 dict）
+    scenario_scorecard: dict = field(default_factory=dict)
+    # 事件/市场/期限结构影子倾斜轻量快照（旧 JSON 无此键 → 空 dict）
+    scenario_event_tilt: dict = field(default_factory=dict)
 
 
 def _history_dir() -> Path:
@@ -87,7 +91,8 @@ def save_report_summary(report) -> Path:
     # Dominant scenario
     dominant = max(report.scenarios, key=lambda s: s.probability) if report.scenarios else None
 
-    # 驱动因子（含 LLM 点评方向：作为一个驱动因子入归因记分）
+    # 驱动因子（含采购建议方向：作为一个驱动因子入归因记分）
+    # param_name 保持「AI 分析师点评」以兼容历史 summary 归因连续性
     drivers = [{"param_name": p.param_name, "signal": p.signal,
                 "weight": p.weight, "category": p.category}
                for p in (report.bullish_params + report.bearish_params)]
@@ -126,6 +131,23 @@ def save_report_summary(report) -> Path:
                    for s in report.scenarios],
         kelly_shadow={k: (report.kelly_shadow or {}).get(k)
                       for k in ("suggested_ratio", "edge", "active")} if report.kelly_shadow else {},
+        scenario_scorecard={
+            k: (report.scenario_scorecard or {}).get(k)
+            for k in ("n", "interval_coverage", "strict_direction_rate",
+                      "mean_brier", "has_skill")
+        } if report.scenario_scorecard else {},
+        scenario_event_tilt=(
+            {
+                "active": bool(report.scenario_event_tilt.get("active")),
+                "deltas": report.scenario_event_tilt.get("deltas") or {},
+                "reasons": list(report.scenario_event_tilt.get("reasons") or [])[:6],
+                "tilted": [
+                    {"direction": t.get("direction"), "probability": t.get("probability")}
+                    for t in (report.scenario_event_tilt.get("tilted") or [])
+                ],
+            }
+            if report.scenario_event_tilt else {}
+        ),
     )
 
     path = summary_path(report.report_date)

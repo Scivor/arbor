@@ -35,6 +35,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
+from reports.fonts import css_serif_stack
 from web.chat import build_chat_page
 from web.track_record import build_track_record_html
 
@@ -110,6 +111,7 @@ def _read_report_meta(report_date: str) -> dict:
 
 def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str = "zh") -> str:
     """Build the past-index HTML snippet to inject into report pages."""
+    serif = css_serif_stack()
     items_html = ""
     for r in recent_meta:
         current_cls = "past-item-current" if r["date"] == report_date else ""
@@ -150,7 +152,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   margin-bottom: 16px;
 }}
 .past-index-title {{
-  font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+  font-family: {serif};
   font-size: 15px;
   font-weight: 600;
   color: #141413;
@@ -190,7 +192,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   outline-offset: -1.5px;
 }}
 .past-item-date {{
-  font-family: Charter, Georgia, "Source Han Serif SC", serif;
+  font-family: {serif};
   font-size: 13px;
   font-weight: 600;
   color: #141413;
@@ -244,9 +246,9 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
     recent_meta = [_read_report_meta(d) for d in recent]
     past_index_html = _build_past_index_html(report_date, recent_meta, lang=lang)
 
-    # 首页入口: 指向预测战绩页 / AI 分析师聊天页
+    # 首页入口: 指向预测战绩页 / 采购顾问追问页
     if is_latest:
-        chat_text = "AI Analyst →" if lang == "en" else "AI 分析师 →"
+        chat_text = "Next procurement steps →" if lang == "en" else "采购下一步建议 →"
         past_index_html = past_index_html.replace(
             '<a class="past-index-all"',
             f'<a class="past-index-all" style="margin-right:14px;" href="/chat/">{chat_text}</a><a class="past-index-all"',
@@ -343,13 +345,13 @@ async def track_record():
     return HTMLResponse(content=build_track_record_html(record, driver_stats, learning))
 
 
-# ── AI 分析师聊天 ─────────────────────────────────────────────────────────────
+# ── 采购顾问追问 ─────────────────────────────────────────────────────────────
 
 _analyst = None  # 进程级 CoffeeAnalyst 单例（lazy 首次构造）
 
 
 def _get_analyst():
-    """lazy 构造 CoffeeAnalyst 单例；无 API key 时 RuntimeError 向上抛。"""
+    """lazy 构造采购顾问单例；无 API key 时 RuntimeError 向上抛。"""
     global _analyst
     if _analyst is None:
         from agent.agents.analyst import CoffeeAnalyst
@@ -373,15 +375,148 @@ def _chat_rate_ok(ip: str) -> bool:
     return True
 
 
+def _extract_procurement_briefing(report_date: str) -> Optional[str]:
+    """读本期采购简报：优先 briefing.json，回退 HTML 抽取。"""
+    from reports.procurement_briefing import load_briefing_from_dir
+
+    return load_briefing_from_dir(REPORTS_DIR / report_date)
+
+
+# 进程内多轮会话（session_id → [("human"|"ai", text), ...]）；最多保留 10 轮；1h 过期
+_CHAT_SESSIONS: dict[str, list] = {}
+_CHAT_SESSION_TS: dict[str, float] = {}
+_CHAT_SESSION_MAX_TURNS = 10
+_CHAT_SESSION_MAX_LEN = _CHAT_SESSION_MAX_TURNS * 2
+_CHAT_SESSION_TTL_SEC = 3600
+
+
+def _normalize_session_id(session_id: Optional[str]) -> Optional[str]:
+    if not session_id:
+        return None
+    sid = re.sub(r"[^a-zA-Z0-9_-]", "", session_id)[:64]
+    return sid or None
+
+
+def _purge_stale_sessions(now: Optional[float] = None) -> None:
+    now = now if now is not None else time.time()
+    cutoff = now - _CHAT_SESSION_TTL_SEC
+    dead = [sid for sid, ts in _CHAT_SESSION_TS.items() if ts < cutoff]
+    for sid in dead:
+        _CHAT_SESSIONS.pop(sid, None)
+        _CHAT_SESSION_TS.pop(sid, None)
+
+
+def _session_history(session_id: Optional[str]) -> list:
+    _purge_stale_sessions()
+    sid = _normalize_session_id(session_id)
+    if not sid:
+        return []
+    return list(_CHAT_SESSIONS.get(sid, []))
+
+
+def _append_session(session_id: Optional[str], user_msg: str, assistant_msg: str) -> None:
+    _purge_stale_sessions()
+    sid = _normalize_session_id(session_id)
+    if not sid:
+        return
+    hist = _CHAT_SESSIONS.setdefault(sid, [])
+    hist.append(("human", user_msg))
+    hist.append(("ai", assistant_msg))
+    if len(hist) > _CHAT_SESSION_MAX_LEN:
+        _CHAT_SESSIONS[sid] = hist[-_CHAT_SESSION_MAX_LEN:]
+    _CHAT_SESSION_TS[sid] = time.time()
+
+
+def _offline_clarify(
+    message: str,
+    briefing: Optional[str],
+    history: Optional[list] = None,
+) -> str:
+    """无 LLM 时的简短澄清：从本期简报里点题回答，不编造数字。"""
+    msg = message.strip()
+    if not briefing:
+        return "当前没有可用的本期采购简报。请先生成周报后再追问。"
+
+    def _section(title: str) -> Optional[str]:
+        for line in briefing.splitlines():
+            if title in line:
+                return line.strip()
+        return None
+
+    # 短指代追问（「那呢」「为什么」）结合上一轮用户问题扩写意图
+    prior_user = ""
+    if history:
+        for role, text in reversed(history):
+            if role == "human":
+                prior_user = text
+                break
+    lookup = msg
+    if len(msg) <= 8 and prior_user and any(k in msg for k in ("那", "呢", "呢？", "呢?", "还有", "呢啊")):
+        lookup = f"{prior_user} {msg}"
+
+    if any(k in lookup for k in ("该不该买", "买不买", "采购", "补库", "怎么买")):
+        return _section("现在怎么做") or _section("时机好不好") or briefing
+    if any(k in lookup for k in ("套保", "对冲", "要紧", "偏松", "偏紧")):
+        return _section("现在怎么做") or briefing
+    if any(k in lookup for k in ("到库", "成本", "CIF", "落地")):
+        line = _section("时机好不好") or _section("为什么")
+        return line or "本期简报未单独拆出到库数字，请打开周报「进口成本与政策」板块。"
+    if any(k in lookup for k in ("为什么", "依据", "理由", "原因")):
+        return _section("为什么") or briefing
+    if any(k in lookup for k in ("盯什么", "下周", "触发", "看什么")):
+        return _section("下周盯什么") or briefing
+    if any(k in lookup for k in ("跌破", "支撑", "怎么办", "风险", "坑")):
+        return "\n".join(
+            x for x in (_section("别踩的坑"), _section("下周盯什么")) if x
+        ) or briefing
+    return briefing
+
+
+@app.get("/api/briefing")
+async def api_briefing():
+    """最新采购简报 JSON：{report_date, direction, zh, en?}。无简报 → 404。"""
+    from reports.procurement_briefing import load_latest_published_briefing
+
+    loaded = load_latest_published_briefing(REPORTS_DIR)
+    if not loaded:
+        return JSONResponse({"error": "暂无采购简报"}, status_code=404)
+    report_date, zh = loaded
+    payload = {
+        "report_date": report_date,
+        "zh": zh,
+        "direction": None,
+        "en": None,
+    }
+    side = REPORTS_DIR / report_date / "briefing.json"
+    if side.exists():
+        try:
+            import json
+            data = json.loads(side.read_text(encoding="utf-8"))
+            payload["direction"] = data.get("direction")
+            payload["en"] = data.get("en")
+            if data.get("zh"):
+                payload["zh"] = data["zh"]
+        except Exception:
+            pass
+    return payload
+
+
 @app.get("/chat/", response_class=HTMLResponse)
 async def chat_page():
-    """AI 分析师聊天页。"""
-    return HTMLResponse(content=build_chat_page())
+    """采购顾问追问页：默认展示最新周报的采购简报 + 追问芯片。"""
+    latest = _latest_report_date()
+    briefing = _extract_procurement_briefing(latest) if latest else None
+    return HTMLResponse(
+        content=build_chat_page(briefing=briefing, report_date=latest)
+    )
 
 
 @app.post("/api/chat")
 async def chat_api(request: Request):
-    """聊天 API: {message} → {output}。agent 是同步长任务，走 to_thread 不阻塞事件循环。"""
+    """
+    聊天 API: {message, session_id?} → {output, session_id}。
+    session_id 用于多轮记忆（进程内，最多 10 轮）；agent 同步长任务走 to_thread。
+    """
     ip = request.client.host if request.client else "unknown"
     if not _chat_rate_ok(ip):
         return JSONResponse({"error": "请求过于频繁，请稍后再试"}, status_code=429)
@@ -390,23 +525,37 @@ async def chat_api(request: Request):
         body = await request.json()
     except Exception:
         body = {}
-    message = (body.get("message") or "").strip() if isinstance(body, dict) else ""
+    if not isinstance(body, dict):
+        body = {}
+    message = (body.get("message") or "").strip()
+    session_id = (body.get("session_id") or "").strip() or None
     if not message:
         return JSONResponse({"error": "消息不能为空"}, status_code=400)
+
+    latest = _latest_report_date()
+    briefing = _extract_procurement_briefing(latest) if latest else None
+    history = _session_history(session_id)
 
     try:
         analyst = _get_analyst()
     except RuntimeError:
-        return JSONResponse(
-            {"error": "LLM 未配置，请设置 DEEPSEEK_API_KEY 或 ~/.arbor/.env"},
-            status_code=503,
-        )
+        output = _offline_clarify(message, briefing, history=history)
+        _append_session(session_id, message, output)
+        return {"output": output, "session_id": session_id}
+
+    # 首轮注入本期简报；后续轮次靠 chat_history，避免重复灌简报
+    agent_input = message
+    if briefing and not history:
+        from reports.procurement_briefing import format_followup_context
+        agent_input = format_followup_context(briefing, message, report_date=latest or "")
 
     try:
-        output = await asyncio.to_thread(analyst.chat, message)
+        output = await asyncio.to_thread(analyst.chat, agent_input, history)
     except Exception as e:
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
-    return {"output": output}
+
+    _append_session(session_id, message, output)
+    return {"output": output, "session_id": session_id}
 
 
 @app.get("/reports/", response_class=HTMLResponse)

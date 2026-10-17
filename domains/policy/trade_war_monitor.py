@@ -47,42 +47,50 @@ class TradeWarMonitor(BaseMonitor):
 
         events = []
 
-        # Layer 1: Polymarket data — already categorised by PolymarketSource
-        # Publish based on current tariff probability from Polymarket
-        # The PolymarketSource publishes POLY_TRADE_WAR_ESCALATE/DEESCALATE events
-        # directly to the bus. Here we supplement with news headlines.
+        # Layer 1: Polymarket 贸易/关税市场概率 → POLY_TRADE_WAR_* 事件
+        # （旧实现依赖不存在的 _cache DataFrame；改为 fetch() + markets 列表）
         try:
             from sources.markets.polymarket import PolymarketSource
-            ps = PolymarketSource()
-            # Use cached data if fresh, else skip
-            if ps._cache_time and (datetime.now() - ps._cache_time).total_seconds() < 3600:
-                df = ps._cache
-                if df is not None and ' trades' in df.columns:
-                    trade_markets = df[df['question'].str.lower().str.contains('tariff|trade war|china tariff', na=False)]
-                    for _, row in trade_markets.iterrows():
-                        prob = float(row.get('outcome_prices', 0))
-                        if prob >= 0.65:
-                            evt = CoffeeEvent(
-                                event_type=EventType.POLY_TRADE_WAR_ESCALATE,
-                                domain=Domain.POLICY,
-                                timestamp=datetime.now(),
-                                severity=3,
-                                value=prob,
-                                narrative=f"Polymarket trade war probability: {prob:.0%} (threshold 65%)",
-                                source="Polymarket/trade_war",
-                            )
-                            events.append(evt)
-                        elif prob <= 0.35:
-                            evt = CoffeeEvent(
-                                event_type=EventType.POLY_TRADE_WAR_DEESCALATE,
-                                domain=Domain.POLICY,
-                                timestamp=datetime.now(),
-                                severity=2,
-                                value=prob,
-                                narrative=f"Polymarket trade war de-escalation: {prob:.0%}",
-                                source="Polymarket/trade_war",
-                            )
-                            events.append(evt)
+            from arbor.domain.types.constants import HedgeDefaults
+
+            data = PolymarketSource().fetch()
+            escalate_thr = float(getattr(HedgeDefaults, "POLY_TRADE_WAR_THRESHOLD", 0.60))
+            deescalate_thr = 1.0 - escalate_thr  # 对称：P≤0.40 当阈值=0.60
+            trade_kw = ("tariff", "trade war", "trade conflict", "china tariff")
+            if data and data.markets:
+                for m in data.markets:
+                    text = f"{m.get('question', '')} {m.get('slug', '')}".lower()
+                    if not any(k in text for k in trade_kw):
+                        continue
+                    try:
+                        prob = float(m.get("probability", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if prob >= escalate_thr:
+                        events.append(CoffeeEvent(
+                            event_type=EventType.POLY_TRADE_WAR_ESCALATE,
+                            domain=Domain.POLICY,
+                            timestamp=datetime.now(),
+                            severity=3,
+                            value=prob,
+                            narrative=(
+                                f"Polymarket trade war probability: {prob:.0%} "
+                                f"(threshold {escalate_thr:.0%})"
+                            ),
+                            source="Polymarket/trade_war",
+                            metadata={"question": m.get("question"), "slug": m.get("slug")},
+                        ))
+                    elif prob <= deescalate_thr:
+                        events.append(CoffeeEvent(
+                            event_type=EventType.POLY_TRADE_WAR_DEESCALATE,
+                            domain=Domain.POLICY,
+                            timestamp=datetime.now(),
+                            severity=2,
+                            value=prob,
+                            narrative=f"Polymarket trade war de-escalation: {prob:.0%}",
+                            source="Polymarket/trade_war",
+                            metadata={"question": m.get("question"), "slug": m.get("slug")},
+                        ))
         except Exception:
             pass  # Polymarket unavailable — skip gracefully
 
@@ -101,9 +109,10 @@ class TradeWarMonitor(BaseMonitor):
                 combined = text.lower()
                 esc_count = sum(1 for kw in escalation_kw if kw in combined)
                 deesc_count = sum(1 for kw in deescalation_kw if kw in combined)
+                # 新闻层用 TRADE_WAR_*，与 Polymarket 的 POLY_* 区分，避免同簇双计与归因混淆
                 if esc_count >= 3:
                     evt = CoffeeEvent(
-                        event_type=EventType.POLY_TRADE_WAR_ESCALATE,
+                        event_type=EventType.TRADE_WAR_NEW_ROUND,
                         domain=Domain.POLICY,
                         timestamp=datetime.now(),
                         severity=3,
@@ -114,7 +123,7 @@ class TradeWarMonitor(BaseMonitor):
                     events.append(evt)
                 elif deesc_count >= 3:
                     evt = CoffeeEvent(
-                        event_type=EventType.POLY_TRADE_WAR_DEESCALATE,
+                        event_type=EventType.TRADE_WAR_DEESCALATION,
                         domain=Domain.POLICY,
                         timestamp=datetime.now(),
                         severity=2,

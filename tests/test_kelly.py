@@ -49,21 +49,37 @@ def test_advice_non_positive_edge_inactive():
     assert r["reason"] == "暂无认知优势，维持基线"
 
 
-def test_advice_positive_edge_value():
+def test_advice_positive_edge_up_reduces_hedge():
+    # 上涨优势 → 进口商减套保：0.65 − 0.5×0.4 = 0.45
     r = compute_kelly_advice("上涨", 0.8, 0.4)
     assert r["active"] is True
     assert r["edge"] == pytest.approx(0.4)
+    assert r["suggested_ratio"] == pytest.approx(0.45)
+    assert "减套保" in r["reason"]
+
+
+def test_advice_positive_edge_down_increases_hedge():
+    r = compute_kelly_advice("下跌", 0.8, 0.4)
+    assert r["active"] is True
     assert r["suggested_ratio"] == pytest.approx(0.85)  # 0.65 + 0.5×0.4
+    assert "增套保" in r["reason"]
 
 
-def test_advice_clamped_at_upper_bound():
+def test_advice_flat_keeps_baseline():
+    r = compute_kelly_advice("横盘", 0.8, 0.4)
+    assert r["active"] is True
+    assert r["suggested_ratio"] == 0.65
+    assert "横盘" in r["reason"]
+
+
+def test_advice_clamped_at_lower_bound_for_up():
     r = compute_kelly_advice("上涨", 1.0, 0.0)
-    assert r["suggested_ratio"] == 0.90  # 0.65 + 0.5×1.0 = 1.15 → 钳到 0.90
+    assert r["suggested_ratio"] == 0.40  # 0.65 − 0.5×1.0 = 0.15 → 钳到 0.40
 
 
 def test_advice_deadband_keeps_prev():
-    r = compute_kelly_advice("上涨", 0.8, 0.4, prev_ratio=0.83)
-    assert r["suggested_ratio"] == 0.83  # |0.85 − 0.83| = 0.02 < 0.05 → 不动
+    r = compute_kelly_advice("上涨", 0.8, 0.4, prev_ratio=0.47)
+    assert r["suggested_ratio"] == 0.47  # |0.45 − 0.47| = 0.02 < 0.05 → 不动
 
 
 # ── resolve_calibrated_p / resolve_base_rate ──────────────────────────────────

@@ -60,7 +60,7 @@ class MLAdvice:
     bias: float                 # 建议的比率调整量（正=增加套保，负=减少套保）
     rationale: list[str]        # 理由说明
     price_target_30d: Optional[float] = None   # 30 天价格预测（cents/lb）
-    model_type: str = "hedge_model"  # "hedge_model" | "timesfm" | "ensemble" | "none"
+    model_type: str = "direction_head"  # "direction_head" | "timesfm" | "ensemble" | "none"
 
 
 # 缓存
@@ -76,7 +76,7 @@ _advice_cache_ttl = 3600  # 1 小时内不重复计算
 def _get_ml_advice_uncached(current_price: Optional[float] = None) -> MLAdvice:
     """
     计算 ML 建议（不含缓存）
-    优先用 hedge_model，TimesFM 作为备用/增强
+    优先用方向头（HedgeModel clf/reg），TimesFM 作为备用/增强
     """
     advice_list: list[MLAdvice] = []
 
@@ -139,62 +139,97 @@ def _get_ml_advice_uncached(current_price: Optional[float] = None) -> MLAdvice:
     for a in advice_list:
         rationales.append(f"[{a.model_type}] {a.signal.value} ({a.confidence:.0%})")
 
+    # 目标价：按置信度加权（忽略缺失）；模型分歧大时下调 ensemble 置信度
+    weighted_targets = [
+        (a.price_target_30d, a.confidence)
+        for a in advice_list
+        if a.price_target_30d is not None and a.confidence > 0
+    ]
+    price_target_30d = None
+    if weighted_targets:
+        tw = sum(c for _, c in weighted_targets)
+        price_target_30d = (
+            sum(t * c for t, c in weighted_targets) / tw if tw else weighted_targets[0][0]
+        )
+        vals = [t for t, _ in weighted_targets]
+        if len(vals) >= 2:
+            mid = sum(vals) / len(vals)
+            spread = (max(vals) - min(vals)) / max(abs(mid), 1e-6)
+            if spread > 0.05:
+                avg_confidence *= 0.8
+                rationales.append(f"[ensemble] 目标价分歧 {spread:.1%}，置信度折减")
+                bias_magnitude = avg_confidence * 0.10
+                final_bias = (
+                    bias_magnitude if final_signal == MLSignal.BEARISH
+                    else (-bias_magnitude if final_signal == MLSignal.BULLISH else 0.0)
+                )
+
     return MLAdvice(
         signal=final_signal,
         confidence=avg_confidence,
         bias=final_bias,
         rationale=rationales,
-        price_target_30d=advice_list[0].price_target_30d,
+        price_target_30d=price_target_30d,
         model_type="ensemble",
     )
 
 
 def _get_hedge_model_advice(current_price: Optional[float] = None) -> MLAdvice:
-    """从 HedgeModel 获取建议"""
+    """
+    使用 HedgeModel 的独立方向头 / 收益头（不经 hedge_ratio 反推信号）。
+
+    - 分类器 P(return_5d > 0) → BULLISH / BEARISH / NEUTRAL
+    - 回归器 5d return → 外推 30d 目标价，并约束 bias 幅度
+
+    套保比率推荐仍由 HedgeModel.recommend / DecisionEngine 负责；
+    此处只产出价格方向信号，避免把气候/RSI 等套保规则混进 ML 方向。
+    """
     from models.model_manager import ModelManager
 
     mgr = ModelManager()
-    loaded = mgr.load()
-    if not loaded:
+    if not mgr.load() or mgr.model is None:
         raise RuntimeError("HedgeModel not loaded")
 
-    current_price = current_price or 285.0  # 默认值
+    current_price = float(current_price or 285.0)
+    df = _get_latest_features()
+    model = mgr.model
 
-    rec = mgr._recommend_from_df(
-        df=_get_latest_features(),
-        current_price=current_price,
-        total_tons=100,
+    X, _ = model.feature_engine.get_X(
+        df, scaler=model.feature_engine._scaler, fit=False
     )
+    proba_up = float(model._clf.predict_proba(X)[-1, 1])
+    pred_ret_5d = float(model._reg.predict(X)[-1])
+    dir_conf = float(max(proba_up, 1.0 - proba_up))
 
-    # HedgeModel 输出 hedge_ratio → 转换为 BULLISH/BEARISH
-    # rec.hedge_ratio > 0.65 → 建议增加套保 → BEARISH（价格将跌）
-    # rec.hedge_ratio < 0.65 → 建议减少套保 → BULLISH（价格将涨）
-    delta = rec.hedge_ratio - 0.65
-
-    if delta > 0.03:
-        signal = MLSignal.BEARISH
-        confidence = min(abs(delta) / 0.20, 1.0) * rec.confidence
-        bias = delta  # 直接用模型输出的 delta
-    elif delta < -0.03:
+    # 中性带 0.45–0.55，避免噪声翻转方向
+    if proba_up >= 0.55:
         signal = MLSignal.BULLISH
-        confidence = min(abs(delta) / 0.20, 1.0) * rec.confidence
-        bias = delta
+        confidence = dir_conf
+        bias = -min(abs(pred_ret_5d) * 2.0, 0.10) * confidence
+    elif proba_up <= 0.45:
+        signal = MLSignal.BEARISH
+        confidence = dir_conf
+        bias = min(abs(pred_ret_5d) * 2.0, 0.10) * confidence
     else:
         signal = MLSignal.NEUTRAL
-        confidence = rec.confidence * 0.5
+        confidence = dir_conf * 0.5
         bias = 0.0
+
+    # 5d → ~21 交易日线性外推（与 pipeline 的 5/21 折回对称）
+    ret_30d = pred_ret_5d * (21.0 / 5.0)
+    price_target_30d = round(current_price * (1.0 + ret_30d), 2)
 
     return MLAdvice(
         signal=signal,
-        confidence=confidence,
-        bias=bias,
+        confidence=float(confidence),
+        bias=float(bias),
         rationale=[
-            f"HedgeModel: ratio={rec.hedge_ratio:.0%}, "
-            f"confidence={rec.confidence:.0%}, "
-            f"signals={rec.model_signals}"
+            f"DirectionHead: P(up)={proba_up:.0%}, "
+            f"ret_5d={pred_ret_5d:+.2%}, "
+            f"target_30d={price_target_30d:.1f}"
         ],
-        price_target_30d=None,
-        model_type="hedge_model",
+        price_target_30d=price_target_30d,
+        model_type="direction_head",
     )
 
 

@@ -126,6 +126,16 @@ _TRANSLATIONS = {
     "kelly_active": {"zh": "凯利视角: 建议 {suggested}（edge {edge}）vs 当前建议 {current}",
                      "en": "Kelly view: suggests {suggested} (edge {edge}) vs current {current}"},
     "kelly_inactive": {"zh": "凯利视角: {reason}", "en": "Kelly view: {reason}"},
+    "scorecard_note": {
+        "zh": "情景记分: n={n} 区间覆盖 {cov} 严格方向 {dir} Brier {brier}（{skill}）",
+        "en": "Scenario scorecard: n={n} interval {cov} strict dir {dir} Brier {brier} ({skill})",
+    },
+    "scorecard_skill_yes": {"zh": "有技能", "en": "skill"},
+    "scorecard_skill_no": {"zh": "技能未证实", "en": "unproven"},
+    "tilt_note": {
+        "zh": "事件影子: {probs}（不改套保）",
+        "en": "Event shadow: {probs} (hedge unchanged)",
+    },
 
     # China Import
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
@@ -152,7 +162,7 @@ _TRANSLATIONS = {
     # Outlook
     "no_outlook": {"zh": "暂无展望", "en": "No outlook available"},
     "risk_warnings": {"zh": "⚠ 风险提示 Risk Warnings", "en": "⚠ Risk Warnings"},
-    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
+    "ai_commentary": {"zh": "采购下一步建议", "en": "Next Procurement Steps"},
 
     # Footer
     "data_sources": {"zh": "数据来源", "en": "Data Sources"},
@@ -173,13 +183,19 @@ def html_to_pdf(html_path: str, pdf_path: str) -> None:
     """Convert HTML file to PDF using Playwright (headless Chromium).
 
     Falls back to macOS textutil if Playwright is unavailable.
-    Preserves CSS colors, fonts, and layout via print-background.
+    Raises RuntimeError if no backend works (caller may soft-skip).
     """
     try:
         from playwright.sync_api import sync_playwright
     except Exception:
-        _html_to_pdf_textutil(html_path, pdf_path)
-        return
+        if _textutil_available():
+            _html_to_pdf_textutil(html_path, pdf_path)
+            return
+        raise RuntimeError(
+            "PDF backend unavailable: install playwright "
+            "(pip install playwright && playwright install chromium) "
+            "or run on macOS with textutil"
+        )
 
     with sync_playwright() as p:
         browser = p.chromium.launch()
@@ -196,6 +212,11 @@ def html_to_pdf(html_path: str, pdf_path: str) -> None:
 
     if not os.path.exists(pdf_path):
         raise RuntimeError(f"PDF not created: {pdf_path}")
+
+
+def _textutil_available() -> bool:
+    from shutil import which
+    return which("textutil") is not None
 
 
 def _html_to_pdf_textutil(html_path: str, pdf_path: str) -> None:
@@ -286,9 +307,9 @@ def _build_price_chart(report, lang: str = "zh") -> str:
             "Close": closes,
         }, index=pd.to_datetime(dates))
 
-    # -- Font setup --
-    plt.rcParams["font.family"] = ["Songti SC", "DejaVu Serif", "Hiragino Sans GB", "DejaVu Sans"]
-    plt.rcParams["axes.unicode_minus"] = False
+    # -- Font setup（优先本机已装 CJK，避免 Songti/Hiragino 缺失导致 □□□）──
+    from reports.fonts import apply_matplotlib_cjk_font, resolve_plot_font_family
+    plot_fonts = apply_matplotlib_cjk_font()
 
     # -- Brand-aligned Kami style --
     PARCHMENT = "#f5f4ed"
@@ -304,7 +325,8 @@ def _build_price_chart(report, lang: str = "zh") -> str:
         facecolor=PARCHMENT,
         edgecolor=BORDER,
         rc={
-            "font.family": ["Songti SC", "DejaVu Serif", "Hiragino Sans GB", "DejaVu Sans"],
+            "font.family": "sans-serif",
+            "font.sans-serif": plot_fonts or resolve_plot_font_family(),
             "axes.unicode_minus": False,
         },
         marketcolors=mpf.make_marketcolors(
@@ -411,6 +433,40 @@ def _build_reference_class_html(report, lang: str) -> str:
               down=f"{rc.get('down', 0):.0%}")
     return f"""
   <div class="rc-note">{text}{thin}</div>"""
+
+
+def _build_scorecard_html(report, lang: str) -> str:
+    """情景记分卡一行（无样本时不渲染）。"""
+    sc = getattr(report, "scenario_scorecard", None)
+    if not sc or not sc.get("n"):
+        return ""
+    brier = sc.get("mean_brier")
+    brier_s = f"{brier:.3f}" if brier is not None else "—"
+    skill = _t("scorecard_skill_yes" if sc.get("has_skill") else "scorecard_skill_no", lang)
+    text = _t("scorecard_note", lang,
+              n=sc["n"],
+              cov=f"{sc.get('interval_coverage', 0):.0%}",
+              dir=f"{sc.get('strict_direction_rate', 0):.0%}",
+              brier=brier_s, skill=skill)
+    return f"""
+  <div class="rc-note">{text}</div>"""
+
+
+def _build_event_tilt_html(report, lang: str) -> str:
+    """事件/市场/期限结构影子倾斜（active 时渲染；不改套保）。"""
+    tilt = getattr(report, "scenario_event_tilt", None)
+    if not tilt or not tilt.get("active"):
+        return ""
+    probs = " / ".join(
+        f"{t['direction']} {_fmt_percent(t['probability'], decimals=0, scale=100)}"
+        for t in tilt.get("tilted", [])
+    )
+    reasons = "".join(
+        f"<li>{_html.escape(str(r))}</li>" for r in (tilt.get("reasons") or [])[:4]
+    )
+    reason_block = f"<ul class='tilt-reasons'>{reasons}</ul>" if reasons else ""
+    return f"""
+  <div class="kelly-note">{_t("tilt_note", lang, probs=probs)}{reason_block}</div>"""
 
 
 def _scenario_accent(direction: str) -> str:
@@ -821,22 +877,28 @@ def _build_metrics_html(metric_ctx: dict[str, str], lang: str) -> str:
 
 
 def _build_ai_commentary_html(report, lang: str) -> str:
-    """AI 分析师点评 section（None 不渲染；en 模式优先 llm_commentary_en，缺省回退中文并标注）。"""
+    """采购下一步建议 section（None 不渲染；en 模式优先 llm_commentary_en，缺省回退中文并标注）。"""
     text = getattr(report, "llm_commentary", None)
-    tag = "AI Analyst"
+    tag = "Procurement Advisor"
     if lang == "en":
         en_text = getattr(report, "llm_commentary_en", None)
         if en_text:
             text = en_text
         elif text:
-            tag = "AI Analyst · 中文"  # 英文版缺失时回退中文点评并标注
+            tag = "Procurement Advisor · 中文"  # 英文版缺失时回退中文建议并标注
     if not text:
         return ""
     body = _html.escape(text).replace("\n", "<br>")
+    ask = (
+        '<a class="advisor-ask" href="/chat/">Ask follow-ups →</a>'
+        if lang == "en"
+        else '<a class="advisor-ask" href="/chat/">追问采购建议 →</a>'
+    )
     return f"""
 <div class="section">
   <div class="section-title">{_t("ai_commentary", lang)} <span>{tag}</span></div>
   <div class="outlook-box ai-commentary">{body}</div>
+  <div class="advisor-ask-row">{ask}</div>
 </div>"""
 
 
@@ -879,6 +941,9 @@ def build_report_html(report, lang: str = "zh") -> str:
 
     html_lang = "en" if lang == "en" else "zh-CN"
     body_font = "var(--serif)" if lang == "en" else "var(--sans)"
+    from reports.fonts import css_sans_stack, css_serif_stack
+    serif_stack = css_serif_stack()
+    sans_stack = css_sans_stack()
 
     html = f"""<!DOCTYPE html>
 <html lang="{html_lang}">
@@ -908,8 +973,8 @@ def build_report_html(report, lang: str = "zh") -> str:
     --stone:       #6b6a64;
     --border:      #e8e6dc;
     --border-soft: #e5e3d8;
-    --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Palatino, serif;
-    --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+    --serif: {serif_stack};
+    --sans:  {sans_stack};
     --mono:  "SF Mono", Monaco, Consolas, monospace;
   }}
 
@@ -1476,6 +1541,17 @@ def build_report_html(report, lang: str = "zh") -> str:
     color: var(--dark-warm);
     page-break-inside: avoid;
   }}
+  .advisor-ask-row {{
+    margin-top: 1.6mm;
+    text-align: right;
+  }}
+  .advisor-ask {{
+    font-family: var(--sans);
+    font-size: 7pt;
+    color: var(--brand, #1B365D);
+    text-decoration: none;
+  }}
+  .advisor-ask:hover {{ text-decoration: underline; }}
   .risk-box {{
     margin-top: 1.8mm;
     padding: 2.2mm 2.4mm;
@@ -1649,6 +1725,8 @@ def build_report_html(report, lang: str = "zh") -> str:
     {scenario_rows}
   </div>
   {_build_reference_class_html(report, lang)}
+  {_build_scorecard_html(report, lang)}
+  {_build_event_tilt_html(report, lang)}
   {hedge_html}
   {_build_kelly_html(report, lang)}
 </div>
@@ -1719,7 +1797,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   </div>''' if report.risk_warnings else ''}
 </div>
 
-<!-- ══ AI Analyst Commentary ══ -->
+<!-- ══ Next Procurement Steps ══ -->
 {_build_ai_commentary_html(report, lang)}
 
 <!-- ══ Footer ══ -->

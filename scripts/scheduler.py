@@ -3,8 +3,9 @@
 scripts/scheduler.py
 Coffee Futures Report — APScheduler-based weekly publisher.
 
-Trigger: Every Saturday at 03:00 CST (Beijing time).
-Rationale: ICE Coffee futures close Friday 13:30 ET ≈ Saturday 02:30 CST.
+Trigger: Every Saturday at 03:00 Asia/Shanghai (CST).
+Rationale: ICE Coffee 周五 13:30 ET 收盘 → 周六 01:30 CST(EDT) / 02:30 CST(EST)；
+           留缓冲后在周六 03:00 北京时间出报，预测即将到来的 Mon–Fri（forecast_offset=0）。
 
 Usage:
   python scripts/scheduler.py              # Daemon mode (runs forever)
@@ -32,6 +33,7 @@ from reports.pipeline import run, PipelineConfig
 from reports.exporters.html_to_pdf import build_report_html, html_to_pdf
 from reports.exporters.markdown_exporter import export_markdown
 from reports.history import save_report_summary
+from reports.procurement_briefing import write_briefing_sidecar
 
 logger = logging.getLogger("report_scheduler")
 
@@ -47,17 +49,21 @@ def _ensure_dir(path: Path) -> Path:
 def generate_and_publish(
     output_dir: Path,
     output_format: str = "both",  # 'html' | 'pdf' | 'both'
-    forecast_offset: int = 1,
+    forecast_offset: int = 0,
+    use_demo_data: bool = False,
 ) -> Path:
     """Generate report and publish to web directory."""
     today_str = date.today().strftime("%Y-%m-%d")
     report_dir = _ensure_dir(output_dir / today_str)
 
-    logger.info("Generating report (date=%s, format=%s)...", today_str, output_format)
+    logger.info(
+        "Generating report (date=%s, format=%s, demo=%s)...",
+        today_str, output_format, use_demo_data,
+    )
 
     config = PipelineConfig(
         ticker="KC=F",
-        use_demo_data=False,
+        use_demo_data=use_demo_data,
         output_format="html",
         forecast_week_offset=forecast_offset,
     )
@@ -82,7 +88,15 @@ def generate_and_publish(
         md_en_path.write_text(export_markdown(report, lang="en"), encoding="utf-8")
         logger.info("Markdown saved: %s (zh) + %s (en)", md_path, md_en_path)
 
-    # ── Generate PDF ──
+    # ── 采购简报 sidecar（聊天页 / Agent 优先读，避免只靠 HTML 抽取）──
+    try:
+        side = write_briefing_sidecar(report, report_dir, report_date=today_str)
+        if side:
+            logger.info("Briefing sidecar saved: %s", side)
+    except Exception as e:
+        logger.warning("briefing.json skipped: %s", e)
+
+    # ── Generate PDF（缺 playwright/textutil 时降级：HTML 已出，不阻断发布）──
     if output_format in ("pdf", "both"):
         html = build_report_html(report, lang="zh")
         with tempfile.NamedTemporaryFile(mode="w", suffix=".html", delete=False, encoding="utf-8") as f:
@@ -91,6 +105,8 @@ def generate_and_publish(
         try:
             html_to_pdf(tmp_html, str(pdf_path))
             logger.info("PDF saved: %s", pdf_path)
+        except Exception as e:
+            logger.warning("PDF skipped (HTML/Markdown still published): %s", e)
         finally:
             os.unlink(tmp_html)
 
@@ -159,7 +175,7 @@ def _build_publish_notice(report, report_dir: Path, today_str: str) -> str:
     return (
         f"📰 <b>Arbor 周报已生成 {today_str}</b>\n"
         f"现价 {price} | 套保 {hedge} | ML {ml}\n"
-        f"AI 点评: {commentary or '无'}\n"
+        f"采购建议: {commentary or '无'}\n"
         f"公众号 markdown: {report_dir}/report.md\n"
         f"在线版: http://<host>/reports/{today_str}/"
     )
@@ -209,8 +225,9 @@ def run_scheduler(
     hour: int = 3,
     minute: int = 0,
     output_format: str = "both",
+    forecast_offset: int = 0,
 ) -> None:
-    """Run APScheduler in blocking mode."""
+    """Run APScheduler in blocking mode（固定 Asia/Shanghai，避免 UTC 主机跑偏 8 小时）。"""
     try:
         from apscheduler.schedulers.blocking import BlockingScheduler
         from apscheduler.triggers.cron import CronTrigger
@@ -218,15 +235,22 @@ def run_scheduler(
         logger.error("APScheduler not installed: %s", e)
         sys.exit(1)
 
-    scheduler = BlockingScheduler()
+    from reports.forecast_week import REPORT_TZ
+
+    scheduler = BlockingScheduler(timezone=REPORT_TZ)
 
     scheduler.add_job(
         _job_with_alerts,
-        trigger=CronTrigger(day_of_week="sat", hour=hour, minute=minute),
+        trigger=CronTrigger(
+            day_of_week="sat",
+            hour=hour,
+            minute=minute,
+            timezone=REPORT_TZ,
+        ),
         kwargs={
             "output_dir": output_dir,
             "output_format": output_format,
-            "forecast_offset": 1,
+            "forecast_offset": forecast_offset,
         },
         id="weekly_report",
         name="Arbor Weekly Report",
@@ -235,7 +259,10 @@ def run_scheduler(
         coalesce=True,
     )
 
-    logger.info("Scheduler started. Next run: Saturday %02d:%02d CST", hour, minute)
+    logger.info(
+        "Scheduler started. Next run: Saturday %02d:%02d %s (forecast_offset=%d)",
+        hour, minute, REPORT_TZ, forecast_offset,
+    )
     logger.info("Output directory: %s", output_dir)
 
     try:
@@ -265,19 +292,23 @@ def main(argv=None) -> int:
     )
     parser.add_argument(
         "--hour", type=int, default=3,
-        help="Hour for weekly execution, 0-23 (default: 3)",
+        help="Hour for weekly execution in Asia/Shanghai, 0-23 (default: 3)",
     )
     parser.add_argument(
         "--minute", type=int, default=0,
         help="Minute for weekly execution, 0-59 (default: 0)",
     )
     parser.add_argument(
-        "--forecast-offset", type=int, default=1,
-        help="Week offset: 0=current, 1=next (default: 1)",
+        "--forecast-offset", type=int, default=0,
+        help="Week offset: 0=upcoming Mon–Fri, 1=skip one week (default: 0)",
     )
     parser.add_argument(
         "--alert-test", action="store_true",
         help="Send a test ops alert via Telegram and exit",
+    )
+    parser.add_argument(
+        "--demo", action="store_true",
+        help="Use demo data (no live market fetch); still writes briefing.json",
     )
     parser.add_argument(
         "--verbose", "-v", action="store_true",
@@ -306,6 +337,7 @@ def main(argv=None) -> int:
                 output_dir=output_dir,
                 output_format=args.format,
                 forecast_offset=args.forecast_offset,
+                use_demo_data=args.demo,
             )
             print(f"\n✓ Report published: {dest}")
             return 0
@@ -320,6 +352,7 @@ def main(argv=None) -> int:
         hour=args.hour,
         minute=args.minute,
         output_format=args.format,
+        forecast_offset=args.forecast_offset,
     )
     return 0
 

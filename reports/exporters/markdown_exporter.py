@@ -31,7 +31,7 @@ _T = {
     "china_import": {"zh": "进口成本与政策", "en": "Import Cost & Policy"},
     "outlook": {"zh": "核心观点", "en": "Outlook"},
     "risk_warnings": {"zh": "风险提示", "en": "Risk Warnings"},
-    "ai_commentary": {"zh": "AI 分析师点评", "en": "AI Analyst Commentary"},
+    "ai_commentary": {"zh": "采购下一步建议", "en": "Next Procurement Steps"},
     "policy_events": {"zh": "政策事件", "en": "Policy Events"},
     "no_policy_events": {"zh": "近 7 日无显著政策事件", "en": "No significant policy events in the past 7 days"},
     "support": {"zh": "支撑", "en": "Support"},
@@ -85,6 +85,17 @@ _T = {
         "en": "Kelly view: suggests {s} (edge {e}) vs current {c}",
     },
     "kelly_inactive": {"zh": "凯利视角: {reason}", "en": "Kelly view: {reason}"},
+    "scorecard_line": {
+        "zh": "情景记分: n={n} 区间覆盖 {cov} 严格方向 {dir} Brier {brier}（{skill}）",
+        "en": "Scenario scorecard: n={n} interval {cov} strict dir {dir} Brier {brier} ({skill})",
+    },
+    "scorecard_skill_yes": {"zh": "有技能", "en": "skill"},
+    "scorecard_skill_no": {"zh": "技能未证实", "en": "unproven"},
+    "tilt_line": {
+        "zh": "事件影子: {probs}（不改套保）",
+        "en": "Event shadow: {probs} (hedge unchanged)",
+    },
+    "tilt_reason_prefix": {"zh": "影子依据", "en": "Shadow rationale"},
     "landed_total": {"zh": "到库成本", "en": "Landed Cost"},
     "cyp_share": {"zh": "CYP 占比", "en": "CYP Share"},
     "current_hedge": {"zh": "当前套保比率", "en": "Current Hedge"},
@@ -196,6 +207,29 @@ def _md_scenarios(report: "Report", lang: str) -> list[str]:
                         years=f"{rc.get('years', 5):.0f}",
                         up=f"{rc.get('up', 0):.0%}", flat=f"{rc.get('flat', 0):.0%}",
                         down=f"{rc.get('down', 0):.0%}") + thin)
+        lines.append("")
+
+    sc = getattr(report, "scenario_scorecard", None)
+    if sc and sc.get("n", 0) > 0:
+        brier = sc.get("mean_brier")
+        brier_s = f"{brier:.3f}" if brier is not None else "—"
+        skill = _t("scorecard_skill_yes" if sc.get("has_skill") else "scorecard_skill_no", lang)
+        lines.append(_t("scorecard_line", lang,
+                        n=sc["n"],
+                        cov=f"{sc.get('interval_coverage', 0):.0%}",
+                        dir=f"{sc.get('strict_direction_rate', 0):.0%}",
+                        brier=brier_s, skill=skill))
+        lines.append("")
+
+    tilt = getattr(report, "scenario_event_tilt", None)
+    if tilt and tilt.get("active"):
+        probs = " / ".join(
+            f"{t['direction']} {t['probability']:.0%}"
+            for t in tilt.get("tilted", [])
+        )
+        lines.append(_t("tilt_line", lang, probs=probs))
+        for r in (tilt.get("reasons") or [])[:4]:
+            lines.append(f"- {_t('tilt_reason_prefix', lang)}: {r}")
         lines.append("")
     return lines
 
@@ -318,7 +352,7 @@ def _md_china_import(report: "Report", lang: str) -> list[str]:
 
 
 def _md_ai_commentary(report: "Report", lang: str) -> list[str]:
-    """AI 分析师点评小节（en 模式优先 llm_commentary_en，缺省回退中文并标注）"""
+    """采购下一步建议小节（en 模式优先 llm_commentary_en，缺省回退中文并标注）"""
     text = getattr(report, "llm_commentary", None)
     suffix = ""
     if lang == "en":

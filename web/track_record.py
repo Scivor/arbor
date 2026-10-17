@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from html import escape as _esc
 
+from reports.fonts import css_sans_stack, css_serif_stack
+
 
 def _build_learning_html(learning: dict | None) -> str:
     """自校准区块：当前系数 + 近期指标 + 最近 5 条调整记录。"""
@@ -178,6 +180,8 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   {drivers_html}
   {_build_learning_html(learning)}"""
 
+    sans = css_sans_stack()
+    serif = css_serif_stack()
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -188,7 +192,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   body {{
     background: #f5f4ed;
     color: #141413;
-    font-family: ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", sans-serif;
+    font-family: {sans};
     font-size: 14px;
     margin: 0;
   }}
@@ -204,7 +208,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin-bottom: 24px;
   }}
   .tr-title {{
-    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+    font-family: {serif};
     font-size: 22px;
     font-weight: 600;
     color: #141413;
@@ -229,7 +233,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     padding: 16px 14px;
   }}
   .tr-metric-val {{
-    font-family: Charter, Georgia, "Source Han Serif SC", serif;
+    font-family: {serif};
     font-size: 30px;
     font-weight: 600;
     color: #1B365D;
@@ -269,7 +273,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     border-bottom: 1px solid #e8e6dc;
   }}
   .tr-date {{
-    font-family: Charter, Georgia, "Source Han Serif SC", serif;
+    font-family: {serif};
     font-weight: 600;
   }}
   .tr-num {{ font-variant-numeric: tabular-nums; }}
@@ -290,7 +294,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin-top: 14px;
   }}
   .tr-drivers-title {{
-    font-family: Charter, Georgia, "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", serif;
+    font-family: {serif};
     font-size: 15px;
     font-weight: 600;
     color: #141413;
@@ -315,7 +319,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     color: #141413;
   }}
   .tr-learn-coefs b {{
-    font-family: Charter, Georgia, "Source Han Serif SC", serif;
+    font-family: {serif};
     font-size: 18px;
     color: #1B365D;
   }}

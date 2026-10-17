@@ -5,6 +5,7 @@ tests/test_policy_news.py
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -15,40 +16,50 @@ from domains.policy.scanner import PolicyDomainScanner
 from sources.policy.google_news_rss import GoogleNewsRSSSource
 
 
-SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
+def _sample_rss(now: datetime | None = None) -> str:
+    """RSS 日期相对「现在」生成，避免 _filter_recent(7d) 把夹具整批滤掉。"""
+    now = now or datetime.now(timezone.utc)
+    d0 = now.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    d1 = (now - timedelta(hours=2)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    d2 = (now - timedelta(days=1)).strftime("%a, %d %b %Y %H:%M:%S GMT")
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
     <title>Google News</title>
     <item>
       <title>US slaps a 25% tariff on some Brazil goods, exempts beef and coffee</title>
       <link>https://example.com/1</link>
-      <pubDate>Thu, 16 Jul 2026 12:00:00 GMT</pubDate>
+      <pubDate>{d0}</pubDate>
     </item>
     <item>
       <title>Another tariff story today</title>
       <link>https://example.com/2</link>
-      <pubDate>Thu, 16 Jul 2026 10:00:00 GMT</pubDate>
+      <pubDate>{d1}</pubDate>
     </item>
     <item>
       <title>Vietnam coffee export ban announced amid supply shortage</title>
       <link>https://example.com/3</link>
-      <pubDate>Wed, 15 Jul 2026 12:00:00 GMT</pubDate>
+      <pubDate>{d2}</pubDate>
     </item>
     <item>
       <title>Weather forecast for coffee belt</title>
       <link>https://example.com/4</link>
-      <pubDate>Thu, 16 Jul 2026 12:00:00 GMT</pubDate>
+      <pubDate>{d0}</pubDate>
     </item>
   </channel>
 </rss>
 """
 
 
+SAMPLE_RSS = _sample_rss()
+
+
 @pytest.fixture
 def mock_response():
     resp = MagicMock()
     resp.status_code = 200
-    resp.text = SAMPLE_RSS
+    # 每次取夹具时现算日期，避免模块 import 时间与用例运行时间跨过过滤窗
+    resp.text = _sample_rss()
     return resp
 
 

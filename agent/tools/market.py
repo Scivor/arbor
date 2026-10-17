@@ -77,3 +77,21 @@ def get_landed_cost() -> str:
         )
     except Exception as e:
         return f"[get_landed_cost] 错误: {e}"
+
+
+@tool
+def get_procurement_briefing() -> str:
+    """
+    读取最新已发布周报中的「采购下一步建议」正文（本期默认立场）。
+    追问澄清时应优先调用，避免与周报简报打架。
+    """
+    try:
+        from reports.procurement_briefing import load_latest_published_briefing
+
+        loaded = load_latest_published_briefing()
+        if not loaded:
+            return "本期采购简报不可用（尚未发布周报或简报缺失）"
+        report_date, text = loaded
+        return f"报告日 {report_date}\n{text}"
+    except Exception as e:
+        return f"[get_procurement_briefing] 错误: {e}"

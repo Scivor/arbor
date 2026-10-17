@@ -33,13 +33,14 @@ def compute_kelly_advice(
     prev_ratio: float | None = None,
 ) -> dict:
     """
-    凯利影子建议。
+    凯利影子建议（进口商视角）。
 
-    edge = calibrated_p − base_rate_p（认知优势）；
-    edge > 0 → suggested = clamp(0.65 + 0.5×edge, 0.40, 0.90)，active=True；
+    edge = calibrated_p − base_rate_p（对该主导方向的认知优势）；
+    edge > 0 时按方向调仓：
+      上涨 → 减套保（suggested = 0.65 − 0.5×edge）
+      下跌 → 增套保（suggested = 0.65 + 0.5×edge）
+      横盘 → 维持基线（有优势但不调方向仓）
     死区: prev_ratio 非 None 且 |suggested − prev| < 0.05 → 保持 prev_ratio。
-        死区锚定对象（L6）: prev_ratio 应为上周的凯利影子建议值
-        （上周影子未产出时回退为上周规则建议比率），避免逐周漂移。
     任一输入为 None 或 edge ≤ 0 → 回基线 0.65，active=False。
 
     Returns:
@@ -54,8 +55,26 @@ def compute_kelly_advice(
         return {"edge": edge, "suggested_ratio": BASELINE_RATIO, "active": False,
                 "reason": "暂无认知优势，维持基线"}
 
+    direction = normalize_direction(dominant_direction)
+    if direction == "up":
+        signed = -0.5 * edge
+        dir_note = "上涨优势→减套保"
+    elif direction == "down":
+        signed = +0.5 * edge
+        dir_note = "下跌优势→增套保"
+    else:
+        return {
+            "edge": edge,
+            "suggested_ratio": BASELINE_RATIO,
+            "active": True,
+            "reason": (
+                f"认知优势 edge={edge:+.0%}（校准 {calibrated_p:.0%} vs 基础 {base_rate_p:.0%}），"
+                f"主导横盘，维持基线"
+            ),
+        }
+
     lo, hi = RATIO_BOUNDS
-    suggested = max(lo, min(hi, BASELINE_RATIO + 0.5 * edge))
+    suggested = max(lo, min(hi, BASELINE_RATIO + signed))
     if prev_ratio is not None and abs(suggested - prev_ratio) < DEADBAND:
         suggested = prev_ratio  # 死区内不折腾
 
@@ -63,7 +82,10 @@ def compute_kelly_advice(
         "edge": edge,
         "suggested_ratio": suggested,
         "active": True,
-        "reason": f"认知优势 edge={edge:+.0%}（校准概率 {calibrated_p:.0%} vs 基础概率 {base_rate_p:.0%}），按 0.5×edge 斜率调整",
+        "reason": (
+            f"认知优势 edge={edge:+.0%}（校准概率 {calibrated_p:.0%} vs 基础概率 {base_rate_p:.0%}），"
+            f"{dir_note}，按 0.5×edge 斜率调整"
+        ),
     }
 
 

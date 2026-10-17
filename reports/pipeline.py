@@ -46,8 +46,8 @@ class PipelineConfig:
     ticker: str = "KC=F"
     use_demo_data: bool = False       # If True, skip live fetches
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
-    forecast_week_offset: int = 0     # 0 = current week, 1 = next week, etc.
-    shrink_w: float = 0.0             # 参考类概率收缩权重（0.0=关闭；>0 时 p'=w·p+(1−w)·p_base）
+    forecast_week_offset: int = 0     # 0=即将到来的 Mon–Fri；1=再推一周（见 reports.forecast_week）
+    shrink_w: float = 0.0             # 参考类收缩：<=0 自动（有技能才启用 0.2）；>0 显式但仍要求有技能
     live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
 
@@ -167,35 +167,47 @@ def compute_levels_and_scenarios(
     p_bull /= total
     p_bear /= total
 
-    # ── Price ranges based on actual volatility ────────────────────────
-    # Estimate recent volatility from 5d closes
-    if len(close_5d) >= 2:
-        deltas = [abs(close_5d[i] - close_5d[i-1]) for i in range(1, len(close_5d))]
+    # ── Price ranges: realized vol → 5 交易日 horizon（与周报期限对齐）──
+    # 优先用 30 日收盘算日波动；不足则退回 5 日均波幅。
+    close_series = list(market.close_30d or []) or list(close_5d or [])
+    avg_delta = p * 0.02
+    daily_vol_price = avg_delta
+    if len(close_series) >= 6:
+        rets = [
+            (close_series[i] - close_series[i - 1]) / close_series[i - 1]
+            for i in range(1, len(close_series))
+            if close_series[i - 1]
+        ]
+        if len(rets) >= 5:
+            mean_r = sum(rets) / len(rets)
+            var = sum((r - mean_r) ** 2 for r in rets) / len(rets)
+            daily_vol_price = max(math.sqrt(var) * p, p * 0.005)
+            avg_delta = sum(abs(r) * p for r in rets[-5:]) / min(5, len(rets))
+    elif len(close_5d) >= 2:
+        deltas = [abs(close_5d[i] - close_5d[i - 1]) for i in range(1, len(close_5d))]
         avg_delta = sum(deltas) / len(deltas)
-    else:
-        avg_delta = p * 0.02  # fallback 2%
+        daily_vol_price = avg_delta
 
-    # Neutral range: current ± 1x avg daily move
-    neutral_min = round(p - avg_delta, 0)
-    neutral_max = round(p + avg_delta, 0)
+    _HORIZON_DAYS = 5  # 周报预测窗口 ≈ 下一交易周
+    move = daily_vol_price * math.sqrt(_HORIZON_DAYS)
 
-    # Bearish range: down 1-2x avg daily move, floor at 30d low
-    bear_min = round(max(p - avg_delta * 2.5, market.low_30d * 0.98), 0)
-    bear_max = round(p - avg_delta * 0.5, 0)
+    # 横盘 ≈ ±0.67σ（约 50% 覆盖）；涨/跌用 0.5σ–1.65σ 带，贴 30 日高低
+    neutral_min = round(p - move * 0.67, 0)
+    neutral_max = round(p + move * 0.67, 0)
+    bear_min = round(max(p - move * 1.65, market.low_30d * 0.98), 0)
+    bear_max = round(p - move * 0.50, 0)
+    bull_min = round(p + move * 0.50, 0)
+    bull_max = round(min(p + move * 1.65, market.high_30d * 1.02), 0)
 
-    # Bullish range: up 1-2x avg daily move, cap at 30d high
-    bull_min = round(p + avg_delta * 0.5, 0)
-    bull_max = round(min(p + avg_delta * 2.5, market.high_30d * 1.02), 0)
-
-    # If ML has price target, anchor the dominant scenario to it
+    # ML 30 日目标 → 按交易日比例折到 5 日期望位移后再锚定情景
     if ml and ml.price_target_30d:
-        target = ml.price_target_30d
-        if ml.signal == "BEARISH" and target < p:
-            bear_min = round(min(target * 0.97, bear_min), 0)
-            bear_max = round(max(target * 1.03, bear_max), 0)
-        elif ml.signal == "BULLISH" and target > p:
-            bull_min = round(min(target * 0.97, bull_min), 0)
-            bull_max = round(max(target * 1.03, bull_max), 0)
+        target_5d = p + (ml.price_target_30d - p) * (_HORIZON_DAYS / 21.0)
+        if ml.signal == "BEARISH" and target_5d < p:
+            bear_min = round(min(target_5d * 0.97, bear_min), 0)
+            bear_max = round(max(target_5d * 1.03, bear_max), 0)
+        elif ml.signal == "BULLISH" and target_5d > p:
+            bull_min = round(min(target_5d * 0.97, bull_min), 0)
+            bull_max = round(max(target_5d * 1.03, bull_max), 0)
 
     # Build rationales from real data
     def _build_rationale(direction: str) -> list[str]:
@@ -555,8 +567,13 @@ def run(config: PipelineConfig) -> PredictionReport:
 
     if config.use_demo_data:
         logger.info("Using demo data — skipping live fetches")
-        report = demo_report()
+        # with_china=True：规则简报可写到库成本；LLM 不可用时仍有五段行动建议
+        report = demo_report(with_china=True)
         report.ticker = config.ticker
+        try:
+            _attach_llm_commentary(report)
+        except Exception as e:
+            logger.warning("demo commentary attach failed: %s", e)
         return report
 
     # ── Step 1: Fetch raw data ──────────────────────────────────
@@ -615,7 +632,18 @@ def run(config: PipelineConfig) -> PredictionReport:
     hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
-    # ── Step 3c: 参考类基础概率（超级预测 Phase 2；失败降级 None）────
+    # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────
+    scenario_scorecard = None
+    _sums = None
+    try:
+        from reports.scenario_scorecard import compute_scenario_scorecard
+        from reports.history import load_summaries as _load_sums
+        _sums = _load_sums()
+        scenario_scorecard = compute_scenario_scorecard(_sums)
+    except Exception as e:
+        logger.warning(f"scenario_scorecard failed: {e}")
+        scenario_scorecard = None
+
     reference_class = None
     try:
         from reports.reference_class import compute_base_rates
@@ -623,9 +651,14 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"compute_base_rates failed: {e}")
 
-    # 概率收缩（PipelineConfig.shrink_w，默认 0.0 关闭）
-    if config.shrink_w > 0 and reference_class:
-        scenarios = apply_shrink(scenarios, reference_class, config.shrink_w)
+    # 条件化收缩：无技能则强制 0；有技能且 shrink_w<=0 时自动启用温和权重
+    try:
+        from reports.scenario_scorecard import resolve_shrink_w
+        effective_shrink = resolve_shrink_w(config.shrink_w, scenario_scorecard)
+    except Exception:
+        effective_shrink = config.shrink_w if config.shrink_w > 0 else 0.0
+    if effective_shrink > 0 and reference_class:
+        scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 
     # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
     kelly_shadow = None
@@ -634,8 +667,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         from reports.kelly import compute_kelly_advice, resolve_base_rate, resolve_calibrated_p
         dominant = max(scenarios, key=lambda s: s.probability) if scenarios else None
         if dominant:
-            # L5: 历史只读一次，track_record 与 prev_ratio 共用
-            sums = load_summaries()
+            # L5: 历史只读一次；若上面记分卡已 load 则复用
+            sums = _sums if _sums is not None else load_summaries()
             track_record = compute_track_record(sums)
             if sums:
                 last = sums[-1]
@@ -652,20 +685,46 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"kelly shadow failed: {e}")
 
-    # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件）────────
+    # ── Step 3b: 中国进口商视角（汇率 + 到库成本 + 政策事件 + ICO/GFEX）──
     # 汇率/政策事件不依赖套保比率，且 Step 6 的 LLM 点评上下文
     # （_build_context）要读到这三者才不会跳过对应描述，故仍在此处早取一次，
     # 用初版 hedge 算到库成本。到库成本会在 Step 6 最终比率算出后原地刷新
     # （见下方"收尾"注释），届时不重复 fetch 汇率/政策事件，避免多打网络请求。
+    # ICO/GFEX 亦供 Step 3e 期限结构影子倾斜使用（只读，不进 hedge）。
     china_import = fetch_china_import_snapshot(market, hedge)
 
+    # ── Step 3b2: Polymarket（可选；失败不影响出报）────────────────
+    polymarket_data = None
+    try:
+        from sources.markets.polymarket import PolymarketSource
+        polymarket_data = PolymarketSource().fetch()
+    except Exception as e:
+        logger.warning(f"polymarket fetch failed: {e}")
+
+    # ── Step 3e: 事件/预测市场/期限结构倾斜影子（不改 scenarios，不进 hedge）──
+    scenario_event_tilt = None
+    try:
+        from reports.scenario_tilt import apply_event_tilt_shadow
+        ico = china_import.ico_spot if china_import else None
+        gfex = china_import.gfex if china_import else None
+        kc = market.current if market else None
+        scenario_event_tilt = apply_event_tilt_shadow(
+            scenarios,
+            climate=climate,
+            events=report_events,
+            polymarket=polymarket_data,
+            ico_spot=ico,
+            gfex=gfex,
+            kc_price=kc,
+        )
+    except Exception as e:
+        logger.warning(f"scenario_event_tilt failed: {e}")
+
     # ── Step 3: Compute forecast week ────────────────────────────
+    from reports.forecast_week import resolve_forecast_week
+
     today = date.today()
-    days_ahead = (7 - today.weekday()) % 7
-    if days_ahead == 0:
-        days_ahead = 7
-    week_start = today + timedelta(days=days_ahead + 7 * config.forecast_week_offset)
-    week_end = week_start + timedelta(days=4)
+    week_start, week_end = resolve_forecast_week(today, config.forecast_week_offset)
 
     # ── Step 4: Build provenance ledger ─────────────────────────
     from reports.provenance import ReportProvenance
@@ -798,6 +857,8 @@ def run(config: PipelineConfig) -> PredictionReport:
         china_import=china_import,
         reference_class=reference_class,
         kelly_shadow=kelly_shadow,
+        scenario_scorecard=scenario_scorecard,
+        scenario_event_tilt=scenario_event_tilt,
         outlook=outlook,
         risk_warnings=risk_warnings,
         weather_snapshots=weather_snaps,
@@ -807,7 +868,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         provenance=prov,
     )
 
-    # ── Step 6: AI 分析师点评（中英双语；失败静默，报告不含此板块）──
+    # ── Step 6: 采购下一步建议（中英双语；失败静默，报告不含此板块）──
     try:
         _attach_llm_commentary(report)
     except Exception as e:
@@ -867,10 +928,11 @@ def run(config: PipelineConfig) -> PredictionReport:
                  notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
     if report.llm_commentary:
-        prov.add("ai_commentary", "AI 分析师点评",
-                 "DeepSeek", "https://api.deepseek.com",
+        # 有 LLM key 时通常是 DeepSeek；规则兜底时 source 仍标 Arbor（可靠性同级）
+        prov.add("ai_commentary", "采购下一步建议",
+                 "Arbor / DeepSeek", "",
                  latency="实时生成", reliability="C",
-                 notes="LLM 单轮合成，非实时检索")
+                 notes="优先 LLM 合成；无 key 时规则拼装，均为行动建议非实时检索")
 
     return report
 
@@ -881,10 +943,13 @@ def run(config: PipelineConfig) -> PredictionReport:
 
 def _attach_llm_commentary(report: PredictionReport) -> None:
     """
-    生成中英双语 AI 点评并挂到报告（每期 2 次 LLM 单轮调用，成本可忽略）。
-    任一语言失败静默跳过，不影响另一语言与出报主流程。
+    生成中英双语「采购下一步建议」并挂到报告。
+
+    优先 LLM 单轮合成；无 key / 失败时回退规则版（reports.procurement_briefing），
+    保证周报始终有可执行的采购简报。规则版不参与「LLM 评分因子」时可仍带方向。
     """
     from reports.llm_commentary import generate_commentary
+    from reports.procurement_briefing import build_procurement_briefing
 
     commentary = generate_commentary(report, lang="zh")
     if commentary:
@@ -895,6 +960,18 @@ def _attach_llm_commentary(report: PredictionReport) -> None:
                 report.llm_commentary_en = en[0]  # direction 共用中文标记，无需重复存
         except Exception as e:
             logger.warning(f"english commentary failed: {e}")
+        return
+
+    # LLM 不可用 → 规则兜底（始终有五段行动建议）
+    try:
+        text, direction = build_procurement_briefing(report, lang="zh")
+        report.llm_commentary = text
+        report.llm_direction = direction
+        en_text, _ = build_procurement_briefing(report, lang="en")
+        report.llm_commentary_en = en_text
+        logger.info("procurement briefing: used rule-based fallback (no LLM)")
+    except Exception as e:
+        logger.warning(f"rule-based procurement briefing failed: {e}")
 
 
 def generate_demo_report() -> PredictionReport:

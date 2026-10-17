@@ -108,6 +108,17 @@ def get_reference_class() -> str:
         return f"[get_reference_class] 错误: {e}"
 
 
+# DecisionDB 无 domain 列；按 EventType 名过滤政策相关事件
+_POLICY_EVENT_TYPES = frozenset({
+    "china_tariff_change", "export_ban",
+    "ldc_status_gained", "ldc_status_lost",
+    "pesticide_standard_change",
+    "trade_war_new_round", "trade_war_deescalation",
+    "poly_trade_war_escalate", "poly_trade_war_deescalate",
+    "poly_hormuz_normal", "poly_trump_visit_china",
+})
+
+
 @tool
 def get_policy_events() -> str:
     """获取最近政策事件（近 7 天，来自事件持久化库 DecisionDB）。"""
@@ -116,11 +127,16 @@ def get_policy_events() -> str:
         from datetime import datetime, timedelta
         from core.persistence import DecisionDB
         start = (datetime.now() - timedelta(days=7)).isoformat()
-        df = DecisionDB().get_events(start=start, limit=5)
+        # 多取再过滤：库内混有供给/金融事件
+        df = DecisionDB().get_events(start=start, limit=40)
         if df is None or df.empty:
             return "近 7 日无政策事件记录"
+        if "event_type" in df.columns:
+            df = df[df["event_type"].astype(str).str.lower().isin(_POLICY_EVENT_TYPES)]
+        if df.empty:
+            return "近 7 日无政策事件记录"
         lines = ["近 7 日政策事件:"]
-        for row in df.itertuples():
+        for row in df.head(5).itertuples():
             lines.append(
                 f"  [{str(row.timestamp)[:16]}] sev={row.severity} "
                 f"{row.event_type} | {str(row.narrative)[:60]}"

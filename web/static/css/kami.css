@@ -14,8 +14,8 @@
   --border:       #e8e6dc;
   --border-soft:  #e5e3d8;
 
-  --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", Palatino, serif;
-  --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+  --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
+  --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --mono:  "JetBrains Mono", "Fira Code", "SF Mono", Consolas, Monaco, monospace;
 }
 

@@ -37,6 +37,13 @@ MODEL_FILE = MODEL_DIR / 'hedge_model.pkl'
 META_FILE = MODEL_DIR / 'model_meta.json'
 
 
+def _ensure_price_col(price_df: pd.DataFrame) -> pd.DataFrame:
+    """HistoryLoader 返回 close；FeatureEngine / HedgeModel 需要 price。"""
+    if 'close' in price_df.columns and 'price' not in price_df.columns:
+        return price_df.rename(columns={'close': 'price'})
+    return price_df
+
+
 class ModelManager:
     """
     模型生命周期管理
@@ -68,10 +75,7 @@ class ModelManager:
             print(f'Training model: {start} → {end}')
 
         loader = HistoryLoader()
-        price_df = loader.load_kc_futures(start, end)
-        # HedgeModel expects 'price' column; loader returns 'close'
-        if 'close' in price_df.columns and 'price' not in price_df.columns:
-            price_df = price_df.rename(columns={'close': 'price'})
+        price_df = _ensure_price_col(loader.load_kc_futures(start, end))
 
         scraper = ONIScraper()
         oni_df = scraper.fetch()
@@ -197,7 +201,7 @@ class ModelManager:
         start_date = (as_of - pd.Timedelta(days=400)).strftime('%Y-%m-%d')
 
         loader = HistoryLoader()
-        price_df = loader.load_kc_futures(start_date, end)
+        price_df = _ensure_price_col(loader.load_kc_futures(start_date, end))
 
         scraper = ONIScraper()
         oni_df = scraper.fetch()
@@ -206,11 +210,7 @@ class ModelManager:
         df = engine.build_features(price_df, oni_df)
         df = df.dropna().iloc[120:]
 
-        # 用已有模型的 scaler 重新构建
-        # 重新 fit 以获取正确的 scaler（临时方案）
-        # 更好的方案是保存 scaler
-        rec = self._recommend_from_df(df, current_price, total_tons)
-        return rec
+        return self._recommend_from_df(df, current_price, total_tons)
 
     def _recommend_from_df(
         self,
@@ -218,87 +218,11 @@ class ModelManager:
         current_price: float,
         total_tons: float,
     ) -> HedgeRecommendation:
-        """从特征 DataFrame 生成推荐（复用已训练的 scaler）"""
+        """委托 HedgeModel.recommend_hedge（单一套保配方，含方向/波动率调整）。"""
         if not self._loaded or self.model is None:
             raise RuntimeError('Model not loaded')
-
-        # 用模型自带的 scaler
-        X, _ = self.model.feature_engine.get_X(
-            df, scaler=self.model.feature_engine._scaler, fit=False
-        )
-
-        # 预测
-        proba = self.model._clf.predict_proba(X)[-1, 1]
-        pred_return = self.model._reg.predict(X)[-1]
-
-        latest = df.iloc[-1]
-        oni = latest.get('oni', 0)
-        oni_phase = latest.get('oni_phase', 'NEUTRAL')
-        frost_season = latest.get('frost_season', 0)
-        rsi = latest.get('rsi_14', 50)
-        price_rank = latest.get('price_rank_60d', 0.5)
-        momentum = latest.get('momentum_20d', 0)
-
-        # 套保逻辑
-        base = 0.65
-        adj = 0.0
-        rationale = []
-
-        if frost_season and oni <= -0.5:
-            adj += 0.20
-            rationale.append('La Nina + Frost Season: +20%')
-        elif frost_season and oni >= 0.5:
-            adj += 0.10
-            rationale.append('El Nino + Frost Season: +10%')
-        elif oni <= -0.5:
-            adj += 0.10
-            rationale.append('La Nina active: +10%')
-        elif oni >= 0.5:
-            adj -= 0.05
-            rationale.append('El Nino active: -5%')
-
-        if price_rank > 0.9:
-            adj -= 0.15
-            rationale.append(f'Price {price_rank:.0%} percentile (high): -15%')
-        elif price_rank < 0.2:
-            adj += 0.10
-            rationale.append(f'Price {price_rank:.0%} percentile (low): +10%')
-
-        if momentum < -0.1:
-            adj += 0.05
-            rationale.append('Downtrend: +5%')
-        elif momentum > 0.1:
-            adj -= 0.05
-            rationale.append('Uptrend: -5%')
-
-        if rsi < 30:
-            adj += 0.10
-            rationale.append(f'RSI oversold {rsi:.0f}: +10%')
-        elif rsi > 70:
-            adj -= 0.10
-            rationale.append(f'RSI overbought {rsi:.0f}: -10%')
-
-        target_ratio = np.clip(base + adj, 0.20, 0.95)
-
-        confidence = np.clip(
-            0.5 + 0.3 * (1 - abs(adj) / 0.3),
-            0.4, 0.90
-        )
-
-        return HedgeRecommendation(
-            hedge_ratio=round(float(target_ratio), 2),
-            target_tons=round(float(target_ratio * total_tons), 1),
-            confidence=round(float(confidence), 2),
-            rationale=rationale or ['Baseline'],
-            model_signals={
-                'direction': 'DOWN' if proba < 0.5 else 'UP',
-                'confidence': f'{max(proba, 1-proba):.0%}',
-                'predicted_return': f'{pred_return:+.2%}',
-                'oni_phase': oni_phase,
-                'rsi': round(float(rsi), 1),
-                'price_rank': round(float(price_rank), 3),
-            },
-            risk_factors=['Frost' if frost_season else ''],
+        return self.model.recommend_hedge(
+            df, current_price=current_price, total_tons=total_tons,
         )
 
     def backtest(
@@ -326,7 +250,7 @@ class ModelManager:
 
         # 加载历史数据
         loader = HistoryLoader()
-        price_df = loader.load_kc_futures(start, end)
+        price_df = _ensure_price_col(loader.load_kc_futures(start, end))
 
         scraper = ONIScraper()
         oni_df = scraper.fetch()

@@ -55,12 +55,11 @@ class CoffeeLoader:
     markets = {"futures", "commodity"}
     requires_auth = False
 
-    # Price source fix (2026-04-11):
-    # KC=F (Coffee Sep 26) chart history can contradict regularMarketPrice.
-    # Use KCN26.NYB (Coffee May 26) for all backtesting — ICE official settlement
-    # aligns with KCN26, not KC=F.
-    # Keep 'KC=F' as display name in data columns for readability.
+    # Prefer a dated ICE symbol when it still has data; if empty/delisted,
+    # fall back to continuous KC=F (see _fetch_yfinance).
+    # KCN26.NYB (Coffee May 26) expired mid-2026 → must not be a hard redirect.
     KC_INTERCEPT = {"KC=F": "KCN26.NYB"}
+    KC_FALLBACK = "KC=F"
 
     def __init__(self):
         self._source = self._detect_source()
@@ -112,6 +111,27 @@ class CoffeeLoader:
         else:
             raise NoAvailableSourceError(f"Unknown source: {self._source}")
 
+    def _yf_history(
+        self,
+        ticker_symbol: str,
+        start_date: str,
+        end_date: str,
+        interval: str,
+    ) -> pd.DataFrame:
+        """Pull one yfinance history frame (may be empty)."""
+        logger.info(
+            "[CoffeeLoader] Fetching %s via yfinance (%s → %s)",
+            ticker_symbol, start_date, end_date,
+        )
+        ticker = yf.Ticker(ticker_symbol)
+        df = ticker.history(
+            start=start_date,
+            end=end_date,
+            interval=interval,
+            auto_adjust=True,
+        )
+        return df if df is not None else pd.DataFrame()
+
     def _fetch_yfinance(
         self,
         symbol: str,
@@ -119,25 +139,35 @@ class CoffeeLoader:
         end_date: str,
         interval: str,
     ) -> dict[str, pd.DataFrame]:
-        """Fetch via yfinance."""
-        # D1a: intercept KC=F → KCN26.NYB for data quality
-        actual_symbol = self.KC_INTERCEPT.get(symbol, symbol)
-        if actual_symbol != symbol:
-            logger.info("[CoffeeLoader] KC=F intercepted → %s (ICE official settlement)", actual_symbol)
+        """Fetch via yfinance；拦截符号无数据时回退到连续合约。"""
+        preferred = self.KC_INTERCEPT.get(symbol, symbol)
+        candidates = [preferred]
+        if preferred != symbol:
+            candidates.append(symbol)
+        elif symbol != self.KC_FALLBACK:
+            candidates.append(self.KC_FALLBACK)
 
-        logger.info("[CoffeeLoader] Fetching %s via yfinance (%s → %s)", actual_symbol, start_date, end_date)
-
-        ticker = yf.Ticker(actual_symbol)
-        df = ticker.history(
-            start=start_date,
-            end=end_date,
-            interval=interval,
-            auto_adjust=True,
-        )
+        df = pd.DataFrame()
+        used = preferred
+        for candidate in candidates:
+            if candidate != preferred:
+                logger.warning(
+                    "[CoffeeLoader] %s empty/unavailable — falling back to %s",
+                    preferred, candidate,
+                )
+            df = self._yf_history(candidate, start_date, end_date, interval)
+            if not df.empty:
+                used = candidate
+                break
 
         if df.empty:
-            logger.warning("[CoffeeLoader] yfinance returned empty for %s", actual_symbol)
+            logger.warning(
+                "[CoffeeLoader] yfinance returned empty for all of %s", candidates
+            )
             return {}
+
+        if used != preferred:
+            logger.info("[CoffeeLoader] using %s (requested %s)", used, symbol)
 
         # Standardise column names (yfinance uses lowercase)
         df.columns = [c.lower() for c in df.columns]
@@ -183,7 +213,7 @@ class HistoryLoader:
         end_date: str,
     ) -> pd.DataFrame:
         """
-        Load KC=F (→ KCN26.NYB) OHLCV history for model training.
+        Load KC=F OHLCV history for model training（过期 dated 合约自动回退）。
 
         Args:
             start_date: YYYY-MM-DD

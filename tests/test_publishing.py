@@ -90,13 +90,14 @@ def test_resolve_recipients_none(subs_path, monkeypatch):
 
 def test_publish_notice_content():
     report = demo_report()
-    report.llm_commentary = "【核心判断】横盘，概率 55%\n第二行不应出现"
+    report.llm_commentary = "【现在怎么做】分批观望\n第二行不应出现"
     text = _build_publish_notice(report, "/tmp/reports/2026-07-17", "2026-07-17")
     assert "Arbor 周报已生成 2026-07-17" in text
     assert "65%" in text                       # 套保比率
     assert "/tmp/reports/2026-07-17/report.md" in text
-    assert "【核心判断】横盘，概率 55%" in text  # 首句
+    assert "【现在怎么做】分批观望" in text  # 首句
     assert "第二行不应出现" not in text          # 只取首行
+    assert "采购建议:" in text
     assert "🔴" not in text and "🟡" not in text  # 常态通知无告警图标
 
 
@@ -104,4 +105,4 @@ def test_publish_notice_no_commentary():
     report = demo_report()
     assert report.llm_commentary is None
     text = _build_publish_notice(report, "/tmp/r", "2026-07-17")
-    assert "AI 点评: 无" in text
+    assert "采购建议: 无" in text

@@ -442,13 +442,13 @@ class HedgeModel:
             rationale.append(f'High volatility ({vol_pct:.0%}): cautious (+5%)')
             risk_factors.append('High market volatility')
 
-        # 预测方向调整
+        # 预测方向调整（clf: 1=UP / 0=DOWN，与 y_direction=return_5d>0 一致）
         predicted_return = ret_output.prediction
-        if dir_output.prediction == 1 and predicted_return < -0.05:
+        if dir_output.prediction == 0 and predicted_return < -0.05:
             # 预测下跌且幅度大 → 增套保
             dir_adj = +0.10
             rationale.append(f'Predicted drop {predicted_return:.1%}: add hedge (+10%)')
-        elif dir_output.prediction == 0 and predicted_return > 0.05:
+        elif dir_output.prediction == 1 and predicted_return > 0.05:
             # 预测上涨且幅度大 → 减套保
             dir_adj = -0.10
             rationale.append(f'Predicted rise {predicted_return:.1%}: reduce hedge (-10%)')

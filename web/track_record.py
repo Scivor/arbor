@@ -51,6 +51,9 @@ def _build_learning_html(learning: dict | None) -> str:
     <div class="tr-learn-metrics tr-learn-dim">驱动因子维持原权重</div>"""
     else:
         trust_html = ""
+    if learning.get("memory") is not None:
+        trust_html += """
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期套保：看跌少套，看涨多套。每个约 1 到 5 个百分点，合计不超过 6 个。机器学习和 RSI 走各自的系数，不在这里重复计算。</div>"""
 
     rows = f"""
     <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>

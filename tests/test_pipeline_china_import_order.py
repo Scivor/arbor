@@ -162,3 +162,30 @@ def test_landed_cost_refreshed_with_final_hedge_ratio(synthetic_pipeline):
     assert report.china_import.landed.total_cost_cny_jin == pytest.approx(
         expected.total_cost_cny_jin
     )
+
+
+def test_review_memory_sticks_after_commentary_recompute(synthetic_pipeline, monkeypatch):
+    """点评会整段换掉套保建议。持信和因子修正要写在换掉之后的比率上。"""
+    from reports.learning import apply_driver_hedge_nudge, apply_hedge_conviction
+    from reports.models import HedgeAdvice
+
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    trust = {"均线多头排列": 0.5}
+    monkeypatch.setattr(
+        "reports.learning.load_review_memory",
+        lambda: {"hedge_conviction": 0.6, "driver_trust": trust},
+    )
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+
+    expected = HedgeAdvice(
+        ratio=baseline.hedge_advice.ratio,
+        signal=baseline.hedge_advice.signal,
+        narrative=baseline.hedge_advice.narrative,
+    )
+    apply_hedge_conviction(expected, 0.6)
+    apply_driver_hedge_nudge(
+        expected, adjusted.bullish_params, adjusted.bearish_params, trust,
+    )
+    assert any(p.param_name == "均线多头排列" for p in adjusted.bullish_params)
+    assert adjusted.hedge_advice.ratio == expected.ratio
+    assert adjusted.hedge_advice.ratio != baseline.hedge_advice.ratio

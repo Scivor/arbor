@@ -9,6 +9,8 @@ reports/learning.py
 近期记忆（半衰期 4 对，旧的对错会淡）:
 - hedge_conviction:     套保比率偏离 65% 中性的幅度（0.6 ~ 1.0）
 - driver_trust:         每个驱动因子的权重（0.5 ~ 1.0，只降不放大）
+                        仍在出现、且没有单独数值通道的因子，会把下一期
+                        套保比率往反方向挪（每个满额 1 个百分点，合计不超过 6 个）
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -270,6 +272,17 @@ def _hedge_action(ratio: float) -> str:
     return "维持中性"
 
 
+def _set_hedge_ratio(hedge, ratio: float):
+    """写回比率，并让信号、叙述里的动作词跟比率一起变。比率停在评分引擎的 20%–95%。"""
+    hedge.ratio = round(max(0.20, min(0.95, ratio)), 2)
+    action = _hedge_action(hedge.ratio)
+    narrative = hedge.narrative or ""
+    if narrative.startswith("[") and "]" in narrative:
+        hedge.narrative = f"[{action}]{narrative.split(']', 1)[1]}"
+    hedge.signal = action
+    return hedge
+
+
 def apply_hedge_conviction(hedge, conviction: float):
     """把套保比率往 65% 拉近。conviction 为 1 时原样返回。"""
     if hedge is None:
@@ -278,13 +291,66 @@ def apply_hedge_conviction(hedge, conviction: float):
     if factor == 1.0:
         return hedge
     ratio = _HEDGE_BASELINE + (float(hedge.ratio) - _HEDGE_BASELINE) * factor
-    hedge.ratio = round(ratio, 2)
-    action = _hedge_action(hedge.ratio)
-    narrative = hedge.narrative or ""
-    if narrative.startswith("[") and "]" in narrative:
-        hedge.narrative = f"[{action}]{narrative.split(']', 1)[1]}"
-    hedge.signal = action
-    return hedge
+    return _set_hedge_ratio(hedge, ratio)
+
+
+# 信任从 1 降到 0 时，单个因子最多把套保比率挪 10 个百分点；合计不超过 6 个。
+# 实际信任下限是 0.5，所以单个因子最多 5 个百分点。
+_NUDGE_FULL = 0.10
+_NUDGE_CAP = 0.06
+# 这几个因子已经有自己的数值通道（RSI 事件、ML bias），再挪一次会算两遍。
+_NUMERIC_DRIVER_NAMES = frozenset({"RSI超买", "RSI极端超卖", "RSI中性偏弱"})
+
+
+def driver_hedge_nudge(bullish, bearish, trust: dict | None) -> float:
+    """
+    仍在本期出现、且复盘里已经不可靠的驱动因子，把套保比率往它的反方向推。
+
+    看跌却不可靠 → 少套；看涨却不可靠 → 多套。信任为 1 或没有记录时返回 0。
+    """
+    if not trust:
+        return 0.0
+    total = 0.0
+    for param in list(bullish or []) + list(bearish or []):
+        name = str(getattr(param, "param_name", "") or "")
+        if not name or name not in trust or name in _NUMERIC_DRIVER_NAMES:
+            continue
+        if getattr(param, "category", "") == "ML模型":
+            continue
+        signal = getattr(param, "signal", "")
+        if signal == "看跌":
+            sign = -1.0
+        elif signal == "看涨":
+            sign = 1.0
+        else:
+            continue
+        factor = _clamp(_finite(trust.get(name), 1.0), _DRIVER_TRUST_BOUNDS)
+        total += sign * (1.0 - factor) * _NUDGE_FULL
+    return max(-_NUDGE_CAP, min(_NUDGE_CAP, total))
+
+
+def apply_driver_hedge_nudge(hedge, bullish, bearish, trust: dict | None):
+    """把 driver_hedge_nudge 写进已经算完的套保建议。挪动量为 0 时不改比率。"""
+    if hedge is None:
+        return hedge
+    nudge = driver_hedge_nudge(bullish, bearish, trust)
+    if nudge == 0.0:
+        return hedge
+    return _set_hedge_ratio(hedge, float(hedge.ratio) + nudge)
+
+
+def scale_analyst_event(event, trust: dict | None):
+    """采购建议这个驱动因子不可靠时，缩小它进评分的贡献。"""
+    if event is None or not isinstance(trust, dict):
+        return event
+    factor = _clamp(_finite(trust.get("AI 分析师点评", 1.0), 1.0), _DRIVER_TRUST_BOUNDS)
+    if factor == 1.0:
+        return event
+    try:
+        event.value = float(event.value) * factor
+    except (TypeError, ValueError):
+        return event
+    return event
 
 
 def _append_changelog(param: str, old: float, new: float, reason: str, n_samples: int):

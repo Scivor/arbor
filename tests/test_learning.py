@@ -567,6 +567,48 @@ def test_apply_review_memory_changes_next_report():
     assert untouched.ratio == 0.80 and untouched.signal == "套保偏紧"
 
 
+def test_untrusted_driver_nudges_hedge_against_its_signal():
+    """均线、气候这类没有单独数值通道的因子，不可靠时直接改下一期比率。"""
+    from reports.learning import apply_driver_hedge_nudge, driver_hedge_nudge, scale_analyst_event
+    from reports.models import HedgeAdvice, ResistParam, SupportParam
+    from datetime import datetime
+    from arbor.domain.types.enums import Domain, EventType
+    from arbor.domain.types.event import CoffeeEvent
+
+    bearish = [
+        ResistParam("技术", "均线空头排列", "MA", "看跌", "高", "空"),
+        ResistParam("技术", "RSI超买", "70", "看跌", "高", "热"),
+        ResistParam("ML模型", "ensemble 看跌信号", "0.6", "看跌", "高", "模型"),
+    ]
+    bullish = [SupportParam("气候", "La Nina", "ONI", "看涨", "高", "旱")]
+    trust = {"均线空头排列": 0.8, "RSI超买": 0.5, "ensemble 看跌信号": 0.5, "La Nina": 0.9}
+    # 只有均线 −2 个点、La Nina +1 个点；RSI 和 ML 不重复计算
+    assert driver_hedge_nudge(bullish, bearish, trust) == pytest.approx(-0.01)
+
+    hedge = HedgeAdvice(ratio=0.70, signal="维持中性", narrative="[维持中性] 主导因子: technical")
+    apply_driver_hedge_nudge(hedge, [], [bearish[0]], {"均线空头排列": 0.8})
+    assert hedge.ratio == pytest.approx(0.68)
+    assert hedge.signal == "维持中性"
+
+    capped = [ResistParam("技术", f"因子{i}", "x", "看跌", "高", "x") for i in range(6)]
+    assert driver_hedge_nudge([], capped, {f"因子{i}": 0.5 for i in range(6)}) == pytest.approx(-0.06)
+
+    same = HedgeAdvice(ratio=0.70, signal="维持中性", narrative="[维持中性] x")
+    apply_driver_hedge_nudge(same, bullish, bearish, {})
+    assert same.ratio == 0.70
+
+    event = CoffeeEvent(
+        EventType.LLM_COMMENTARY, Domain.FINANCE, datetime(2026, 7, 1), 3, 0.08, "看跌", "llm",
+    )
+    scale_analyst_event(event, {"AI 分析师点评": 0.5})
+    assert event.value == pytest.approx(0.04)
+    untouched = CoffeeEvent(
+        EventType.LLM_COMMENTARY, Domain.FINANCE, datetime(2026, 7, 1), 3, 0.08, "看跌", "llm",
+    )
+    scale_analyst_event(untouched, {})
+    assert untouched.value == pytest.approx(0.08)
+
+
 def test_track_record_shows_review_memory():
     from web.track_record import build_track_record_html
     record = {"total": 1, "hit_rate": 1.0, "direction_rate": 1.0, "hedge_rate": 0.4,

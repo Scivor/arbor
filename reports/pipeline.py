@@ -617,11 +617,13 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2b: 自校准系数（失败回退 1.0，不影响出报）──────────────
     try:
         from reports.learning import (
+            apply_driver_hedge_nudge,
             apply_driver_weights,
             apply_hedge_conviction,
             load_learned,
             load_review_memory,
             ml_trust_multiplier,
+            scale_analyst_event,
             scale_trusted_events,
         )
         learned = load_learned()
@@ -631,7 +633,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
         memory = {"hedge_conviction": 1.0, "driver_trust": {}}
         apply_driver_weights = apply_hedge_conviction = scale_trusted_events = None
-        ml_trust_multiplier = None
+        apply_driver_hedge_nudge = scale_analyst_event = ml_trust_multiplier = None
     trust = memory.get("driver_trust") or {}
     if ml:
         ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
@@ -648,8 +650,6 @@ def run(config: PipelineConfig) -> PredictionReport:
     if scale_trusted_events is not None:
         scale_trusted_events(report_events, trust)
     hedge = compute_hedge_advice(market, scenarios, report_events)
-    if apply_hedge_conviction is not None:
-        apply_hedge_conviction(hedge, memory.get("hedge_conviction", 1.0))
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
     # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────
@@ -899,11 +899,21 @@ def run(config: PipelineConfig) -> PredictionReport:
         # 复用 Step 3 已扫描的事件（三域扫描是网络 I/O，一期周报只做一次），
         # 只把此刻才可用的 LLM 因子并进去重算。
         llm_ev = llm_commentary_event(report.llm_direction)
+        if scale_analyst_event is not None:
+            scale_analyst_event(llm_ev, trust)
         report.hedge_advice = compute_hedge_advice(
             report.market,
             report.scenarios,
             report_events + ([llm_ev] if llm_ev else []),
         ) or report.hedge_advice
+
+    # 点评重算会换掉前面的 HedgeAdvice。持信和因子修正必须落在这最后一次比率上。
+    if apply_hedge_conviction is not None:
+        apply_hedge_conviction(report.hedge_advice, memory.get("hedge_conviction", 1.0))
+    if apply_driver_hedge_nudge is not None:
+        apply_driver_hedge_nudge(
+            report.hedge_advice, report.bullish_params, report.bearish_params, trust,
+        )
 
     # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
     # 只重算到库成本本身（纯本地计算，不联网）；汇率/政策事件/ICO/GFEX 沿用

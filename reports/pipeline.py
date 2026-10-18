@@ -656,6 +656,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         )
         learned = load_learned()
         memory = load_review_memory()
+        month_scale = memory.get("month_extreme_scale", 1.0)
     except Exception as e:
         logger.warning(f"load_learned failed, fallback to 1.0: {e}")
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
@@ -672,7 +673,9 @@ def run(config: PipelineConfig) -> PredictionReport:
             "ml_confidence_scale": 1.0,
             "rsi_extreme_scale": 1.0,
             "ma_trend_scale": 1.0,
+            "month_extreme_scale": 1.0,
         }
+        month_scale = 1.0
         apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
         apply_ml_target_shift = apply_ml_confidence_scale = None
         apply_band_center_shift = apply_fan_width = apply_flat_trust = apply_prob_sharpness = None
@@ -712,7 +715,9 @@ def run(config: PipelineConfig) -> PredictionReport:
     report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
     if scale_trusted_events is not None:
         scale_trusted_events(report_events, trust)
-    hedge = compute_hedge_advice(market, scenarios, report_events)
+    hedge = compute_hedge_advice(
+        market, scenarios, report_events, month_extreme_scale=month_scale,
+    )
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
     # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────
@@ -766,7 +771,9 @@ def run(config: PipelineConfig) -> PredictionReport:
     if tilted:
         if sync_dominant_scenario_event is not None:
             sync_dominant_scenario_event(report_events, scenarios)
-        hedge = compute_hedge_advice(market, scenarios, report_events) or hedge
+        hedge = compute_hedge_advice(
+            market, scenarios, report_events, month_extreme_scale=month_scale,
+        ) or hedge
 
     # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
     kelly_shadow = None
@@ -993,6 +1000,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             report.market,
             report.scenarios,
             report_events + ([llm_ev] if llm_ev else []),
+            month_extreme_scale=month_scale,
         ) or report.hedge_advice
 
     # 点评重算会换掉前面的 HedgeAdvice。持信、因子修正和套保偏向必须落在这最后一次比率上。

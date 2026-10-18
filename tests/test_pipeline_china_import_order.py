@@ -464,6 +464,7 @@ def test_low_ma_trend_scale_shrinks_published_bull_probability(synthetic_pipelin
         "ml_confidence_scale": 1.0,
         "rsi_extreme_scale": 1.0,
         "ma_trend_scale": 1.0,
+        "month_extreme_scale": 1.0,
     }
     monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
     baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
@@ -472,3 +473,44 @@ def test_low_ma_trend_scale_shrinks_published_bull_probability(synthetic_pipelin
     monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
     adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
     assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")
+
+
+def test_low_month_extreme_scale_shrinks_published_hedge(synthetic_pipeline, monkeypatch):
+    """月涨极端事件在场时，系数 0.6 让公布的套保比率少加。"""
+    from datetime import datetime
+
+    from arbor.domain.types.enums import Domain, EventType
+    from arbor.domain.types.event import CoffeeEvent
+    from reports.pipeline import gather_report_events as real_gather
+
+    def gather(*args, **kwargs):
+        events = list(real_gather(*args, **kwargs))
+        events.append(CoffeeEvent(
+            EventType.PRICE_30D_EXTREME_UP, Domain.FINANCE, datetime(2026, 8, 1),
+            4, 300.0, "月涨幅超20%", "test",
+        ))
+        return events
+
+    monkeypatch.setattr("reports.pipeline.gather_report_events", gather)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
+        "ma_trend_scale": 1.0,
+        "month_extreme_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["month_extreme_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio

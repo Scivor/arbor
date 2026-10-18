@@ -137,6 +137,12 @@ def _current_learned_scales() -> dict:
             ma_scale = 1.0
         if ma_scale < 0.999:
             scales["ma_trend_scale"] = ma_scale
+        try:
+            month_scale = float(memory.get("month_extreme_scale", 1.0))
+        except (TypeError, ValueError):
+            month_scale = 1.0
+        if month_scale < 0.999:
+            scales["month_extreme_scale"] = month_scale
         return scales
     except Exception:
         return {}

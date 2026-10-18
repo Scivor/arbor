@@ -45,6 +45,9 @@ reports/learning.py
                         只统计空头（短均线低于长均线 2% 且价格在其下）
                         或多头（短均线高于长均线 2% 且价格在其上）的周。
                         排列连续说错时，下一期这档调整按系数缩小
+- month_extreme_scale: 30 日涨跌超过 20% 时的套保调整幅度（0.6 ~ 1.0）。
+                        月涨主张回调（加套保），月跌主张反弹（减套保）。
+                        连续说错时，下一期这档调整按系数缩小
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -108,6 +111,9 @@ _RSI_OVERBOUGHT = 65.0
 # 均线排列。短均线与长均线至少分开 2%，并且价格站在短均线的主张一侧。
 _MA_TREND_BOUNDS = (0.6, 1.0)
 _MA_GAP = 0.02
+# 30 日极端。月涨主张回调，月跌主张反弹。绝对值小于 2 的按小数存（0.20 = 20%）。
+_MONTH_EXTREME_BOUNDS = (0.6, 1.0)
+_MONTH_EXTREME = 0.20
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -158,6 +164,7 @@ def _empty_memory() -> dict:
         "ml_confidence_scale": 1.0,
         "rsi_extreme_scale": 1.0,
         "ma_trend_scale": 1.0,
+        "month_extreme_scale": 1.0,
     }
 
 
@@ -222,6 +229,7 @@ def _load_state() -> dict:
         "ml_confidence_scale": _ml_confidence_scale(data.get("ml_confidence_scale", 1.0)),
         "rsi_extreme_scale": _rsi_extreme_scale(data.get("rsi_extreme_scale", 1.0)),
         "ma_trend_scale": _ma_trend_scale(data.get("ma_trend_scale", 1.0)),
+        "month_extreme_scale": _month_extreme_scale(data.get("month_extreme_scale", 1.0)),
     }
 
 
@@ -250,7 +258,13 @@ def load_review_memory() -> dict:
         "ml_confidence_scale": state["ml_confidence_scale"],
         "rsi_extreme_scale": state["rsi_extreme_scale"],
         "ma_trend_scale": state["ma_trend_scale"],
+        "month_extreme_scale": state["month_extreme_scale"],
     }
+
+
+def _month_extreme_scale(value) -> float:
+    """月度极端系数。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _MONTH_EXTREME_BOUNDS), 4)
 
 
 def _ma_trend_scale(value) -> float:
@@ -600,6 +614,70 @@ def _ma_trend_stats(pairs) -> dict:
             getattr(cur, "ma20", None),
             getattr(cur, "ma60", None),
         )
+        if pred is None:
+            continue
+        try:
+            price = float(cur.current_price)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if not price or actual_price != actual_price:
+            continue
+        change = (actual_price - price) / price * 100
+        if change > 1.0:
+            actual = "up"
+        elif change < -1.0:
+            actual = "down"
+        else:
+            actual = "flat"
+        total += weight
+        samples += 1
+        if pred == actual:
+            hit += weight
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "rate": (hit / total) if ready else None,
+    }
+
+
+def _month_fraction(value) -> float | None:
+    """30 日涨跌统一成小数。演示数据写成百分数（-15.4），行情源写成小数（0.20 = 20%）。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    if number != number:
+        return None
+    if abs(number) >= 2.0:
+        number = number / 100.0
+    return number
+
+
+def _month_side(change) -> str | None:
+    """与评分规则同一条线：月涨超 20% 主张回调，月跌超 20% 主张反弹。"""
+    fraction = _month_fraction(change)
+    if fraction is None:
+        return None
+    if fraction >= _MONTH_EXTREME:
+        return "down"
+    if fraction <= -_MONTH_EXTREME:
+        return "up"
+    return None
+
+
+def _month_extreme_stats(pairs) -> dict:
+    """
+    30 日涨跌超过 20% 的周，近期加权命中率。
+
+    月涨主张下跌，月跌主张上涨。实际涨跌停在 ±1% 里算说错。
+    没到这条线的周不计入。样本少于 4 对时 rate 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        pred = _month_side(getattr(cur, "change_30d_pct", None))
         if pred is None:
             continue
         try:
@@ -1393,6 +1471,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     conf_stats = _ml_confidence_stats(pairs)
     rsi_stats = _rsi_extreme_stats(pairs)
     ma_stats = _ma_trend_stats(pairs)
+    month_stats = _month_extreme_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1414,6 +1493,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "ml_confidence_scale": state["ml_confidence_scale"],
         "rsi_extreme_scale": state["rsi_extreme_scale"],
         "ma_trend_scale": state["ma_trend_scale"],
+        "month_extreme_scale": state["month_extreme_scale"],
     }
     changed: list[dict] = []
 
@@ -1704,6 +1784,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── month_extreme_scale: 月度极端说错就缩小这档套保；说对或本期没有极端则回到 1 ──
+    old_month = new_values["month_extreme_scale"]
+    month_samples = month_stats["samples"]
+    month_rate = month_stats["rate"]
+    if month_samples >= _DRIVER_MIN_SAMPLES and month_rate is not None:
+        if month_rate < 0.45:
+            reason = f"月度极端方向命中率 {month_rate:.0%} < 45%，极端行情影响下调"
+            new_month = _step_toward(old_month, False, _MONTH_EXTREME_BOUNDS)
+        elif month_rate > 0.65:
+            reason = f"月度极端方向命中率 {month_rate:.0%} > 65%，极端行情影响向基准回归"
+            new_month = _step_toward(old_month, True, _MONTH_EXTREME_BOUNDS)
+        else:
+            new_month = old_month
+            reason = ""
+    elif month_samples == 0 and old_month < 1.0:
+        reason = "本期没有月度极端行情，极端行情影响向基准回归"
+        new_month = _step_toward(old_month, True, _MONTH_EXTREME_BOUNDS)
+    else:
+        new_month = old_month
+        reason = ""
+    new_month = _month_extreme_scale(new_month)
+    if reason and new_month != old_month:
+        new_values["month_extreme_scale"] = new_month
+        changed.append({
+            "param": "month_extreme_scale",
+            "old": old_month,
+            "new": new_month,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -1831,6 +1941,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "ml_confidence_scale": new_values["ml_confidence_scale"],
         "rsi_extreme_scale": new_values["rsi_extreme_scale"],
         "ma_trend_scale": new_values["ma_trend_scale"],
+        "month_extreme_scale": new_values["month_extreme_scale"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

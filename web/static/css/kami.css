@@ -345,7 +345,7 @@ body {
   padding: 12px 0 8px;
 }
 .quiet img {
-  width: min(400px, 86vw);
+  width: min(460px, 88vw);
   height: auto;
   display: block;
 }

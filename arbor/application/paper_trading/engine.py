@@ -625,11 +625,11 @@ class PaperTradingEngine:
         else:
             print("  Open Position: NONE (FLAT)")
 
+        paper = s['trade_summary']['paper']
         print("\n  Paper Trades:")
-        for k, v in [('total', s['trade_summary']['paper']['total_trades']),
-                     ('wins', s['trade_summary']['paper'].get('win_rate', 0)),
-                     ('total_pnl', s['trade_summary']['paper'].get('total_pnl', 0))]:
-            print(f"    {k}: {v}")
+        print(f"    closed:    {paper.get('total_trades', 0)}")
+        print(f"    win_rate:  {paper.get('win_rate', 0):.0%}")
+        print(f"    realized:  ${paper.get('total_pnl', 0):+.2f}")
 
         print(f"{'='*50}\n")
 

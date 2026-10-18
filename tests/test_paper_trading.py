@@ -232,6 +232,35 @@ def test_restart_keeps_a_ratio_step_that_did_not_change_size(tmp_path):
     restored.db.close()
 
 
+def test_summary_counts_only_closed_trades(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    engine.sync_to_ratio(0.80, 210.0, 375.0)
+    open_only = engine.get_summary()["trade_summary"]["paper"]
+    assert open_only["total_trades"] == 0
+    assert open_only["win_rate"] == 0.0
+    assert open_only["total_pnl"] == pytest.approx(-120.0)
+
+    engine.sync_to_ratio(0.40, 220.0, 375.0)
+    paper = engine.get_summary()["trade_summary"]["paper"]
+    assert paper["total_trades"] == 1
+    assert paper["win_rate"] == 1.0
+    assert paper["total_pnl"] == pytest.approx(engine._equity - engine.initial_equity)
+    engine.db.close()
+
+
+def test_summary_losing_close_is_not_a_win(tmp_path):
+    engine = _engine(tmp_path)
+    engine.open_position(price=200.0, tons=37.5, hedge_ratio=0.80)
+    engine.close_position(190.0, "manual_close")
+    paper = engine.get_summary()["trade_summary"]["paper"]
+    assert paper["total_trades"] == 1
+    assert paper["win_rate"] == 0.0
+    assert paper["total_pnl"] == pytest.approx(engine._equity - engine.initial_equity)
+    assert paper["total_pnl"] < 0
+    engine.db.close()
+
+
 def test_unknown_reason_leaves_the_position_open(tmp_path):
     engine = _engine(tmp_path)
     engine.open_position(price=200.0, tons=37.5, hedge_ratio=0.80)

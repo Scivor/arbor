@@ -269,28 +269,39 @@ class DecisionDB:
         return pd.read_sql_query(query, conn, params=params)
 
     def get_trade_summary(self, is_paper: Optional[bool] = None) -> dict:
-        """Trade summary statistics. Optionally filter by paper/live."""
+        """Closed-trade stats. Opens are not wins or losses.
+
+        total_pnl is realized cash: close PnL minus open commission.
+        """
         conn = self._get_conn()
-        where = f'WHERE 1=1{" AND is_paper = " + str(int(is_paper)) if is_paper is not None else ""}'
-        cur = conn.execute(f'''
+        where = "WHERE 1=1"
+        params: list = []
+        if is_paper is not None:
+            where += " AND is_paper = ?"
+            params.append(int(is_paper))
+        row = conn.execute(
+            f'''
             SELECT
-                COUNT(*) as total_trades,
-                SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
-                SUM(pnl) as total_pnl,
-                AVG(pnl) as avg_pnl,
-                SUM(commission) as total_commission
+                SUM(CASE WHEN action = 'close_hedge' THEN 1 ELSE 0 END) AS closed_trades,
+                SUM(CASE WHEN action = 'close_hedge' AND pnl > 0 THEN 1 ELSE 0 END) AS wins,
+                COALESCE(SUM(pnl), 0)
+                    - COALESCE(SUM(CASE WHEN action = 'buy_hedge' THEN commission ELSE 0 END), 0)
+                    AS total_pnl,
+                COALESCE(SUM(commission), 0) AS total_commission
             FROM hedge_trades
             {where}
-        ''')
-        row = cur.fetchone()
-        if row['total_trades'] == 0:
-            return {'total_trades': 0, 'win_rate': 0, 'total_pnl': 0}
+            ''',
+            params,
+        ).fetchone()
+        closed = int(row["closed_trades"] or 0)
+        wins = int(row["wins"] or 0)
+        total_pnl = float(row["total_pnl"] or 0.0)
         return {
-            'total_trades': row['total_trades'],
-            'win_rate': row['wins'] / row['total_trades'],
-            'total_pnl': row['total_pnl'],
-            'avg_pnl': row['avg_pnl'],
-            'total_commission': row['total_commission'],
+            "total_trades": closed,
+            "win_rate": (wins / closed) if closed else 0.0,
+            "total_pnl": total_pnl,
+            "avg_pnl": (total_pnl / closed) if closed else 0.0,
+            "total_commission": float(row["total_commission"] or 0.0),
         }
 
     def get_paper_summary(self) -> dict:

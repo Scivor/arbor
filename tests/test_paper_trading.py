@@ -232,6 +232,24 @@ def test_restart_keeps_a_ratio_step_that_did_not_change_size(tmp_path):
     restored.db.close()
 
 
+def test_summary_splits_unrealized_across_lots(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    engine.sync_to_ratio(0.80, 210.0, 375.0)
+    engine.mark_to_market(220.0)
+    pos = engine.get_summary()["open_position"]
+
+    assert pos["hedge_ratio"] == 0.80
+    assert pos["entry_price"] == pytest.approx(205.0)
+    assert [(lot["contracts"], lot["entry_price"]) for lot in pos["lots"]] == [
+        (4, 200.0),
+        (4, 210.0),
+    ]
+    assert pos["unrealized"] == pytest.approx(2645.544)
+    assert sum(lot["unrealized"] for lot in pos["lots"]) == pytest.approx(pos["unrealized"])
+    engine.db.close()
+
+
 def test_summary_counts_only_closed_trades(tmp_path):
     engine = _engine(tmp_path)
     engine.sync_to_ratio(0.40, 200.0, 375.0)

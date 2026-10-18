@@ -572,6 +572,7 @@ class PaperTradingEngine:
 
         equity = self._equity
         mark = self._current_price
+        lots = []
         if self._position:
             mark = self._current_price or self._position.entry_price
             unrealized = (
@@ -581,6 +582,14 @@ class PaperTradingEngine:
                 / 100.0
             )
             total_equity = equity + unrealized
+            for lot in self._position.lots:
+                lot_pnl = (mark - lot.entry_price) * lot.contracts * 2204.62 / 100.0
+                lots.append({
+                    'entry_price': lot.entry_price,
+                    'contracts': lot.contracts,
+                    'entry_time': lot.entry_time.isoformat(),
+                    'unrealized': lot_pnl,
+                })
         else:
             unrealized = 0.0
             total_equity = equity
@@ -600,6 +609,7 @@ class PaperTradingEngine:
                 'hedge_ratio': self._position.hedge_ratio if self._position else None,
                 'current_price': mark if self._position else None,
                 'unrealized': unrealized,
+                'lots': lots,
             } if self._position else None,
             'trade_summary': summary,
         }
@@ -619,9 +629,17 @@ class PaperTradingEngine:
 
         pos = s['open_position']
         if pos:
-            print(f"  Open Position: {pos['contracts']} contracts @ {pos['entry_price']:.2f}")
+            print(
+                f"  Open Position: {pos['contracts']} contracts "
+                f"@ {pos['entry_price']:.2f} (ratio={pos['hedge_ratio']:.0%})"
+            )
             print(f"  Current Price: {pos['current_price']:.2f}")
             print(f"  Unrealized:    ${pos['unrealized']:+.2f}")
+            for lot in pos.get('lots') or []:
+                print(
+                    f"    lot: {lot['contracts']} @ {lot['entry_price']:.2f}  "
+                    f"unrealized ${lot['unrealized']:+.2f}"
+                )
         else:
             print("  Open Position: NONE (FLAT)")
 

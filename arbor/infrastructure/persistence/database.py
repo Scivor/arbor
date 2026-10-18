@@ -104,7 +104,8 @@ SCHEMA_SQL = '''
     CREATE TABLE IF NOT EXISTS paper_book (
         id          INTEGER PRIMARY KEY CHECK (id = 1),
         hedge_ratio REAL NOT NULL,
-        narrative   TEXT NOT NULL DEFAULT ''
+        narrative   TEXT NOT NULL DEFAULT '',
+        last_price  REAL NOT NULL DEFAULT 0
     );
 
     CREATE TABLE IF NOT EXISTS paper_lots (
@@ -155,6 +156,13 @@ class DecisionDB:
             conn.commit()
         except Exception:
             pass  # Column already exists
+        try:
+            conn.execute(
+                "ALTER TABLE paper_book ADD COLUMN last_price REAL NOT NULL DEFAULT 0"
+            )
+            conn.commit()
+        except Exception:
+            pass
 
     # ─── Decisions ────────────────────────────────────────────────────────────
 
@@ -310,15 +318,21 @@ class DecisionDB:
         ).fetchone()
         return float(row["delta"] or 0.0)
 
-    def save_paper_book(self, hedge_ratio: float, narrative: str, lots: list[tuple]) -> None:
+    def save_paper_book(
+        self,
+        hedge_ratio: float,
+        narrative: str,
+        lots: list[tuple],
+        last_price: float = 0.0,
+    ) -> None:
         """Replace the open paper book. An empty lot list clears it."""
         conn = self._get_conn()
         conn.execute("DELETE FROM paper_lots")
         conn.execute("DELETE FROM paper_book")
         if lots:
             conn.execute(
-                "INSERT INTO paper_book (id, hedge_ratio, narrative) VALUES (1, ?, ?)",
-                (hedge_ratio, narrative or ""),
+                "INSERT INTO paper_book (id, hedge_ratio, narrative, last_price) VALUES (1, ?, ?, ?)",
+                (hedge_ratio, narrative or "", last_price),
             )
             conn.executemany(
                 "INSERT INTO paper_lots (entry_time, entry_price, contracts) VALUES (?, ?, ?)",
@@ -326,18 +340,23 @@ class DecisionDB:
             )
         conn.commit()
 
-    def load_paper_book(self) -> tuple[float, str, list] | None:
-        """Return (hedge_ratio, narrative, lot rows) or None when the book is flat."""
+    def load_paper_book(self) -> tuple[float, str, float, list] | None:
+        """Return (hedge_ratio, narrative, last_price, lot rows) or None when flat."""
         conn = self._get_conn()
         book = conn.execute(
-            "SELECT hedge_ratio, narrative FROM paper_book WHERE id = 1"
+            "SELECT hedge_ratio, narrative, last_price FROM paper_book WHERE id = 1"
         ).fetchone()
         if book is None:
             return None
         rows = conn.execute(
             "SELECT entry_time, entry_price, contracts FROM paper_lots ORDER BY seq"
         ).fetchall()
-        return float(book["hedge_ratio"]), book["narrative"] or "", list(rows)
+        return (
+            float(book["hedge_ratio"]),
+            book["narrative"] or "",
+            float(book["last_price"] or 0.0),
+            list(rows),
+        )
 
     # ─── Equity Snapshots ────────────────────────────────────────────────────
 

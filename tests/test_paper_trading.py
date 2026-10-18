@@ -188,6 +188,22 @@ def test_restart_restores_lots_ratio_and_realized_cash(tmp_path):
     restored.db.close()
 
 
+def test_restart_keeps_the_last_mark(tmp_path):
+    path = tmp_path / "paper.db"
+    engine = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    unrealized = engine.mark_to_market(220.0)
+    engine.db.close()
+
+    restored = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    summary = restored.get_summary()
+    assert restored._current_price == 220.0
+    assert summary["unrealized_pnl"] == pytest.approx(unrealized)
+    assert summary["unrealized_pnl"] == pytest.approx(1763.696)
+    assert summary["open_position"]["current_price"] == 220.0
+    restored.db.close()
+
+
 def test_restart_after_flat_close_keeps_realized_pnl(tmp_path):
     path = tmp_path / "paper.db"
     engine = PaperTradingEngine(db_path=path, initial_equity=100_000.0)

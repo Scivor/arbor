@@ -404,6 +404,7 @@ class PaperTradingEngine:
             position_pnl=unrealized,
             equity=self._equity + unrealized,
         ))
+        self._persist_book()
         return unrealized
 
     # ─── Ratio-driven position management ────────────────────────────────────
@@ -482,13 +483,14 @@ class PaperTradingEngine:
                 (lot.entry_time.isoformat(), lot.entry_price, lot.contracts)
                 for lot in pos.lots
             ],
+            last_price=self._current_price,
         )
 
     def _restore_book(self) -> None:
         loaded = self.db.load_paper_book()
         if loaded is None:
             return
-        hedge_ratio, narrative, rows = loaded
+        hedge_ratio, narrative, last_price, rows = loaded
         lots = [
             PaperLot(
                 datetime.fromisoformat(row["entry_time"]),
@@ -510,6 +512,7 @@ class PaperTradingEngine:
             narrative=narrative,
             lots=lots,
         )
+        self._current_price = last_price or self._position.entry_price
 
     def _record_trade(
         self,
@@ -568,9 +571,11 @@ class PaperTradingEngine:
         summary = self.db.get_paper_summary()
 
         equity = self._equity
+        mark = self._current_price
         if self._position:
+            mark = self._current_price or self._position.entry_price
             unrealized = (
-                (self._current_price - self._position.entry_price)
+                (mark - self._position.entry_price)
                 * self._position.contracts
                 * 2204.62
                 / 100.0
@@ -593,7 +598,7 @@ class PaperTradingEngine:
                 'contracts': self._position.contracts if self._position else None,
                 'entry_time': self._position.entry_time.isoformat() if self._position else None,
                 'hedge_ratio': self._position.hedge_ratio if self._position else None,
-                'current_price': self._current_price if self._position else None,
+                'current_price': mark if self._position else None,
                 'unrealized': unrealized,
             } if self._position else None,
             'trade_summary': summary,

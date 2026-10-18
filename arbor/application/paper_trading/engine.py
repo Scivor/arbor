@@ -12,20 +12,20 @@ Usage:
     engine = PaperTradingEngine(db_path='~/.arbor/decisions.db')
     engine.open_position(price=215.5, tons=375, hedge_ratio=0.80)
     engine.mark_to_market(current_price=218.0)
-    engine.close_position(exit_price=220.0, reason='ratio_reduced')
+    engine.close_position(exit_price=220.0, reason='ratio_changed')
     summary = engine.get_summary()
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from collections import deque
 
 from arbor.infrastructure.persistence.database import DecisionDB
-from arbor.domain.trading import HedgeRecord, HedgeAction, ExitReason
+from arbor.domain.trading import HedgeRecord, HedgeAction, ExitReason, coerce_exit_reason
 
 # Contract spec (KC futures)
 CONTRACT_SIZE_TONS = 37.5      # tons per contract
@@ -33,14 +33,23 @@ COMMISSION_PER_CONTRACT = 15.0  # USD/contract (one-way)
 
 
 @dataclass
+class PaperLot:
+    """Contracts opened at one price. Newer lots sit at the end."""
+    entry_time: datetime
+    entry_price: float
+    contracts: int
+
+
+@dataclass
 class PaperPosition:
     """An open paper futures position."""
     entry_time: datetime
-    entry_price: float          # cents/lb
+    entry_price: float          # cents/lb, size-weighted across lots
     size_tons: float
     hedge_ratio: float
     contracts: int
     narrative: str = ''
+    lots: list[PaperLot] = field(default_factory=list)
 
 
 @dataclass
@@ -83,13 +92,14 @@ class PaperTradingEngine:
         self.monthly_tons = monthly_tons
         self.contract_size = contract_size
 
-        # Live equity (MTM)
-        self._equity = initial_equity
+        # Live equity (MTM). Realized cash is replayed from the trade log.
+        self._equity = initial_equity + self.db.paper_equity_delta()
         self._equity_curve: deque[PaperSnapshot] = deque(maxlen=5000)
 
         # Current position
         self._position: Optional[PaperPosition] = None
         self._current_price: float = 0.0
+        self._restore_book()
 
         # Paper trade log
         self._trades: list[HedgeRecord] = []
@@ -126,6 +136,7 @@ class PaperTradingEngine:
             hedge_ratio=hedge_ratio,
             contracts=contracts,
             narrative=narrative or f'Paper open: {contracts} contracts',
+            lots=[PaperLot(now, price, contracts)],
         )
         self._position = pos
         self._current_price = price
@@ -150,13 +161,14 @@ class PaperTradingEngine:
             narrative=pos.narrative,
             is_paper=True,
         )
+        self._persist_book()
 
         return pos
 
     def close_position(
         self,
         exit_price: float,
-        reason: str | ExitReason,
+        reason: str,
         narrative: str = '',
     ) -> tuple[float, float]:
         """
@@ -164,7 +176,7 @@ class PaperTradingEngine:
 
         Args:
             exit_price: exit price in cents/lb
-            reason: ExitReason or string
+            reason: an ExitReason value, such as "manual_close"
             narrative: optional description
 
         Returns:
@@ -174,54 +186,34 @@ class PaperTradingEngine:
         if pos is None:
             return 0.0, 0.0
 
-        if isinstance(reason, str):
-            reason = ExitReason(reason)
-
+        reason = coerce_exit_reason(reason)
         now = datetime.now(timezone.utc)
-        holding_days = max(1, (now - pos.entry_time).days)
-
-        # PnL in USD:
-        # (exit_price - entry_price) * contracts * 2204.62 (lbs/ton) / 100 (cents/lb → $/lb)
-        pnl = (exit_price - pos.entry_price) * pos.contracts * 2204.62 / 100.0
-
-        commission = pos.contracts * COMMISSION_PER_CONTRACT
-        net_pnl = pnl - commission
-
-        self._equity += net_pnl
-
-        self._record_trade(
-            entry_time=pos.entry_time,
-            exit_time=now,
-            entry_price=pos.entry_price,
-            exit_price=exit_price,
-            size_tons=pos.size_tons,
-            hedge_ratio=pos.hedge_ratio,
-            action=HedgeAction.CLOSE_HEDGE,
-            pnl=net_pnl,
-            pnl_pct=net_pnl / (pos.entry_price * pos.contracts * 2204.62 / 100.0) if pos.entry_price else 0,
-            exit_reason=reason,
-            holding_days=holding_days,
-            commission=commission,
-            narrative=narrative or f'Paper close: {reason.value}',
-            is_paper=True,
-        )
-
-        closed_pnl = net_pnl
+        narrative = narrative or f'Paper close: {reason}'
+        total_net = 0.0
+        total_commission = 0.0
+        for lot in list(pos.lots):
+            net, commission = self._realize_close(
+                lot, lot.contracts, exit_price, now, pos.hedge_ratio, reason, narrative,
+            )
+            total_net += net
+            total_commission += commission
         self._position = None
-        return closed_pnl, commission
+        self._persist_book()
+        return total_net, total_commission
 
     def adjust_position(
         self,
         new_tons: float,
         current_price: float,
         narrative: str = '',
+        hedge_ratio: float | None = None,
     ) -> bool:
         """
         Adjust open position size to match new target tons.
 
         Logic:
         - If |new_tons - current_tons| < 1 contract worth → skip
-        - If new_tons > current_tons → close and reopen larger (scale up)
+        - If new_tons > current_tons → add contracts at the current price
         - If new_tons < current_tons → partial close
         - If new_tons == 0 → full close
         """
@@ -231,15 +223,18 @@ class PaperTradingEngine:
             self.open_position(
                 price=current_price,
                 tons=new_tons,
-                hedge_ratio=0.0,
+                hedge_ratio=0.0 if hedge_ratio is None else hedge_ratio,
                 narrative=narrative or f'Paper new position: {new_tons:.0f}t',
             )
             return True
 
         current_tons = self._position.size_tons
+        kept_ratio = self._position.hedge_ratio if hedge_ratio is None else hedge_ratio
         delta = new_tons - current_tons
 
         if abs(delta) < self.contract_size:
+            self._position.hedge_ratio = kept_ratio
+            self._persist_book()
             return False  # too small to adjust
 
         if new_tons <= 0:
@@ -250,19 +245,141 @@ class PaperTradingEngine:
             )
             return True
 
-        # Scale: close current, reopen with new size
-        close_pnl, _ = self.close_position(
-            exit_price=current_price,
-            reason=ExitReason.RATIO_CHANGED,
-            narrative=narrative or f'Paper resize: {current_tons:.0f}t → {new_tons:.0f}t',
-        )
-        self.open_position(
-            price=current_price,
-            tons=new_tons,
-            hedge_ratio=self._position.hedge_ratio if self._position else 0.0,
-            narrative=narrative or f'Paper reopen after resize: {new_tons:.0f}t',
+        target_contracts = int(new_tons / self.contract_size)
+        if target_contracts <= 0:
+            self.close_position(
+                exit_price=current_price,
+                reason=ExitReason.RATIO_CHANGED,
+                narrative=narrative or 'Paper close: hedge ratio → 0',
+            )
+            return True
+        if target_contracts < self._position.contracts:
+            self._reduce_position(
+                target_contracts, current_price, narrative, kept_ratio,
+            )
+            return True
+        if target_contracts == self._position.contracts:
+            self._position.hedge_ratio = kept_ratio
+            return False
+
+        # Scale up adds contracts at the current price. The original lots
+        # keep their entry, blended into one average so the book stays one lot.
+        self._add_contracts(
+            target_contracts, current_price, narrative, kept_ratio,
         )
         return True
+
+    def _reduce_position(
+        self,
+        target_contracts: int,
+        current_price: float,
+        narrative: str,
+        hedge_ratio: float,
+    ) -> None:
+        """Lift the newest lots first. Older lots keep their own entry."""
+        pos = self._position
+        left = pos.contracts - target_contracts
+        opened_ratio = pos.hedge_ratio
+        now = datetime.now(timezone.utc)
+        note = narrative or (
+            f'Paper partial close: {pos.contracts} → {target_contracts} contracts'
+        )
+        while left > 0:
+            lot = pos.lots[-1]
+            take = min(lot.contracts, left)
+            self._realize_close(
+                lot, take, current_price, now, opened_ratio,
+                ExitReason.RATIO_CHANGED, note,
+            )
+            lot.contracts -= take
+            left -= take
+            if lot.contracts == 0:
+                pos.lots.pop()
+        self._sync_position_totals(pos, hedge_ratio, current_price)
+
+    def _add_contracts(
+        self,
+        target_contracts: int,
+        current_price: float,
+        narrative: str,
+        hedge_ratio: float,
+    ) -> None:
+        """Buy the extra contracts as their own lot. The shown entry is the average."""
+        pos = self._position
+        added = target_contracts - pos.contracts
+        now = datetime.now(timezone.utc)
+        commission = added * COMMISSION_PER_CONTRACT
+        self._equity -= commission
+        self._record_trade(
+            entry_time=now,
+            exit_time=now,
+            entry_price=current_price,
+            exit_price=current_price,
+            size_tons=added * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            action=HedgeAction.BUY_HEDGE,
+            pnl=0.0,
+            pnl_pct=0.0,
+            exit_reason=ExitReason.SIGNAL_OPEN,
+            holding_days=0,
+            commission=commission,
+            narrative=narrative or (
+                f'Paper add: {pos.contracts} → {target_contracts} contracts'
+            ),
+            is_paper=True,
+        )
+        pos.lots.append(PaperLot(now, current_price, added))
+        self._sync_position_totals(pos, hedge_ratio, current_price)
+
+    def _sync_position_totals(
+        self,
+        pos: PaperPosition,
+        hedge_ratio: float,
+        current_price: float,
+    ) -> None:
+        contracts = sum(lot.contracts for lot in pos.lots)
+        pos.contracts = contracts
+        pos.size_tons = contracts * self.contract_size
+        pos.entry_price = (
+            sum(lot.contracts * lot.entry_price for lot in pos.lots) / contracts
+        )
+        pos.entry_time = pos.lots[0].entry_time
+        pos.hedge_ratio = hedge_ratio
+        self._current_price = current_price
+        self._persist_book()
+
+    def _realize_close(
+        self,
+        lot: PaperLot,
+        contracts: int,
+        exit_price: float,
+        now: datetime,
+        hedge_ratio: float,
+        reason: str,
+        narrative: str,
+    ) -> tuple[float, float]:
+        gross = (exit_price - lot.entry_price) * contracts * 2204.62 / 100.0
+        commission = contracts * COMMISSION_PER_CONTRACT
+        net = gross - commission
+        self._equity += net
+        notional = lot.entry_price * contracts * 2204.62 / 100.0
+        self._record_trade(
+            entry_time=lot.entry_time,
+            exit_time=now,
+            entry_price=lot.entry_price,
+            exit_price=exit_price,
+            size_tons=contracts * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            action=HedgeAction.CLOSE_HEDGE,
+            pnl=net,
+            pnl_pct=net / notional if notional else 0.0,
+            exit_reason=reason,
+            holding_days=max(1, (now - lot.entry_time).days),
+            commission=commission,
+            narrative=narrative,
+            is_paper=True,
+        )
+        return net, commission
 
     # ─── Mark-to-market ──────────────────────────────────────────────────────
 
@@ -287,6 +404,7 @@ class PaperTradingEngine:
             position_pnl=unrealized,
             equity=self._equity + unrealized,
         ))
+        self._persist_book()
         return unrealized
 
     # ─── Ratio-driven position management ────────────────────────────────────
@@ -327,7 +445,12 @@ class PaperTradingEngine:
         current_tons = self._position.size_tons
 
         if abs(target_tons - current_tons) < self.contract_size:
-            return f'HOLD {self._position.contracts} contracts @ {self._position.entry_price:.2f} (ratio unchanged)'
+            self._position.hedge_ratio = target_ratio
+            self._persist_book()
+            return (
+                f'HOLD {self._position.contracts} contracts '
+                f'@ {self._position.entry_price:.2f} (ratio={target_ratio:.0%})'
+            )
 
         if target_tons <= 0:
             pnl, _ = self.close_position(
@@ -342,10 +465,54 @@ class PaperTradingEngine:
             new_tons=target_tons,
             current_price=current_price,
             narrative=f'Sync: ratio {self._position.hedge_ratio:.0%} → {target_ratio:.0%}',
+            hedge_ratio=target_ratio,
         )
         return f'ADJUSTED to {self._position.contracts} contracts @ {self._position.entry_price:.2f}'
 
     # ─── Persistence ────────────────────────────────────────────────────────
+
+    def _persist_book(self) -> None:
+        pos = self._position
+        if pos is None or not pos.lots:
+            self.db.save_paper_book(0.0, "", [])
+            return
+        self.db.save_paper_book(
+            pos.hedge_ratio,
+            pos.narrative,
+            [
+                (lot.entry_time.isoformat(), lot.entry_price, lot.contracts)
+                for lot in pos.lots
+            ],
+            last_price=self._current_price,
+        )
+
+    def _restore_book(self) -> None:
+        loaded = self.db.load_paper_book()
+        if loaded is None:
+            return
+        hedge_ratio, narrative, last_price, rows = loaded
+        lots = [
+            PaperLot(
+                datetime.fromisoformat(row["entry_time"]),
+                float(row["entry_price"]),
+                int(row["contracts"]),
+            )
+            for row in rows
+            if int(row["contracts"]) > 0
+        ]
+        if not lots:
+            return
+        contracts = sum(lot.contracts for lot in lots)
+        self._position = PaperPosition(
+            entry_time=lots[0].entry_time,
+            entry_price=sum(lot.contracts * lot.entry_price for lot in lots) / contracts,
+            size_tons=contracts * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            contracts=contracts,
+            narrative=narrative,
+            lots=lots,
+        )
+        self._current_price = last_price or self._position.entry_price
 
     def _record_trade(
         self,
@@ -404,14 +571,25 @@ class PaperTradingEngine:
         summary = self.db.get_paper_summary()
 
         equity = self._equity
+        mark = self._current_price
+        lots = []
         if self._position:
+            mark = self._current_price or self._position.entry_price
             unrealized = (
-                (self._current_price - self._position.entry_price)
+                (mark - self._position.entry_price)
                 * self._position.contracts
                 * 2204.62
                 / 100.0
             )
             total_equity = equity + unrealized
+            for lot in self._position.lots:
+                lot_pnl = (mark - lot.entry_price) * lot.contracts * 2204.62 / 100.0
+                lots.append({
+                    'entry_price': lot.entry_price,
+                    'contracts': lot.contracts,
+                    'entry_time': lot.entry_time.isoformat(),
+                    'unrealized': lot_pnl,
+                })
         else:
             unrealized = 0.0
             total_equity = equity
@@ -429,8 +607,9 @@ class PaperTradingEngine:
                 'contracts': self._position.contracts if self._position else None,
                 'entry_time': self._position.entry_time.isoformat() if self._position else None,
                 'hedge_ratio': self._position.hedge_ratio if self._position else None,
-                'current_price': self._current_price if self._position else None,
+                'current_price': mark if self._position else None,
                 'unrealized': unrealized,
+                'lots': lots,
             } if self._position else None,
             'trade_summary': summary,
         }
@@ -450,17 +629,25 @@ class PaperTradingEngine:
 
         pos = s['open_position']
         if pos:
-            print(f"  Open Position: {pos['contracts']} contracts @ {pos['entry_price']:.2f}")
+            print(
+                f"  Open Position: {pos['contracts']} contracts "
+                f"@ {pos['entry_price']:.2f} (ratio={pos['hedge_ratio']:.0%})"
+            )
             print(f"  Current Price: {pos['current_price']:.2f}")
             print(f"  Unrealized:    ${pos['unrealized']:+.2f}")
+            for lot in pos.get('lots') or []:
+                print(
+                    f"    lot: {lot['contracts']} @ {lot['entry_price']:.2f}  "
+                    f"unrealized ${lot['unrealized']:+.2f}"
+                )
         else:
             print("  Open Position: NONE (FLAT)")
 
+        paper = s['trade_summary']['paper']
         print("\n  Paper Trades:")
-        for k, v in [('total', s['trade_summary']['paper']['total_trades']),
-                     ('wins', s['trade_summary']['paper'].get('win_rate', 0)),
-                     ('total_pnl', s['trade_summary']['paper'].get('total_pnl', 0))]:
-            print(f"    {k}: {v}")
+        print(f"    closed:    {paper.get('total_trades', 0)}")
+        print(f"    win_rate:  {paper.get('win_rate', 0):.0%}")
+        print(f"    realized:  ${paper.get('total_pnl', 0):+.2f}")
 
         print(f"{'='*50}\n")
 

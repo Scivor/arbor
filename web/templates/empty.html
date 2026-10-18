@@ -12,6 +12,9 @@
     <div class="quiet-quote">
       <span class="quiet-kicker">{% if lang == 'en' %}Coffee futures{% else %}咖啡期货{% endif %} · {{ coffee.symbol }}</span>
       <span class="quiet-px">{{ coffee.price }} <small>{% if lang == 'en' %}¢/lb{% else %}美分/磅{% endif %}</small></span>
+      {% if coffee.spark %}
+      <svg class="quiet-spark" viewBox="0 0 168 36" aria-hidden="true"><polyline points="{{ coffee.spark }}"/></svg>
+      {% endif %}
       {% if coffee.change_pts or coffee.change_text %}
       <span class="quiet-chg {{ coffee.tone }}">{% if coffee.change_pts %}{{ coffee.change_pts }}{% endif %}{% if coffee.change_text %} {{ coffee.change_text }}{% endif %}</span>
       {% endif %}
@@ -31,8 +34,14 @@
     <div class="quiet-quote">
       <span class="quiet-kicker">{% if lang == 'en' %}RMB vs USD{% else %}人民币对美元{% endif %}</span>
       <span class="quiet-px">{{ fx.price }}</span>
+      {% if fx.spark %}
+      <svg class="quiet-spark" viewBox="0 0 168 36" aria-hidden="true"><polyline points="{{ fx.spark }}"/></svg>
+      {% endif %}
       {% if fx.change_pts or fx.change_text %}
       <span class="quiet-chg {{ fx.tone }}">{% if fx.change_pts %}{{ fx.change_pts }}{% endif %}{% if fx.change_text %} {{ fx.change_text }}{% endif %}</span>
+      {% endif %}
+      {% if fx.low and fx.high %}
+      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ fx.low }} – {{ fx.high }}{% else %}近30日 {{ fx.low }} – {{ fx.high }}{% endif %}</span>
       {% endif %}
       <span class="quiet-meta">{% if lang == 'en' %}yuan per dollar{% else %}1 美元兑人民币{% endif %}</span>
       {% if fx.as_of %}

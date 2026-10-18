@@ -64,6 +64,29 @@ def test_parse_chart_rejects_empty_payload():
     assert _parse_chart({"chart": {"result": None, "error": {"description": "down"}}}) is None
 
 
+def test_sparkline_lifts_the_higher_close():
+    raw = _parse_chart(_chart("KC=F", 30, 10, closes=[10, 20, 30]))
+    spark = quiet_quotes(fetch=lambda: (raw, None))["coffee"]["spark"]
+    pts = [tuple(float(n) for n in pair.split(",")) for pair in spark.split()]
+    assert len(pts) == 3
+    assert pts[0][0] < pts[-1][0]
+    assert pts[-1][1] < pts[0][1]
+
+
+def test_sparkline_ends_on_the_printed_price():
+    raw = _parse_chart(_chart("KC=F", 40, 10, closes=[10, 20, 30]))
+    spark = quiet_quotes(fetch=lambda: (raw, None))["coffee"]["spark"]
+    pts = [tuple(float(n) for n in pair.split(",")) for pair in spark.split()]
+    assert len(pts) == 4
+    assert pts[-1][1] < pts[-2][1]
+
+
+def test_sparkline_omitted_without_a_path():
+    raw = _parse_chart(_chart("USDCNY=X", 7.12, 7.10, closes=[7.12]))
+    view = quiet_quotes(fetch=lambda: (None, raw))
+    assert view["fx"]["spark"] is None
+
+
 def test_quiet_quotes_formats_both_markets():
     coffee = _parse_chart(_chart(
         "KC=F", 200.0, 190.0, name="Coffee Dec 26",
@@ -118,6 +141,7 @@ def _sample_quotes():
             "high": "389.40",
             "volume": "12,430",
             "as_of": "10-17 18:30 UTC",
+            "spark": "3.0,30.0 165.0,6.0",
         },
         "fx": {
             "symbol": "USDCNY=X",
@@ -130,6 +154,7 @@ def _sample_quotes():
             "high": None,
             "volume": None,
             "as_of": "10-17 22:00 UTC",
+            "spark": "3.0,6.0 165.0,30.0",
         },
     }
 
@@ -148,6 +173,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "7.1234" in html
     assert "1 美元兑人民币" in html
     assert "empty-at-sea.svg" in html
+    assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
 
 

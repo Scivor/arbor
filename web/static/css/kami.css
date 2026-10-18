@@ -399,6 +399,19 @@ body {
   letter-spacing: 0.04em;
   color: var(--olive);
 }
+.quiet-spark {
+  width: 168px;
+  height: 36px;
+  margin: 6px 0 2px;
+  display: block;
+}
+.quiet-spark polyline {
+  fill: none;
+  stroke: #2a2622;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
 .quiet-chg {
   font-size: 13px;
   font-variant-numeric: tabular-nums;

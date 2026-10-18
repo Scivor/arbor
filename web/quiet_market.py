@@ -79,6 +79,7 @@ def _parse_chart(payload: dict) -> Optional[dict]:
         "low": min(float(x) for x in lows) if lows else None,
         "volume": float(volumes[-1]) if volumes else None,
         "as_of": as_of,
+        "closes": [float(c) for c in closes],
     }
 
 
@@ -114,6 +115,34 @@ def _as_of(moment: Optional[datetime]) -> Optional[str]:
     return moment.astimezone(timezone.utc).strftime("%m-%d %H:%M UTC")
 
 
+def _series(raw: dict) -> list[float]:
+    """收盘序列，并以页面上的现价收尾。"""
+    closes = [float(c) for c in (raw.get("closes") or []) if c is not None]
+    price = float(raw["price"])
+    if not closes:
+        return [price]
+    if abs(closes[-1] - price) <= max(1e-4, abs(price) * 1e-4):
+        return closes
+    return closes + [price]
+
+
+def _sparkline(series: list[float], *, width: float = 168, height: float = 36, pad: float = 3) -> Optional[str]:
+    """把收盘画成一条没有填色的折线。点数不足时不画。"""
+    if len(series) < 2:
+        return None
+    lo, hi = min(series), max(series)
+    span = hi - lo
+    if span == 0:
+        span = 1.0
+    last = len(series) - 1
+    coords = []
+    for i, value in enumerate(series):
+        x = pad + (width - 2 * pad) * (i / last)
+        y = pad + (height - 2 * pad) * (1 - (value - lo) / span)
+        coords.append(f"{x:.1f},{y:.1f}")
+    return " ".join(coords)
+
+
 def _volume(value: Optional[float]) -> Optional[str]:
     if value is None or value <= 0:
         return None
@@ -135,6 +164,7 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int) -> Optional[dict]:
         "high": f"{raw['high']:.{decimals}f}" if raw.get("high") is not None else None,
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
+        "spark": _sparkline(_series(raw)),
     }
 
 
@@ -151,7 +181,7 @@ def _get_chart(symbol: str, range_: str) -> Optional[dict]:
 def _fetch_both() -> tuple[Optional[dict], Optional[dict]]:
     with ThreadPoolExecutor(max_workers=2) as pool:
         coffee = pool.submit(_get_chart, "KC=F", "1mo")
-        fx = pool.submit(_get_chart, "USDCNY=X", "5d")
+        fx = pool.submit(_get_chart, "USDCNY=X", "1mo")
         return coffee.result(), fx.result()
 
 

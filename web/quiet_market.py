@@ -247,6 +247,8 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         "freight": f"{now.ocean_freight_usd_mt:.0f}",
         "tariff": _rate_text(now.import_tariff_pct),
         "vat": _rate_text(now.vat_pct),
+        "share": _rate_text(now.cyp_fraction_pct),
+        "addon_jin": f"{now.total_cost_cny_jin - now.cyp_price_cny_jin:.2f}",
     }
 
 

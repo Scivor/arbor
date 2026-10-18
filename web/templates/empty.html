@@ -71,6 +71,7 @@
         {% if landed.change_pts or landed.change_text %}
         <span class="quiet-chg {{ landed.tone }}">{% if landed.change_pts %}{{ landed.change_pts }}{% endif %}{% if landed.change_text %} {{ landed.change_text }}{% endif %}</span>
         {% endif %}
+        <span class="quiet-meta">{% if lang == 'en' %}Futures {{ landed.share }}, landing adds {{ landed.addon_jin }} CNY/jin{% else %}期货占 {{ landed.share }}，到库多 {{ landed.addon_jin }} 元/斤{% endif %}</span>
         <span class="quiet-meta">{% if lang == 'en' %}Unhedged. Freight ${{ landed.freight }}/t, duty {{ landed.tariff }}, VAT {{ landed.vat }}{% else %}未套保。海运 {{ landed.freight }} 美元/吨，关税 {{ landed.tariff }}，增值税 {{ landed.vat }}{% endif %}</span>
       </div>
       {% endif %}

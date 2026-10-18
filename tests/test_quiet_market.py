@@ -156,6 +156,11 @@ def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
     assert landed["freight"] == f"{booked.ocean_freight_usd_mt:.0f}"
     assert landed["tariff"] == "8%"
     assert landed["vat"] == "13%"
+    from web.quiet_market import _rate_text
+    assert landed["share"] == _rate_text(booked.cyp_fraction_pct)
+    addon = booked.total_cost_cny_jin - booked.cyp_price_cny_jin
+    assert landed["addon_jin"] == f"{addon:.2f}"
+    assert float(landed["addon_jin"]) > 0
     assert landed["tone"] == "up"
 
 
@@ -208,6 +213,8 @@ def _sample_quotes():
             "freight": "85",
             "tariff": "8%",
             "vat": "13%",
+            "share": "78.2%",
+            "addon_jin": "6.29",
         },
     }
 
@@ -235,6 +242,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "未套保" in html
     assert "关税 8%" in html
     assert "增值税 13%" in html
+    assert "期货占 78.2%" in html
+    assert "到库多 6.29 元/斤" in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -257,6 +266,8 @@ def test_empty_page_english(client, monkeypatch):
     assert "Unhedged" in html
     assert "duty 8%" in html
     assert "VAT 13%" in html
+    assert "Futures 78.2%" in html
+    assert "landing adds 6.29 CNY/jin" in html
     assert "7.1234" in html
 
 

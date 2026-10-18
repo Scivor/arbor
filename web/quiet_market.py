@@ -15,7 +15,12 @@ from urllib.parse import quote
 
 import requests
 
+from arbor.domain.cost.landed_cost import LandedCostCalculator
+
 _CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+# 与到库成本同一套斤、吨换算。这里只折期货现价，不加运费和关税。
+_LB_PER_MT = LandedCostCalculator.MT_PER_LB
+_JIN_PER_MT = 2000.0
 _TTL_SECONDS = 120.0
 _cache: dict = {"at": 0.0, "value": None}
 
@@ -168,6 +173,34 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int) -> Optional[dict]:
     }
 
 
+def _cny_amounts(cents_per_lb: float, yuan_per_dollar: float) -> tuple[float, float]:
+    """美分/磅 × 人民币每美元 → (元/斤, 元/吨)。"""
+    cny_per_ton = (float(cents_per_lb) / 100.0) * _LB_PER_MT * float(yuan_per_dollar)
+    return cny_per_ton / _JIN_PER_MT, cny_per_ton
+
+
+def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
+    if not coffee or not fx:
+        return None
+    cents, rate = coffee.get("price"), fx.get("price")
+    if cents is None or rate is None or rate <= 0:
+        return None
+    per_jin, per_ton = _cny_amounts(cents, rate)
+    prev_jin = None
+    change = None
+    if coffee.get("prev") and fx.get("prev"):
+        prev_jin, _prev_ton = _cny_amounts(coffee["prev"], fx["prev"])
+        if prev_jin:
+            change = (per_jin - prev_jin) / prev_jin
+    return {
+        "per_jin": f"{per_jin:.2f}",
+        "per_ton": f"{per_ton:,.0f}",
+        "change_text": _pct(change),
+        "change_pts": _pts(per_jin, prev_jin, 2) if prev_jin is not None else None,
+        "tone": _tone(change),
+    }
+
+
 def _get_chart(symbol: str, range_: str) -> Optional[dict]:
     try:
         url = _CHART.format(symbol=quote(symbol, safe=""))
@@ -187,7 +220,7 @@ def _fetch_both() -> tuple[Optional[dict], Optional[dict]]:
 
 def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
     """
-    返回 {"coffee": view|None, "fx": view|None}。
+    返回 {"coffee": view|None, "fx": view|None, "yuan": view|None}。
 
     默认路径缓存 120 秒。传入 fetch 时不读不写缓存，供测试替换网络。
     """
@@ -203,6 +236,7 @@ def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
     value = {
         "coffee": _view(coffee_raw, symbol="KC=F", decimals=2),
         "fx": _view(fx_raw, symbol="USDCNY=X", decimals=4),
+        "yuan": _yuan(coffee_raw, fx_raw),
     }
     if fetch is None:
         _cache["at"] = now

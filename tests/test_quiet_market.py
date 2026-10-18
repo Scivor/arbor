@@ -113,7 +113,7 @@ def test_quiet_quotes_degrades_when_fetch_fails():
     def boom():
         raise RuntimeError("yahoo down")
 
-    assert quiet_quotes(fetch=boom) == {"coffee": None, "fx": None}
+    assert quiet_quotes(fetch=boom) == {"coffee": None, "fx": None, "yuan": None}
 
 
 def test_quiet_quotes_keeps_the_market_that_arrived():
@@ -121,6 +121,22 @@ def test_quiet_quotes_keeps_the_market_that_arrived():
     view = quiet_quotes(fetch=lambda: (None, fx))
     assert view["coffee"] is None
     assert view["fx"]["price"] == "7.1234"
+    assert view["yuan"] is None
+
+
+def test_yuan_converts_cents_with_the_landed_cost_ton():
+    from arbor.domain.cost.landed_cost import LandedCostCalculator
+
+    coffee = _parse_chart(_chart("KC=F", 200.0, 190.0))
+    fx = _parse_chart(_chart("USDCNY=X", 7.2, 7.0))
+    yuan = quiet_quotes(fetch=lambda: (coffee, fx))["yuan"]
+    per_ton = (200.0 / 100.0) * LandedCostCalculator.MT_PER_LB * 7.2
+    per_jin = per_ton / 2000.0
+    prev_jin = (190.0 / 100.0) * LandedCostCalculator.MT_PER_LB * 7.0 / 2000.0
+    assert yuan["per_jin"] == f"{per_jin:.2f}"
+    assert yuan["per_ton"] == f"{per_ton:,.0f}"
+    assert yuan["tone"] == "up"
+    assert yuan["change_pts"] == f"+{per_jin - prev_jin:.2f}"
 
 
 @pytest.fixture
@@ -156,6 +172,13 @@ def _sample_quotes():
             "as_of": "10-17 22:00 UTC",
             "spark": "3.0,6.0 165.0,30.0",
         },
+        "yuan": {
+            "per_jin": "22.49",
+            "per_ton": "44,975",
+            "change_text": "+3.40%",
+            "change_pts": "+0.74",
+            "tone": "up",
+        },
     }
 
 
@@ -172,6 +195,11 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "人民币对美元" in html
     assert "7.1234" in html
     assert "1 美元兑人民币" in html
+    assert "期货折人民币" in html
+    assert "22.49" in html
+    assert "元/斤" in html
+    assert "44,975" in html
+    assert "不含运费和关税" in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -187,6 +215,9 @@ def test_empty_page_english(client, monkeypatch):
     assert "30-day" in html
     assert "RMB vs USD" in html
     assert "yuan per dollar" in html
+    assert "Futures in yuan" in html
+    assert "CNY/jin" in html
+    assert "before freight and duty" in html
     assert "7.1234" in html
 
 

@@ -50,6 +50,18 @@
     </div>
     {% endif %}
 
+    {% if yuan %}
+    <div class="quiet-quote quiet-join">
+      <span class="quiet-kicker">{% if lang == 'en' %}Futures in yuan{% else %}期货折人民币{% endif %}</span>
+      <span class="quiet-px">{{ yuan.per_jin }} <small>{% if lang == 'en' %}CNY/jin{% else %}元/斤{% endif %}</small></span>
+      <span class="quiet-meta">{{ yuan.per_ton }} {% if lang == 'en' %}CNY/t{% else %}元/吨{% endif %}</span>
+      {% if yuan.change_pts or yuan.change_text %}
+      <span class="quiet-chg {{ yuan.tone }}">{% if yuan.change_pts %}{{ yuan.change_pts }}{% endif %}{% if yuan.change_text %} {{ yuan.change_text }}{% endif %}</span>
+      {% endif %}
+      <span class="quiet-meta">{% if lang == 'en' %}The two prints above, before freight and duty{% else %}只按上面两行现价折算，不含运费和关税{% endif %}</span>
+    </div>
+    {% endif %}
+
     {% if not coffee and not fx %}
     <p class="quiet-miss">{% if lang == 'en' %}The quotes have not come in.{% else %}行情暂未到港。{% endif %}</p>
     {% endif %}

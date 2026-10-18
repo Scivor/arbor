@@ -318,7 +318,7 @@ body {
   margin: 0 !important;
 }
 
-/* ── No-report page: one drawing, one handwritten line ── */
+/* ── No-report page: drawing, handwritten line, two live quotes ── */
 @font-face {
   font-family: "Quiet Hand";
   src: url("/static/fonts/quiet-hand-zh.woff2") format("woff2");
@@ -335,21 +335,26 @@ body {
   font-display: swap;
   unicode-range: U+0020, U+002E, U+0054, U+0061, U+0065, U+0068-0069, U+006C, U+006F-0070, U+0072-0074;
 }
+.site-main:has(.quiet) {
+  padding: 20px 28px 28px;
+}
 .quiet {
-  min-height: calc(100vh - 56px - 72px - 208px);
+  min-height: calc(100vh - 56px - 72px - 48px);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 12px 0 8px;
+  padding: 4px 0 0;
 }
 .quiet img {
-  width: min(460px, 88vw);
+  width: auto;
   height: auto;
+  max-width: min(420px, 78vw);
+  max-height: 40vh;
   display: block;
 }
-.quiet p {
+.quiet-line {
   margin-top: 28px;
   font-family: "Quiet Hand", cursive;
   font-size: 42px;
@@ -357,6 +362,69 @@ body {
   letter-spacing: 0.03em;
   line-height: 1.3;
   color: #3a322c;
+}
+.quiet-market {
+  margin-top: 36px;
+  display: flex;
+  gap: 56px;
+  justify-content: center;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  max-width: 640px;
+}
+.quiet-quote {
+  min-width: 168px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  font-family: var(--serif);
+  color: #3a322c;
+}
+.quiet-kicker {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  color: var(--stone);
+}
+.quiet-px {
+  margin-top: 4px;
+  font-size: 28px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.01em;
+  line-height: 1.2;
+}
+.quiet-px small {
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  color: var(--olive);
+}
+.quiet-chg {
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--olive);
+}
+.quiet-chg.up { color: #3d5c45; }
+.quiet-chg.down { color: #8a4b3a; }
+.quiet-meta {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--stone);
+  letter-spacing: 0.02em;
+}
+.quiet-miss {
+  margin-top: 8px;
+  font-family: var(--serif);
+  font-size: 15px;
+  letter-spacing: 0.04em;
+  color: var(--stone);
+}
+.quiet-src {
+  margin-top: 18px;
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--stone);
 }
 .specimen-note {
   font-size: 14px;
@@ -426,11 +494,15 @@ body {
 @media (max-width: 768px) {
   .site-nav-inner { padding: 0 20px; }
   .site-main { padding: 48px 20px 64px; }
+  .site-main:has(.quiet) { padding: 16px 16px 24px; }
   .hero-card { padding: 20px; }
   .hero-title { font-size: 22px; }
   .metrics-grid { grid-template-columns: repeat(2, 1fr); }
   .report-item { flex-direction: column; align-items: flex-start; gap: 10px; }
   .report-item-actions { width: 100%; justify-content: flex-end; }
   .specimen-grid { grid-template-columns: 1fr; }
-  .quiet p { font-size: 34px; margin-top: 22px; }
+  .quiet img { max-height: 34vh; }
+  .quiet-line { font-size: 34px; margin-top: 16px; }
+  .quiet-market { gap: 28px; margin-top: 22px; }
+  .quiet-px { font-size: 24px; }
 }

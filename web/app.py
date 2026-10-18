@@ -37,6 +37,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from reports.fonts import css_serif_stack
 from web.chat import build_chat_page
+from web.quiet_market import quiet_quotes
 from web.track_record import build_track_record_html
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -331,7 +332,15 @@ async def latest_report(request: Request):
     lang = request.query_params.get("lang", "zh")
     latest = _latest_report_date()
     if not latest:
-        return templates.TemplateResponse(request, "empty.html", {"lang": lang})
+        try:
+            quotes = await asyncio.to_thread(quiet_quotes)
+        except Exception:
+            quotes = {"coffee": None, "fx": None}
+        return templates.TemplateResponse(request, "empty.html", {
+            "lang": lang,
+            "coffee": (quotes or {}).get("coffee"),
+            "fx": (quotes or {}).get("fx"),
+        })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 
 

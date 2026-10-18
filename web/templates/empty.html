@@ -5,6 +5,48 @@
 {% block content %}
 <section class="quiet">
   <img src="/static/img/empty-at-sea.svg" alt="{% if lang == 'en' %}Ink sketch of a quiet coffee shop and a paper boat carrying a letter.{% else %}钢笔速写：安静的咖啡店，门口一只载着信的纸船。{% endif %}">
-  <p>{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
+  <p class="quiet-line">{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
+
+  <div class="quiet-market" aria-label="{% if lang == 'en' %}Coffee futures and the yuan–dollar rate{% else %}咖啡期货与人民币对美元汇率{% endif %}">
+    {% if coffee %}
+    <div class="quiet-quote">
+      <span class="quiet-kicker">{% if lang == 'en' %}Coffee futures{% else %}咖啡期货{% endif %} · {{ coffee.symbol }}</span>
+      <span class="quiet-px">{{ coffee.price }} <small>{% if lang == 'en' %}¢/lb{% else %}美分/磅{% endif %}</small></span>
+      {% if coffee.change_pts or coffee.change_text %}
+      <span class="quiet-chg {{ coffee.tone }}">{% if coffee.change_pts %}{{ coffee.change_pts }}{% endif %}{% if coffee.change_text %} {{ coffee.change_text }}{% endif %}</span>
+      {% endif %}
+      {% if coffee.low and coffee.high %}
+      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ coffee.low }} – {{ coffee.high }}{% else %}近30日 {{ coffee.low }} – {{ coffee.high }}{% endif %}</span>
+      {% endif %}
+      {% if coffee.volume %}
+      <span class="quiet-meta">{% if lang == 'en' %}Volume {{ coffee.volume }}{% else %}成交 {{ coffee.volume }}{% endif %}</span>
+      {% endif %}
+      {% if coffee.name or coffee.as_of %}
+      <span class="quiet-meta">{% if coffee.name %}{{ coffee.name }}{% endif %}{% if coffee.name and coffee.as_of %} · {% endif %}{% if coffee.as_of %}{{ coffee.as_of }}{% endif %}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if fx %}
+    <div class="quiet-quote">
+      <span class="quiet-kicker">{% if lang == 'en' %}RMB vs USD{% else %}人民币对美元{% endif %}</span>
+      <span class="quiet-px">{{ fx.price }}</span>
+      {% if fx.change_pts or fx.change_text %}
+      <span class="quiet-chg {{ fx.tone }}">{% if fx.change_pts %}{{ fx.change_pts }}{% endif %}{% if fx.change_text %} {{ fx.change_text }}{% endif %}</span>
+      {% endif %}
+      <span class="quiet-meta">{% if lang == 'en' %}yuan per dollar{% else %}1 美元兑人民币{% endif %}</span>
+      {% if fx.as_of %}
+      <span class="quiet-meta">{{ fx.as_of }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {% if not coffee and not fx %}
+    <p class="quiet-miss">{% if lang == 'en' %}The quotes have not come in.{% else %}行情暂未到港。{% endif %}</p>
+    {% endif %}
+  </div>
+  {% if coffee or fx %}
+  <p class="quiet-src">Yahoo Finance</p>
+  {% endif %}
 </section>
 {% endblock %}

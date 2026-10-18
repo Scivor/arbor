@@ -100,6 +100,19 @@ SCHEMA_SQL = '''
     CREATE INDEX IF NOT EXISTS idx_equity_ts     ON equity_snapshots(timestamp);
     CREATE INDEX IF NOT EXISTS idx_events_ts     ON events(timestamp);
     CREATE INDEX IF NOT EXISTS idx_signals_ts    ON hedge_signals(timestamp);
+
+    CREATE TABLE IF NOT EXISTS paper_book (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        hedge_ratio REAL NOT NULL,
+        narrative   TEXT NOT NULL DEFAULT ''
+    );
+
+    CREATE TABLE IF NOT EXISTS paper_lots (
+        seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+        entry_time  TEXT NOT NULL,
+        entry_price REAL NOT NULL,
+        contracts   INTEGER NOT NULL
+    );
 '''
 
 
@@ -277,6 +290,54 @@ class DecisionDB:
         live = self.get_trade_summary(is_paper=False)
         paper = self.get_trade_summary(is_paper=True)
         return {'live': live, 'paper': paper}
+
+    def paper_equity_delta(self) -> float:
+        """Realized paper cash since inception.
+
+        Close rows store net PnL. Open and add rows store commission separately
+        and a zero PnL, so that commission has to be subtracted once.
+        """
+        row = self._get_conn().execute(
+            '''
+            SELECT
+                COALESCE(SUM(pnl), 0)
+                - COALESCE(SUM(CASE WHEN action = ? THEN commission ELSE 0 END), 0)
+                AS delta
+            FROM hedge_trades
+            WHERE is_paper = 1
+            ''',
+            ("buy_hedge",),
+        ).fetchone()
+        return float(row["delta"] or 0.0)
+
+    def save_paper_book(self, hedge_ratio: float, narrative: str, lots: list[tuple]) -> None:
+        """Replace the open paper book. An empty lot list clears it."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM paper_lots")
+        conn.execute("DELETE FROM paper_book")
+        if lots:
+            conn.execute(
+                "INSERT INTO paper_book (id, hedge_ratio, narrative) VALUES (1, ?, ?)",
+                (hedge_ratio, narrative or ""),
+            )
+            conn.executemany(
+                "INSERT INTO paper_lots (entry_time, entry_price, contracts) VALUES (?, ?, ?)",
+                lots,
+            )
+        conn.commit()
+
+    def load_paper_book(self) -> tuple[float, str, list] | None:
+        """Return (hedge_ratio, narrative, lot rows) or None when the book is flat."""
+        conn = self._get_conn()
+        book = conn.execute(
+            "SELECT hedge_ratio, narrative FROM paper_book WHERE id = 1"
+        ).fetchone()
+        if book is None:
+            return None
+        rows = conn.execute(
+            "SELECT entry_time, entry_price, contracts FROM paper_lots ORDER BY seq"
+        ).fetchall()
+        return float(book["hedge_ratio"]), book["narrative"] or "", list(rows)
 
     # ─── Equity Snapshots ────────────────────────────────────────────────────
 

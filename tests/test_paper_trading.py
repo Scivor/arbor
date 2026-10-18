@@ -167,6 +167,55 @@ def test_small_ratio_step_holds_size_and_stores_the_new_ratio(tmp_path):
     engine.close()
 
 
+def test_restart_restores_lots_ratio_and_realized_cash(tmp_path):
+    path = tmp_path / "paper.db"
+    engine = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    engine.sync_to_ratio(0.80, 210.0, 375.0)
+    engine.sync_to_ratio(0.40, 220.0, 375.0)
+    equity = engine._equity
+    engine.db.close()
+
+    restored = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    pos = restored._position
+    assert pos is not None
+    assert pos.contracts == 4
+    assert pos.entry_price == 200.0
+    assert pos.hedge_ratio == 0.40
+    assert [(lot.entry_price, lot.contracts) for lot in pos.lots] == [(200.0, 4)]
+    assert restored._equity == pytest.approx(equity)
+    assert restored.mark_to_market(220.0) == pytest.approx(1763.696)
+    restored.db.close()
+
+
+def test_restart_after_flat_close_keeps_realized_pnl(tmp_path):
+    path = tmp_path / "paper.db"
+    engine = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    engine.open_position(price=200.0, tons=37.5, hedge_ratio=0.80)
+    engine.close_position(210.0, "manual_close")
+    equity = engine._equity
+    engine.db.close()
+
+    restored = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    assert restored._position is None
+    assert restored._equity == pytest.approx(equity)
+    restored.db.close()
+
+
+def test_restart_keeps_a_ratio_step_that_did_not_change_size(tmp_path):
+    path = tmp_path / "paper.db"
+    engine = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    engine.sync_to_ratio(0.80, 200.0, 375.0)
+    engine.sync_to_ratio(0.82, 202.0, 375.0)
+    engine.db.close()
+
+    restored = PaperTradingEngine(db_path=path, initial_equity=100_000.0)
+    assert restored._position.contracts == 8
+    assert restored._position.entry_price == 200.0
+    assert restored._position.hedge_ratio == pytest.approx(0.82)
+    restored.db.close()
+
+
 def test_unknown_reason_leaves_the_position_open(tmp_path):
     engine = _engine(tmp_path)
     engine.open_position(price=200.0, tons=37.5, hedge_ratio=0.80)

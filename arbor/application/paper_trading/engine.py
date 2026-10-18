@@ -92,13 +92,14 @@ class PaperTradingEngine:
         self.monthly_tons = monthly_tons
         self.contract_size = contract_size
 
-        # Live equity (MTM)
-        self._equity = initial_equity
+        # Live equity (MTM). Realized cash is replayed from the trade log.
+        self._equity = initial_equity + self.db.paper_equity_delta()
         self._equity_curve: deque[PaperSnapshot] = deque(maxlen=5000)
 
         # Current position
         self._position: Optional[PaperPosition] = None
         self._current_price: float = 0.0
+        self._restore_book()
 
         # Paper trade log
         self._trades: list[HedgeRecord] = []
@@ -160,6 +161,7 @@ class PaperTradingEngine:
             narrative=pos.narrative,
             is_paper=True,
         )
+        self._persist_book()
 
         return pos
 
@@ -196,6 +198,7 @@ class PaperTradingEngine:
             total_net += net
             total_commission += commission
         self._position = None
+        self._persist_book()
         return total_net, total_commission
 
     def adjust_position(
@@ -231,6 +234,7 @@ class PaperTradingEngine:
 
         if abs(delta) < self.contract_size:
             self._position.hedge_ratio = kept_ratio
+            self._persist_book()
             return False  # too small to adjust
 
         if new_tons <= 0:
@@ -342,6 +346,7 @@ class PaperTradingEngine:
         pos.entry_time = pos.lots[0].entry_time
         pos.hedge_ratio = hedge_ratio
         self._current_price = current_price
+        self._persist_book()
 
     def _realize_close(
         self,
@@ -440,6 +445,7 @@ class PaperTradingEngine:
 
         if abs(target_tons - current_tons) < self.contract_size:
             self._position.hedge_ratio = target_ratio
+            self._persist_book()
             return (
                 f'HOLD {self._position.contracts} contracts '
                 f'@ {self._position.entry_price:.2f} (ratio={target_ratio:.0%})'
@@ -463,6 +469,47 @@ class PaperTradingEngine:
         return f'ADJUSTED to {self._position.contracts} contracts @ {self._position.entry_price:.2f}'
 
     # ─── Persistence ────────────────────────────────────────────────────────
+
+    def _persist_book(self) -> None:
+        pos = self._position
+        if pos is None or not pos.lots:
+            self.db.save_paper_book(0.0, "", [])
+            return
+        self.db.save_paper_book(
+            pos.hedge_ratio,
+            pos.narrative,
+            [
+                (lot.entry_time.isoformat(), lot.entry_price, lot.contracts)
+                for lot in pos.lots
+            ],
+        )
+
+    def _restore_book(self) -> None:
+        loaded = self.db.load_paper_book()
+        if loaded is None:
+            return
+        hedge_ratio, narrative, rows = loaded
+        lots = [
+            PaperLot(
+                datetime.fromisoformat(row["entry_time"]),
+                float(row["entry_price"]),
+                int(row["contracts"]),
+            )
+            for row in rows
+            if int(row["contracts"]) > 0
+        ]
+        if not lots:
+            return
+        contracts = sum(lot.contracts for lot in lots)
+        self._position = PaperPosition(
+            entry_time=lots[0].entry_time,
+            entry_price=sum(lot.contracts * lot.entry_price for lot in lots) / contracts,
+            size_tons=contracts * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            contracts=contracts,
+            narrative=narrative,
+            lots=lots,
+        )
 
     def _record_trade(
         self,

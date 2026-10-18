@@ -345,12 +345,9 @@ body {
   padding: 12px 0 8px;
 }
 .quiet img {
-  width: min(340px, 78vw);
+  width: min(400px, 86vw);
   height: auto;
   display: block;
-  border: 1px solid #d4d0c3;
-  background: #f7f5ee;
-  padding: 18px;
 }
 .quiet p {
   margin-top: 28px;

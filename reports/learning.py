@@ -38,6 +38,9 @@ reports/learning.py
 - ml_confidence_scale: ML 置信度进入情景概率的幅度（0.6 ~ 1.0）。
                         只统计置信度不低于 70% 的看涨或看跌周。
                         这些周连续说错时，下一期置信度按系数缩小
+- rsi_extreme_scale:  RSI 极值推动情景概率的幅度（0.6 ~ 1.0）。
+                        只统计 RSI 低于 35 或高于 65 的周。
+                        超卖却没涨、超买却没跌时，下一期这档调整按系数缩小
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -94,6 +97,10 @@ _ML_TARGET_WINSOR = 0.08
 # 高置信方向说错时缩小下一期置信度。低于 70% 的周本来就没把概率推得很远。
 _ML_CONF_BOUNDS = (0.6, 1.0)
 _ML_CONF_FLOOR = 0.70
+# RSI 极值。低于 35 主张反弹，高于 65 主张回调。中间的周不推概率。
+_RSI_EXTREME_BOUNDS = (0.6, 1.0)
+_RSI_OVERSOLD = 35.0
+_RSI_OVERBOUGHT = 65.0
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -142,6 +149,7 @@ def _empty_memory() -> dict:
         "fan_width": 1.0,
         "ml_target_shift": 0.0,
         "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
     }
 
 
@@ -204,6 +212,7 @@ def _load_state() -> dict:
         "fan_width": _fan_width(data.get("fan_width", 1.0)),
         "ml_target_shift": _ml_target_shift(data.get("ml_target_shift", 0.0)),
         "ml_confidence_scale": _ml_confidence_scale(data.get("ml_confidence_scale", 1.0)),
+        "rsi_extreme_scale": _rsi_extreme_scale(data.get("rsi_extreme_scale", 1.0)),
     }
 
 
@@ -230,7 +239,13 @@ def load_review_memory() -> dict:
         "fan_width": state["fan_width"],
         "ml_target_shift": state["ml_target_shift"],
         "ml_confidence_scale": state["ml_confidence_scale"],
+        "rsi_extreme_scale": state["rsi_extreme_scale"],
     }
+
+
+def _rsi_extreme_scale(value) -> float:
+    """RSI 极值系数。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _RSI_EXTREME_BOUNDS), 4)
 
 
 def _ml_confidence_scale(value) -> float:
@@ -475,6 +490,49 @@ def _ml_confidence_stats(pairs) -> dict:
         except (TypeError, ValueError):
             continue
         if conf < _ML_CONF_FLOOR or not price or price != price or actual_price != actual_price:
+            continue
+        change = (actual_price - price) / price * 100
+        if change > 1.0:
+            actual = "up"
+        elif change < -1.0:
+            actual = "down"
+        else:
+            actual = "flat"
+        total += weight
+        samples += 1
+        if pred == actual:
+            hit += weight
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "rate": (hit / total) if ready else None,
+    }
+
+
+def _rsi_extreme_stats(pairs) -> dict:
+    """
+    RSI 低于 35 或高于 65 的周，近期加权命中率。
+
+    超卖主张上涨，超买主张下跌。实际涨跌停在 ±1% 里算说错。
+    中间的读数不计入。样本少于 4 对时 rate 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        try:
+            rsi = float(getattr(cur, "rsi_14", 50))
+            price = float(cur.current_price)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if not price or price != price or rsi != rsi or actual_price != actual_price:
+            continue
+        if rsi < _RSI_OVERSOLD:
+            pred = "up"
+        elif rsi > _RSI_OVERBOUGHT:
+            pred = "down"
+        else:
             continue
         change = (actual_price - price) / price * 100
         if change > 1.0:
@@ -1258,6 +1316,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     fan_stats = _fan_stats(pairs)
     target_stats = _ml_target_stats(pairs)
     conf_stats = _ml_confidence_stats(pairs)
+    rsi_stats = _rsi_extreme_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1277,6 +1336,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "fan_width": state["fan_width"],
         "ml_target_shift": state["ml_target_shift"],
         "ml_confidence_scale": state["ml_confidence_scale"],
+        "rsi_extreme_scale": state["rsi_extreme_scale"],
     }
     changed: list[dict] = []
 
@@ -1507,6 +1567,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── rsi_extreme_scale: 超买超卖说错就缩小这档概率；说对或本期没有极值则回到 1 ──
+    old_rsi = new_values["rsi_extreme_scale"]
+    rsi_samples = rsi_stats["samples"]
+    rsi_rate = rsi_stats["rate"]
+    if rsi_samples >= _DRIVER_MIN_SAMPLES and rsi_rate is not None:
+        if rsi_rate < 0.45:
+            reason = f"RSI 极值方向命中率 {rsi_rate:.0%} < 45%，极值影响下调"
+            new_rsi = _step_toward(old_rsi, False, _RSI_EXTREME_BOUNDS)
+        elif rsi_rate > 0.65:
+            reason = f"RSI 极值方向命中率 {rsi_rate:.0%} > 65%，极值影响向基准回归"
+            new_rsi = _step_toward(old_rsi, True, _RSI_EXTREME_BOUNDS)
+        else:
+            new_rsi = old_rsi
+            reason = ""
+    elif rsi_samples == 0 and old_rsi < 1.0:
+        reason = "本期没有 RSI 极值，极值影响向基准回归"
+        new_rsi = _step_toward(old_rsi, True, _RSI_EXTREME_BOUNDS)
+    else:
+        new_rsi = old_rsi
+        reason = ""
+    new_rsi = _rsi_extreme_scale(new_rsi)
+    if reason and new_rsi != old_rsi:
+        new_values["rsi_extreme_scale"] = new_rsi
+        changed.append({
+            "param": "rsi_extreme_scale",
+            "old": old_rsi,
+            "new": new_rsi,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -1632,6 +1722,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "fan_width": new_values["fan_width"],
         "ml_target_shift": new_values["ml_target_shift"],
         "ml_confidence_scale": new_values["ml_confidence_scale"],
+        "rsi_extreme_scale": new_values["rsi_extreme_scale"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

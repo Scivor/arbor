@@ -122,6 +122,12 @@ def _current_learned_scales() -> dict:
             conf_scale = 1.0
         if conf_scale < 0.999:
             scales["ml_confidence_scale"] = conf_scale
+        try:
+            rsi_scale = float(memory.get("rsi_extreme_scale", 1.0))
+        except (TypeError, ValueError):
+            rsi_scale = 1.0
+        if rsi_scale < 0.999:
+            scales["rsi_extreme_scale"] = rsi_scale
         return scales
     except Exception:
         return {}

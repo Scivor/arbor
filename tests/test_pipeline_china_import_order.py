@@ -419,3 +419,31 @@ def test_low_ml_confidence_scale_shrinks_published_confidence(synthetic_pipeline
     assert baseline.ml_snapshot.confidence == pytest.approx(0.80)
     assert adjusted.ml_snapshot.confidence == pytest.approx(0.48)
     assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")
+
+
+def test_low_rsi_extreme_scale_shrinks_published_bear_probability(synthetic_pipeline, monkeypatch):
+    """RSI 超买时，极值系数 0.6 让公布的下跌概率下降。"""
+    from dataclasses import replace
+
+    market = replace(_synthetic_market(), rsi_14=72.0)
+    monkeypatch.setattr("reports.pipeline.fetch_market_snapshot", lambda ticker: market)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["rsi_extreme_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "下跌") < _scenario_p(baseline, "下跌")

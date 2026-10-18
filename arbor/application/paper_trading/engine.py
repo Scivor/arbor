@@ -252,8 +252,25 @@ class PaperTradingEngine:
             )
             return True
 
-        # Scale: close current, reopen with new size. Read the ratio first:
-        # close_position clears _position, so a lookup after that is always 0.
+        target_contracts = int(new_tons / self.contract_size)
+        if target_contracts <= 0:
+            self.close_position(
+                exit_price=current_price,
+                reason=ExitReason.RATIO_CHANGED,
+                narrative=narrative or 'Paper close: hedge ratio → 0',
+            )
+            return True
+        if target_contracts < self._position.contracts:
+            self._reduce_position(
+                target_contracts, current_price, narrative, kept_ratio,
+            )
+            return True
+        if target_contracts == self._position.contracts:
+            self._position.hedge_ratio = kept_ratio
+            return False
+
+        # Scale up: close the whole position, then reopen larger.
+        # The ratio is captured above because close_position clears it.
         self.close_position(
             exit_price=current_price,
             reason=ExitReason.RATIO_CHANGED,
@@ -266,6 +283,46 @@ class PaperTradingEngine:
             narrative=narrative or f'Paper reopen after resize: {new_tons:.0f}t',
         )
         return True
+
+    def _reduce_position(
+        self,
+        target_contracts: int,
+        current_price: float,
+        narrative: str,
+        hedge_ratio: float,
+    ) -> None:
+        """Close only the contracts being dropped. The rest keep their entry."""
+        pos = self._position
+        closed_contracts = pos.contracts - target_contracts
+        now = datetime.now(timezone.utc)
+        holding_days = max(1, (now - pos.entry_time).days)
+        gross = (current_price - pos.entry_price) * closed_contracts * 2204.62 / 100.0
+        commission = closed_contracts * COMMISSION_PER_CONTRACT
+        net_pnl = gross - commission
+        self._equity += net_pnl
+        notional = pos.entry_price * closed_contracts * 2204.62 / 100.0
+        self._record_trade(
+            entry_time=pos.entry_time,
+            exit_time=now,
+            entry_price=pos.entry_price,
+            exit_price=current_price,
+            size_tons=closed_contracts * self.contract_size,
+            hedge_ratio=pos.hedge_ratio,
+            action=HedgeAction.CLOSE_HEDGE,
+            pnl=net_pnl,
+            pnl_pct=net_pnl / notional if notional else 0.0,
+            exit_reason=ExitReason.RATIO_CHANGED,
+            holding_days=holding_days,
+            commission=commission,
+            narrative=narrative or (
+                f'Paper partial close: {pos.contracts} → {target_contracts} contracts'
+            ),
+            is_paper=True,
+        )
+        pos.contracts = target_contracts
+        pos.size_tons = target_contracts * self.contract_size
+        pos.hedge_ratio = hedge_ratio
+        self._current_price = current_price
 
     # ─── Mark-to-market ──────────────────────────────────────────────────────
 

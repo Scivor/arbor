@@ -58,22 +58,27 @@ def test_close_when_flat_does_not_require_a_known_reason(tmp_path):
     engine.close()
 
 
-def test_resize_records_the_target_ratio(tmp_path):
+def test_reduction_closes_only_the_dropped_contracts(tmp_path):
     engine = _engine(tmp_path)
     engine.sync_to_ratio(0.80, 200.0, 375.0)
-    assert engine._position.contracts == 8
-    assert engine._position.hedge_ratio == 0.80
+    opened_at = engine._position.entry_time
 
     message = engine.sync_to_ratio(0.40, 210.0, 375.0)
 
     assert message.startswith("ADJUSTED to 4 contracts")
     assert engine._position.contracts == 4
+    assert engine._position.size_tons == 150.0
     assert engine._position.hedge_ratio == 0.40
-    assert engine._position.entry_price == 210.0
+    assert engine._position.entry_price == 200.0
+    assert engine._position.entry_time == opened_at
     closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
     opens = [t for t in engine._trades if t.action == HedgeAction.BUY_HEDGE]
-    assert closes[-1].hedge_ratio == 0.80
-    assert opens[-1].hedge_ratio == 0.40
+    assert len(opens) == 1
+    assert len(closes) == 1
+    assert closes[0].size == 150.0
+    assert closes[0].hedge_ratio == 0.80
+    assert closes[0].commission == 60.0
+    assert closes[0].pnl == pytest.approx(821.848)
     engine.close()
 
 
@@ -82,7 +87,26 @@ def test_adjust_without_a_new_ratio_keeps_the_open_one(tmp_path):
     engine.open_position(price=200.0, tons=300.0, hedge_ratio=0.80)
     assert engine.adjust_position(150.0, 205.0) is True
     assert engine._position.contracts == 4
+    assert engine._position.entry_price == 200.0
     assert engine._position.hedge_ratio == 0.80
+    engine.close()
+
+
+def test_scale_up_reopens_at_the_new_price(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    message = engine.sync_to_ratio(0.80, 210.0, 375.0)
+
+    assert message.startswith("ADJUSTED to 8 contracts @ 210.00")
+    assert engine._position.contracts == 8
+    assert engine._position.entry_price == 210.0
+    assert engine._position.hedge_ratio == 0.80
+    closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
+    opens = [t for t in engine._trades if t.action == HedgeAction.BUY_HEDGE]
+    assert closes[-1].size == 150.0
+    assert closes[-1].hedge_ratio == 0.40
+    assert opens[-1].hedge_ratio == 0.80
+    assert opens[-1].entry_price == 210.0
     engine.close()
 
 

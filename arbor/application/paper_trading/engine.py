@@ -214,6 +214,7 @@ class PaperTradingEngine:
         new_tons: float,
         current_price: float,
         narrative: str = '',
+        hedge_ratio: float | None = None,
     ) -> bool:
         """
         Adjust open position size to match new target tons.
@@ -230,15 +231,17 @@ class PaperTradingEngine:
             self.open_position(
                 price=current_price,
                 tons=new_tons,
-                hedge_ratio=0.0,
+                hedge_ratio=0.0 if hedge_ratio is None else hedge_ratio,
                 narrative=narrative or f'Paper new position: {new_tons:.0f}t',
             )
             return True
 
         current_tons = self._position.size_tons
+        kept_ratio = self._position.hedge_ratio if hedge_ratio is None else hedge_ratio
         delta = new_tons - current_tons
 
         if abs(delta) < self.contract_size:
+            self._position.hedge_ratio = kept_ratio
             return False  # too small to adjust
 
         if new_tons <= 0:
@@ -249,8 +252,9 @@ class PaperTradingEngine:
             )
             return True
 
-        # Scale: close current, reopen with new size
-        close_pnl, _ = self.close_position(
+        # Scale: close current, reopen with new size. Read the ratio first:
+        # close_position clears _position, so a lookup after that is always 0.
+        self.close_position(
             exit_price=current_price,
             reason=ExitReason.RATIO_CHANGED,
             narrative=narrative or f'Paper resize: {current_tons:.0f}t → {new_tons:.0f}t',
@@ -258,7 +262,7 @@ class PaperTradingEngine:
         self.open_position(
             price=current_price,
             tons=new_tons,
-            hedge_ratio=self._position.hedge_ratio if self._position else 0.0,
+            hedge_ratio=kept_ratio,
             narrative=narrative or f'Paper reopen after resize: {new_tons:.0f}t',
         )
         return True
@@ -326,7 +330,11 @@ class PaperTradingEngine:
         current_tons = self._position.size_tons
 
         if abs(target_tons - current_tons) < self.contract_size:
-            return f'HOLD {self._position.contracts} contracts @ {self._position.entry_price:.2f} (ratio unchanged)'
+            self._position.hedge_ratio = target_ratio
+            return (
+                f'HOLD {self._position.contracts} contracts '
+                f'@ {self._position.entry_price:.2f} (ratio={target_ratio:.0%})'
+            )
 
         if target_tons <= 0:
             pnl, _ = self.close_position(
@@ -341,6 +349,7 @@ class PaperTradingEngine:
             new_tons=target_tons,
             current_price=current_price,
             narrative=f'Sync: ratio {self._position.hedge_ratio:.0%} → {target_ratio:.0%}',
+            hedge_ratio=target_ratio,
         )
         return f'ADJUSTED to {self._position.contracts} contracts @ {self._position.entry_price:.2f}'
 

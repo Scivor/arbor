@@ -3,7 +3,7 @@
 import pytest
 
 from arbor.application.paper_trading.engine import PaperTradingEngine
-from arbor.domain.trading import ExitReason, coerce_exit_reason
+from arbor.domain.trading import ExitReason, HedgeAction, coerce_exit_reason
 
 
 def _engine(tmp_path) -> PaperTradingEngine:
@@ -55,6 +55,46 @@ def test_sync_to_zero_closes_without_constructing_exit_reason(tmp_path):
 def test_close_when_flat_does_not_require_a_known_reason(tmp_path):
     engine = _engine(tmp_path)
     assert engine.close_position(200.0, "manual_close") == (0.0, 0.0)
+    engine.close()
+
+
+def test_resize_records_the_target_ratio(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.80, 200.0, 375.0)
+    assert engine._position.contracts == 8
+    assert engine._position.hedge_ratio == 0.80
+
+    message = engine.sync_to_ratio(0.40, 210.0, 375.0)
+
+    assert message.startswith("ADJUSTED to 4 contracts")
+    assert engine._position.contracts == 4
+    assert engine._position.hedge_ratio == 0.40
+    assert engine._position.entry_price == 210.0
+    closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
+    opens = [t for t in engine._trades if t.action == HedgeAction.BUY_HEDGE]
+    assert closes[-1].hedge_ratio == 0.80
+    assert opens[-1].hedge_ratio == 0.40
+    engine.close()
+
+
+def test_adjust_without_a_new_ratio_keeps_the_open_one(tmp_path):
+    engine = _engine(tmp_path)
+    engine.open_position(price=200.0, tons=300.0, hedge_ratio=0.80)
+    assert engine.adjust_position(150.0, 205.0) is True
+    assert engine._position.contracts == 4
+    assert engine._position.hedge_ratio == 0.80
+    engine.close()
+
+
+def test_small_ratio_step_holds_size_and_stores_the_new_ratio(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.80, 200.0, 375.0)
+    message = engine.sync_to_ratio(0.82, 202.0, 375.0)
+    assert message.startswith("HOLD 8 contracts")
+    assert "82%" in message
+    assert engine._position.contracts == 8
+    assert engine._position.entry_price == 200.0
+    assert engine._position.hedge_ratio == pytest.approx(0.82)
     engine.close()
 
 

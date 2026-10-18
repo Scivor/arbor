@@ -229,11 +229,67 @@ def gather_report_events(
     return _dedupe_events(events, rules)
 
 
+def _scale_month_extreme_rules(rules: dict, scale: float) -> dict:
+    """月度极端的套保调整按系数缩小。系数为 1 时原样返回。"""
+    try:
+        scale = float(scale)
+    except (TypeError, ValueError):
+        return rules
+    if scale != scale:
+        return rules
+    scale = max(0.6, min(1.0, scale))
+    if scale >= 0.999 or not rules:
+        return rules
+    from arbor.domain.scoring import EventRule
+
+    scaled = dict(rules)
+    for kind in (EventType.PRICE_30D_EXTREME_UP, EventType.PRICE_30D_EXTREME_DOWN):
+        rule = scaled.get(kind)
+        if rule is None:
+            continue
+        scaled[kind] = EventRule(
+            adjustment=rule.adjustment * scale,
+            cluster=rule.cluster,
+            half_life_days=rule.half_life_days,
+            min_severity=rule.min_severity,
+        )
+    return scaled
+
+
+def _scale_day_shock_rules(rules: dict, scale: float) -> dict:
+    """日内冲击的套保调整按系数缩小。系数为 1 时原样返回。"""
+    try:
+        scale = float(scale)
+    except (TypeError, ValueError):
+        return rules
+    if scale != scale:
+        return rules
+    scale = max(0.6, min(1.0, scale))
+    if scale >= 0.999 or not rules:
+        return rules
+    from arbor.domain.scoring import EventRule
+
+    scaled = dict(rules)
+    for kind in (EventType.PRICE_SHOCK_UP, EventType.PRICE_SHOCK_DOWN):
+        rule = scaled.get(kind)
+        if rule is None:
+            continue
+        scaled[kind] = EventRule(
+            adjustment=rule.adjustment * scale,
+            cluster=rule.cluster,
+            half_life_days=rule.half_life_days,
+            min_severity=rule.min_severity,
+        )
+    return scaled
+
+
 def compute_hedge_advice(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
     events: list[CoffeeEvent],
     now: Optional[datetime] = None,
+    month_extreme_scale: float = 1.0,
+    day_shock_scale: float = 1.0,
 ) -> Optional[HedgeAdvice]:
     """
     由统一评分引擎决定套保比率 —— 与 CLI / 回测同一条路径。
@@ -246,7 +302,8 @@ def compute_hedge_advice(
 
     loader = get_regime_loader()
     loader.load()
-    rules = loader.event_rules()
+    rules = _scale_month_extreme_rules(loader.event_rules(), month_extreme_scale)
+    rules = _scale_day_shock_rules(rules, day_shock_scale)
     # 规则表为空 → 所有事件被过滤 → ratio 恰好落在中性 0.65，
     # 印出来和一个正常的中性判断毫无区别。周报宁可缺这一板块，也不能印错数。
     if not rules:

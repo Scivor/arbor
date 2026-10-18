@@ -13,6 +13,20 @@ from html import escape as _esc
 from reports.fonts import css_sans_stack, css_serif_stack
 
 
+def _fmt_step(value) -> str:
+    """系数调整至少两位小数；0.005 这类半步不被收成 0.01。"""
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    text = f"{number:.4f}".rstrip("0").rstrip(".")
+    if "." not in text:
+        text += ".00"
+    elif len(text.split(".", 1)[1]) < 2:
+        text += "0"
+    return text
+
+
 def _build_learning_html(learning: dict | None) -> str:
     """自校准区块：当前系数 + 近期指标 + 最近 5 条调整记录。"""
     if not learning:
@@ -29,8 +43,148 @@ def _build_learning_html(learning: dict | None) -> str:
         base = ' <span class="tr-learn-base">未校准</span>' if abs(v - 1.0) < 1e-9 else ""
         return f"{name} <b>{v:.2f}</b>{base}"
 
+    memory = learning.get("memory") or {}
+    conviction = memory.get("hedge_conviction", cur.get("hedge_conviction", 1.0))
+    try:
+        conviction = float(conviction)
+    except (TypeError, ValueError):
+        conviction = 1.0
+    conviction_base = ' <span class="tr-learn-base">未校准</span>' if abs(conviction - 1.0) < 1e-9 else ""
+    hedge_acc = memory.get("hedge_accuracy")
+    hedge_acc_text = f" · 有方向的套保有效率 {hedge_acc:.0%}" if isinstance(hedge_acc, (int, float)) else ""
+    direction = memory.get("direction_trust") or {}
+    direction_html = ""
+    if isinstance(direction, dict) and direction:
+        labels = {"up": "上涨", "down": "下跌"}
+        parts = []
+        for side, value in list(direction.items())[:4]:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                continue
+            parts.append(f"{_esc(labels.get(str(side), str(side)))} {number:.2f}")
+        if parts:
+            direction_html = f"""
+    <div class="tr-learn-metrics">方向信任 {" · ".join(parts)}</div>"""
+    shift_html = ""
+    try:
+        shift = float(memory.get("band_center_shift") or 0.0)
+    except (TypeError, ValueError):
+        shift = 0.0
+    if abs(shift) >= 0.0025:
+        side = "下移" if shift < 0 else "上移"
+        shift_html = f"""
+    <div class="tr-learn-metrics">区间中心 {side} {abs(shift) * 100:.2f}%</div>"""
+    flat_html = ""
+    try:
+        flat_trust = float(memory.get("flat_trust", 1.0))
+    except (TypeError, ValueError):
+        flat_trust = 1.0
+    if flat_trust < 0.999:
+        flat_html = f"""
+    <div class="tr-learn-metrics">横盘信任 <b>{flat_trust:.2f}</b></div>"""
+    sharp_html = ""
+    try:
+        sharpness = float(memory.get("prob_sharpness", 1.0))
+    except (TypeError, ValueError):
+        sharpness = 1.0
+    if sharpness < 0.999:
+        sharp_html = f"""
+    <div class="tr-learn-metrics">概率锐度 <b>{sharpness:.2f}</b></div>"""
+    lean_html = ""
+    try:
+        lean = float(memory.get("hedge_lean") or 0.0)
+    except (TypeError, ValueError):
+        lean = 0.0
+    if abs(lean) >= 0.005:
+        side = "少套" if lean < 0 else "多套"
+        lean_html = f"""
+    <div class="tr-learn-metrics">套保偏向 {side} <b>{abs(lean) * 100:.2f}</b> 个百分点</div>"""
+    fan_html = ""
+    try:
+        fan_width = float(memory.get("fan_width", 1.0))
+    except (TypeError, ValueError):
+        fan_width = 1.0
+    if fan_width > 1.001:
+        fan_html = f"""
+    <div class="tr-learn-metrics">扇面宽度 <b>{fan_width:.2f}</b></div>"""
+    target_html = ""
+    try:
+        target_shift = float(memory.get("ml_target_shift") or 0.0)
+    except (TypeError, ValueError):
+        target_shift = 0.0
+    if abs(target_shift) >= 0.0025:
+        side = "下移" if target_shift < 0 else "上移"
+        target_html = f"""
+    <div class="tr-learn-metrics">ML 目标 {side} {abs(target_shift) * 100:.2f}%</div>"""
+    conf_html = ""
+    try:
+        conf_scale = float(memory.get("ml_confidence_scale", 1.0))
+    except (TypeError, ValueError):
+        conf_scale = 1.0
+    if conf_scale < 0.999:
+        conf_html = f"""
+    <div class="tr-learn-metrics">ML 置信 <b>{conf_scale:.2f}</b></div>"""
+    rsi_html = ""
+    try:
+        rsi_scale = float(memory.get("rsi_extreme_scale", 1.0))
+    except (TypeError, ValueError):
+        rsi_scale = 1.0
+    if rsi_scale < 0.999:
+        rsi_html = f"""
+    <div class="tr-learn-metrics">RSI 极值 <b>{rsi_scale:.2f}</b></div>"""
+    ma_html = ""
+    try:
+        ma_scale = float(memory.get("ma_trend_scale", 1.0))
+    except (TypeError, ValueError):
+        ma_scale = 1.0
+    if ma_scale < 0.999:
+        ma_html = f"""
+    <div class="tr-learn-metrics">均线趋势 <b>{ma_scale:.2f}</b></div>"""
+    month_html = ""
+    try:
+        month_scale = float(memory.get("month_extreme_scale", 1.0))
+    except (TypeError, ValueError):
+        month_scale = 1.0
+    if month_scale < 0.999:
+        month_html = f"""
+    <div class="tr-learn-metrics">月度极端 <b>{month_scale:.2f}</b></div>"""
+    day_html = ""
+    try:
+        day_scale = float(memory.get("day_shock_scale", 1.0))
+    except (TypeError, ValueError):
+        day_scale = 1.0
+    if day_scale < 0.999:
+        day_html = f"""
+    <div class="tr-learn-metrics">日内冲击 <b>{day_scale:.2f}</b></div>"""
+    neutral_html = ""
+    try:
+        neutral_scale = float(memory.get("ml_neutral_scale", 1.0))
+    except (TypeError, ValueError):
+        neutral_scale = 1.0
+    if neutral_scale < 0.999:
+        neutral_html = f"""
+    <div class="tr-learn-metrics">ML 中性 <b>{neutral_scale:.2f}</b></div>"""
+    trust = memory.get("driver_trust") or {}
+    if trust:
+        discounted = " · ".join(
+            f"{_esc(str(name))} {float(value):.2f}"
+            for name, value in list(trust.items())[:8]
+        )
+        trust_html = f"""
+    <div class="tr-learn-metrics">压低的驱动 {discounted}</div>"""
+    elif learning.get("memory") is not None:
+        trust_html = """
+    <div class="tr-learn-metrics tr-learn-dim">驱动因子维持原权重</div>"""
+    else:
+        trust_html = ""
+    if learning.get("memory") is not None:
+        trust_html += """
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。情景区间中心连续偏高或偏低时，下一期整段价格区间同向挪动，每步 0.5 个百分点，最多 3 个。横盘连续说错时，横盘概率按横盘信任分给上涨和下跌。近期情景概率比均匀猜测更差时，下一期往三个情景均匀靠。有方向的套保连续偏紧或偏松时，下一期比率再挪 1 个百分点，最多 4 个。三个情景区间都没罩住实际价格时，下一期整段扇面加宽，最多比原来宽 25%。ML 目标价连续偏高或偏低时，下一期目标同向挪动，每步 0.5 个百分点，最多 3 个。置信度不低于 70% 的 ML 方向连续说错时，下一期置信度按系数缩小，最低打到六成。RSI 低于 35 或高于 65 连续说错时，下一期这档概率调整按系数缩小，最低打到六成。均线多头或空头连续说错时，下一期排列对概率的推动按系数缩小，最低打到六成。月涨或月跌超过 20% 连续说错时，下一期这档套保调整按系数缩小，最低打到六成。日涨或日跌超过 5% 连续说错时，下一期冲击对套保的推动按系数缩小，最低打到六成。高置信的 ML 中性连续被突破时，下一期中性对概率的推动按系数缩小，最低打到六成。停在中性的周不给套保持信加分。</div>"""
+
     rows = f"""
-    <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>"""
+    <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>
+    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{lean_html}{direction_html}{shift_html}{flat_html}{sharp_html}{fan_html}{target_html}{conf_html}{rsi_html}{ma_html}{month_html}{day_html}{neutral_html}{trust_html}"""
 
     if acc is not None and hit is not None:
         rows += f"""
@@ -47,7 +201,7 @@ def _build_learning_html(learning: dict | None) -> str:
         <tr>
           <td class="tr-num">{_esc(ts)}</td>
           <td>{_esc(str(e.get("param", "")))}</td>
-          <td class="tr-num">{e.get("old", 0):.2f} → {e.get("new", 0):.2f}</td>
+          <td class="tr-num">{_fmt_step(e.get("old", 0))} → {_fmt_step(e.get("new", 0))}</td>
           <td>{_esc(str(e.get("reason", "")))}</td>
         </tr>"""
         rows += f"""
@@ -136,21 +290,31 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 
         # ── 驱动因子应验率（仅显示样本 ≥2 的因子，按样本数降序）──
         qualified = [s for s in (driver_stats or []) if s.get("samples", 0) >= 2]
+        trust_map = ((learning or {}).get("memory") or {}).get("driver_trust") or {}
         if qualified:
             drv_rows = ""
             for s in qualified:
                 rate_color = "#1B365D" if s["rate"] >= 0.5 else "#504e49"
+                name = str(s["param_name"])
+                if name in trust_map:
+                    trust_cell = f'<td class="tr-num">{float(trust_map[name]):.2f}</td>'
+                elif trust_map:
+                    trust_cell = '<td class="tr-num">1.00</td>'
+                else:
+                    trust_cell = ""
                 drv_rows += f"""
         <tr>
-          <td class="tr-date">{_esc(str(s["param_name"]))}</td>
+          <td class="tr-date">{_esc(name)}</td>
           <td class="tr-num" style="color:{rate_color};">{s["rate"]:.0%}</td>
           <td class="tr-num">{s["samples"]}</td>
+          {trust_cell}
         </tr>"""
+            trust_head = "<th>信任</th>" if trust_map else ""
             drivers_html = f"""
   <div class="tr-drivers-title">驱动因子应验率</div>
   <table class="tr-table tr-drivers">
     <thead>
-      <tr><th>因子</th><th>应验率</th><th>样本数</th></tr>
+      <tr><th>因子</th><th>应验率</th><th>样本数</th>{trust_head}</tr>
     </thead>
     <tbody>{drv_rows}
     </tbody>

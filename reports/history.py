@@ -56,6 +56,9 @@ class ReportSummary:
     scenario_scorecard: dict = field(default_factory=dict)
     # 事件/市场/期限结构影子倾斜轻量快照（旧 JSON 无此键 → 空 dict）
     scenario_event_tilt: dict = field(default_factory=dict)
+    # 均线排列（旧 JSON 无此键 → 不构成趋势主张）
+    ma20: Optional[float] = None
+    ma60: Optional[float] = None
 
 
 def _history_dir() -> Path:
@@ -72,8 +75,87 @@ def summary_path(report_date: date) -> Path:
 def _current_learned_scales() -> dict:
     """读取当期生效的自校准系数快照（惰性导入避免循环依赖；失败回退空 dict）。"""
     try:
-        from reports.learning import load_learned
-        return load_learned()
+        from reports.learning import load_learned, load_review_memory
+        scales = load_learned()
+        memory = load_review_memory()
+        scales["hedge_conviction"] = memory["hedge_conviction"]
+        if memory.get("driver_trust"):
+            scales["driver_trust"] = memory["driver_trust"]
+        if memory.get("direction_trust"):
+            scales["direction_trust"] = memory["direction_trust"]
+        try:
+            shift = float(memory.get("band_center_shift") or 0.0)
+        except (TypeError, ValueError):
+            shift = 0.0
+        if abs(shift) >= 0.0025:
+            scales["band_center_shift"] = shift
+        try:
+            flat_trust = float(memory.get("flat_trust", 1.0))
+        except (TypeError, ValueError):
+            flat_trust = 1.0
+        if flat_trust < 0.999:
+            scales["flat_trust"] = flat_trust
+        try:
+            sharpness = float(memory.get("prob_sharpness", 1.0))
+        except (TypeError, ValueError):
+            sharpness = 1.0
+        if sharpness < 0.999:
+            scales["prob_sharpness"] = sharpness
+        try:
+            lean = float(memory.get("hedge_lean") or 0.0)
+        except (TypeError, ValueError):
+            lean = 0.0
+        if abs(lean) >= 0.005:
+            scales["hedge_lean"] = lean
+        try:
+            fan_width = float(memory.get("fan_width", 1.0))
+        except (TypeError, ValueError):
+            fan_width = 1.0
+        if fan_width > 1.001:
+            scales["fan_width"] = fan_width
+        try:
+            target_shift = float(memory.get("ml_target_shift") or 0.0)
+        except (TypeError, ValueError):
+            target_shift = 0.0
+        if abs(target_shift) >= 0.0025:
+            scales["ml_target_shift"] = target_shift
+        try:
+            conf_scale = float(memory.get("ml_confidence_scale", 1.0))
+        except (TypeError, ValueError):
+            conf_scale = 1.0
+        if conf_scale < 0.999:
+            scales["ml_confidence_scale"] = conf_scale
+        try:
+            rsi_scale = float(memory.get("rsi_extreme_scale", 1.0))
+        except (TypeError, ValueError):
+            rsi_scale = 1.0
+        if rsi_scale < 0.999:
+            scales["rsi_extreme_scale"] = rsi_scale
+        try:
+            ma_scale = float(memory.get("ma_trend_scale", 1.0))
+        except (TypeError, ValueError):
+            ma_scale = 1.0
+        if ma_scale < 0.999:
+            scales["ma_trend_scale"] = ma_scale
+        try:
+            month_scale = float(memory.get("month_extreme_scale", 1.0))
+        except (TypeError, ValueError):
+            month_scale = 1.0
+        if month_scale < 0.999:
+            scales["month_extreme_scale"] = month_scale
+        try:
+            day_scale = float(memory.get("day_shock_scale", 1.0))
+        except (TypeError, ValueError):
+            day_scale = 1.0
+        if day_scale < 0.999:
+            scales["day_shock_scale"] = day_scale
+        try:
+            neutral_scale = float(memory.get("ml_neutral_scale", 1.0))
+        except (TypeError, ValueError):
+            neutral_scale = 1.0
+        if neutral_scale < 0.999:
+            scales["ml_neutral_scale"] = neutral_scale
+        return scales
     except Exception:
         return {}
 
@@ -148,6 +230,8 @@ def save_report_summary(report) -> Path:
             }
             if report.scenario_event_tilt else {}
         ),
+        ma20=m.ma20 if m else None,
+        ma60=m.ma60 if m else None,
     )
 
     path = summary_path(report.report_date)
@@ -198,6 +282,15 @@ class PredictionReview:
     review_badge: str  # '命中' | '部分命中' | '偏离'
 
 
+def hedge_took_a_side(ratio: float) -> bool:
+    """比率落到 50%–70% 之外，才算这次套保做了方向主张。"""
+    try:
+        ratio = float(ratio)
+    except (TypeError, ValueError):
+        return False
+    return ratio >= 0.70 or ratio <= 0.50
+
+
 def compute_prediction_review(
     last: ReportSummary,
     current_price: float,
@@ -226,6 +319,7 @@ def compute_prediction_review(
     # Hedge advice correctness
     # If hedge was tight (high ratio) and price went down → correct
     # If hedge was loose (low ratio) and price went up → correct
+    # 中性仓位（hedge_took_a_side 为假）仍算安全，战绩页的套保有效率不变。
     hedge_tight = last.hedge_ratio >= 0.70
     hedge_loose = last.hedge_ratio <= 0.50
     if hedge_tight and direction_actual == "down":

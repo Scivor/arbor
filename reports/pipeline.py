@@ -70,11 +70,17 @@ def compute_levels_and_scenarios(
     market: Optional[MarketSnapshot],
     ml: Optional[MLSnapshot] = None,
     band_scale: float = 1.0,
+    rsi_scale: float = 1.0,
+    ma_scale: float = 1.0,
+    ml_neutral_scale: float = 1.0,
 ) -> tuple[list[Level], list[Level], list[Scenario]]:
     """
     Derive support/resistance levels and three price scenarios from market data.
     ML prediction (if available) drives scenario probabilities and price targets.
     band_scale: 情景区间宽度缩放（自校准系数，中心不变，默认 1.0 不缩放）。
+    rsi_scale: RSI 极值对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
+    ma_scale: 均线排列对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
+    ml_neutral_scale: ML 中性把概率推向横盘的幅度（0.6–1.0，默认 1.0 不缩放）。
     """
     if market is None:
         return [], [], []
@@ -137,29 +143,51 @@ def compute_levels_and_scenarios(
             p_neutral -= 0.10 * conf
             p_bear -= 0.05 * conf
         else:
-            p_neutral += 0.10 * conf
-            p_bull -= 0.05 * conf
-            p_bear -= 0.05 * conf
+            # 高置信中性连续被突破时，复盘把这档概率按系数缩小。
+            try:
+                ml_neutral_scale = float(ml_neutral_scale)
+            except (TypeError, ValueError):
+                ml_neutral_scale = 1.0
+            if ml_neutral_scale != ml_neutral_scale:
+                ml_neutral_scale = 1.0
+            ml_neutral_scale = max(0.6, min(1.0, ml_neutral_scale))
+            p_neutral += 0.10 * conf * ml_neutral_scale
+            p_bull -= 0.05 * conf * ml_neutral_scale
+            p_bear -= 0.05 * conf * ml_neutral_scale
 
-    # RSI adjustment
+    # RSI adjustment. 极值连续说错时，复盘把这档概率按系数缩小。
+    try:
+        rsi_scale = float(rsi_scale)
+    except (TypeError, ValueError):
+        rsi_scale = 1.0
+    if rsi_scale != rsi_scale:
+        rsi_scale = 1.0
+    rsi_scale = max(0.6, min(1.0, rsi_scale))
     if rsi < 35:
-        p_bull += 0.08
-        p_bear -= 0.05
-        p_neutral -= 0.03
+        p_bull += 0.08 * rsi_scale
+        p_bear -= 0.05 * rsi_scale
+        p_neutral -= 0.03 * rsi_scale
     elif rsi > 65:
-        p_bear += 0.08
-        p_bull -= 0.05
-        p_neutral -= 0.03
+        p_bear += 0.08 * rsi_scale
+        p_bull -= 0.05 * rsi_scale
+        p_neutral -= 0.03 * rsi_scale
 
-    # Trend adjustment (MA alignment)
+    # Trend adjustment (MA alignment). 排列连续说错时，复盘把这档概率按系数缩小。
+    try:
+        ma_scale = float(ma_scale)
+    except (TypeError, ValueError):
+        ma_scale = 1.0
+    if ma_scale != ma_scale:
+        ma_scale = 1.0
+    ma_scale = max(0.6, min(1.0, ma_scale))
     if ma20 < ma60 * 0.98 and p < ma20:
-        p_bear += 0.05
-        p_bull -= 0.03
-        p_neutral -= 0.02
+        p_bear += 0.05 * ma_scale
+        p_bull -= 0.03 * ma_scale
+        p_neutral -= 0.02 * ma_scale
     elif ma20 > ma60 * 1.02 and p > ma20:
-        p_bull += 0.05
-        p_bear -= 0.03
-        p_neutral -= 0.02
+        p_bull += 0.05 * ma_scale
+        p_bear -= 0.03 * ma_scale
+        p_neutral -= 0.02 * ma_scale
 
     # Normalize to sum=1.0
     total = p_neutral + p_bull + p_bear
@@ -614,22 +642,97 @@ def run(config: PipelineConfig) -> PredictionReport:
     # ── Step 2: ML prediction (needed for scenario + driver logic) ─
     ml = fetch_ml_snapshot(current_price=market.current if market else None)
 
-    # ── Step 2b: 自校准系数（Phase B；失败回退 1.0 不影响出报）───────
+    # ── Step 2b: 自校准系数（失败回退 1.0，不影响出报）──────────────
     try:
-        from reports.learning import load_learned
+        from reports.learning import (
+            apply_band_center_shift,
+            apply_fan_width,
+            apply_direction_trust,
+            apply_flat_trust,
+            apply_prob_sharpness,
+            apply_driver_hedge_nudge,
+            apply_driver_scenario_tilt,
+            apply_driver_weights,
+            apply_hedge_conviction,
+            apply_hedge_lean,
+            apply_ml_confidence_scale,
+            apply_ml_target_shift,
+            load_learned,
+            load_review_memory,
+            ml_trust_multiplier,
+            scale_analyst_event,
+            scale_trusted_events,
+            sync_dominant_scenario_event,
+        )
         learned = load_learned()
+        memory = load_review_memory()
+        month_scale = memory.get("month_extreme_scale", 1.0)
+        day_scale = memory.get("day_shock_scale", 1.0)
     except Exception as e:
         logger.warning(f"load_learned failed, fallback to 1.0: {e}")
         learned = {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+        memory = {
+            "hedge_conviction": 1.0,
+            "driver_trust": {},
+            "direction_trust": {},
+            "band_center_shift": 0.0,
+            "flat_trust": 1.0,
+            "prob_sharpness": 1.0,
+            "hedge_lean": 0.0,
+            "fan_width": 1.0,
+            "ml_target_shift": 0.0,
+            "ml_confidence_scale": 1.0,
+            "rsi_extreme_scale": 1.0,
+            "ma_trend_scale": 1.0,
+            "month_extreme_scale": 1.0,
+            "day_shock_scale": 1.0,
+            "ml_neutral_scale": 1.0,
+        }
+        month_scale = 1.0
+        day_scale = 1.0
+        apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
+        apply_ml_target_shift = apply_ml_confidence_scale = None
+        apply_band_center_shift = apply_fan_width = apply_flat_trust = apply_prob_sharpness = None
+        apply_direction_trust = apply_driver_hedge_nudge = None
+        apply_driver_scenario_tilt = scale_analyst_event = None
+        sync_dominant_scenario_event = ml_trust_multiplier = None
+    trust = memory.get("driver_trust") or {}
     if ml:
         ml.bias *= learned["ml_bias_scale"]  # 单点缩放，下游 scenario/hedge/drivers 全部生效
+        if ml_trust_multiplier is not None:
+            ml.bias *= ml_trust_multiplier(ml.model_type, ml.signal, trust)
+        # 目标价只进支撑/阻力位和情景价格，不进概率，所以这里不重算套保。
+        if apply_ml_target_shift is not None and market is not None:
+            apply_ml_target_shift(
+                ml, memory.get("ml_target_shift", 0.0), market.current,
+            )
+        # 置信度只进情景概率。概率在后面才算套保，所以这里不单独重算。
+        if apply_ml_confidence_scale is not None:
+            apply_ml_confidence_scale(ml, memory.get("ml_confidence_scale", 1.0))
 
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
-        market, ml, band_scale=learned["scenario_band_scale"])
+        market, ml, band_scale=learned["scenario_band_scale"],
+        rsi_scale=memory.get("rsi_extreme_scale", 1.0),
+        ma_scale=memory.get("ma_trend_scale", 1.0),
+        ml_neutral_scale=memory.get("ml_neutral_scale", 1.0),
+    )
+    # 扇面加宽和中心平移都只改价格，不改概率，所以这里不重算套保。
+    if apply_fan_width is not None:
+        apply_fan_width(scenarios, memory.get("fan_width", 1.0))
+    if apply_band_center_shift is not None and market is not None:
+        apply_band_center_shift(
+            scenarios, memory.get("band_center_shift", 0.0), market.current,
+        )
     bullish, bearish = compute_drivers(market, climate, ml)
+    if apply_driver_weights is not None:
+        apply_driver_weights(bullish, bearish, trust)
     report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
-    hedge = compute_hedge_advice(market, scenarios, report_events)
+    if scale_trusted_events is not None:
+        scale_trusted_events(report_events, trust)
+    hedge = compute_hedge_advice(
+        market, scenarios, report_events, month_extreme_scale=month_scale, day_shock_scale=day_scale,
+    )
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
     # ── Step 3c: 情景记分卡 + 参考类（条件化 shrink）────────────────
@@ -659,6 +762,33 @@ def run(config: PipelineConfig) -> PredictionReport:
         effective_shrink = config.shrink_w if config.shrink_w > 0 else 0.0
     if effective_shrink > 0 and reference_class:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
+
+    # 复盘修正落在收缩之后，避免被参考类再抹平。
+    # 先把过度自信的概率往均匀拉，再按方向信任和不可靠因子让给横盘，
+    # 横盘自己也说错时再分回去。没动就不重算套保。
+    tilted = False
+    if apply_prob_sharpness is not None and apply_prob_sharpness(
+        scenarios, memory.get("prob_sharpness", 1.0),
+    ):
+        tilted = True
+    if apply_direction_trust is not None and apply_direction_trust(
+        scenarios, memory.get("direction_trust") or {},
+    ):
+        tilted = True
+    if apply_driver_scenario_tilt is not None and apply_driver_scenario_tilt(
+        scenarios, bullish, bearish, trust,
+    ):
+        tilted = True
+    if apply_flat_trust is not None and apply_flat_trust(
+        scenarios, memory.get("flat_trust", 1.0),
+    ):
+        tilted = True
+    if tilted:
+        if sync_dominant_scenario_event is not None:
+            sync_dominant_scenario_event(report_events, scenarios)
+        hedge = compute_hedge_advice(
+            market, scenarios, report_events, month_extreme_scale=month_scale, day_shock_scale=day_scale,
+        ) or hedge
 
     # ── Step 3d: 凯利仓位影子（Phase 3；只读展示，绝不改动 hedge_advice）──
     kelly_shadow = None
@@ -879,11 +1009,24 @@ def run(config: PipelineConfig) -> PredictionReport:
         # 复用 Step 3 已扫描的事件（三域扫描是网络 I/O，一期周报只做一次），
         # 只把此刻才可用的 LLM 因子并进去重算。
         llm_ev = llm_commentary_event(report.llm_direction)
+        if scale_analyst_event is not None:
+            scale_analyst_event(llm_ev, trust)
         report.hedge_advice = compute_hedge_advice(
             report.market,
             report.scenarios,
             report_events + ([llm_ev] if llm_ev else []),
+            month_extreme_scale=month_scale, day_shock_scale=day_scale,
         ) or report.hedge_advice
+
+    # 点评重算会换掉前面的 HedgeAdvice。持信、因子修正和套保偏向必须落在这最后一次比率上。
+    if apply_hedge_conviction is not None:
+        apply_hedge_conviction(report.hedge_advice, memory.get("hedge_conviction", 1.0))
+    if apply_driver_hedge_nudge is not None:
+        apply_driver_hedge_nudge(
+            report.hedge_advice, report.bullish_params, report.bearish_params, trust,
+        )
+    if apply_hedge_lean is not None:
+        apply_hedge_lean(report.hedge_advice, memory.get("hedge_lean", 0.0))
 
     # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
     # 只重算到库成本本身（纯本地计算，不联网）；汇率/政策事件/ICO/GFEX 沿用

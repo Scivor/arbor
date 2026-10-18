@@ -71,12 +71,14 @@ def compute_levels_and_scenarios(
     ml: Optional[MLSnapshot] = None,
     band_scale: float = 1.0,
     rsi_scale: float = 1.0,
+    ma_scale: float = 1.0,
 ) -> tuple[list[Level], list[Level], list[Scenario]]:
     """
     Derive support/resistance levels and three price scenarios from market data.
     ML prediction (if available) drives scenario probabilities and price targets.
     band_scale: 情景区间宽度缩放（自校准系数，中心不变，默认 1.0 不缩放）。
     rsi_scale: RSI 极值对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
+    ma_scale: 均线排列对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
     """
     if market is None:
         return [], [], []
@@ -160,15 +162,22 @@ def compute_levels_and_scenarios(
         p_bull -= 0.05 * rsi_scale
         p_neutral -= 0.03 * rsi_scale
 
-    # Trend adjustment (MA alignment)
+    # Trend adjustment (MA alignment). 排列连续说错时，复盘把这档概率按系数缩小。
+    try:
+        ma_scale = float(ma_scale)
+    except (TypeError, ValueError):
+        ma_scale = 1.0
+    if ma_scale != ma_scale:
+        ma_scale = 1.0
+    ma_scale = max(0.6, min(1.0, ma_scale))
     if ma20 < ma60 * 0.98 and p < ma20:
-        p_bear += 0.05
-        p_bull -= 0.03
-        p_neutral -= 0.02
+        p_bear += 0.05 * ma_scale
+        p_bull -= 0.03 * ma_scale
+        p_neutral -= 0.02 * ma_scale
     elif ma20 > ma60 * 1.02 and p > ma20:
-        p_bull += 0.05
-        p_bear -= 0.03
-        p_neutral -= 0.02
+        p_bull += 0.05 * ma_scale
+        p_bear -= 0.03 * ma_scale
+        p_neutral -= 0.02 * ma_scale
 
     # Normalize to sum=1.0
     total = p_neutral + p_bull + p_bear
@@ -662,6 +671,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             "ml_target_shift": 0.0,
             "ml_confidence_scale": 1.0,
             "rsi_extreme_scale": 1.0,
+            "ma_trend_scale": 1.0,
         }
         apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
         apply_ml_target_shift = apply_ml_confidence_scale = None
@@ -687,6 +697,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"],
         rsi_scale=memory.get("rsi_extreme_scale", 1.0),
+        ma_scale=memory.get("ma_trend_scale", 1.0),
     )
     # 扇面加宽和中心平移都只改价格，不改概率，所以这里不重算套保。
     if apply_fan_width is not None:

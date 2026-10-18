@@ -349,7 +349,8 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
 
 def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
                 band_min=0.0, band_max=9999.0, drivers=None, direction="横盘",
-                scenarios=None, ml_target=None, ml_confidence=0.5, rsi=50.0):
+                scenarios=None, ml_target=None, ml_confidence=0.5, rsi=50.0,
+                ma20=None, ma60=None):
     data = {
         "report_date": report_date,
         "forecast_week_start": report_date,
@@ -370,6 +371,10 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
         "outlook": "测试",
         "drivers": drivers or [],
     }
+    if ma20 is not None:
+        data["ma20"] = ma20
+    if ma60 is not None:
+        data["ma60"] = ma60
     if scenarios is not None:
         data["scenarios"] = scenarios
     (dir_path / f"weekly_summary_{report_date}.json").write_text(
@@ -558,6 +563,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "ml_target_shift": 9,
         "ml_confidence_scale": 0.1,
         "rsi_extreme_scale": 0.1,
+        "ma_trend_scale": 0.1,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -572,6 +578,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["ml_target_shift"] == 0.03
     assert memory["ml_confidence_scale"] == 0.6
     assert memory["rsi_extreme_scale"] == 0.6
+    assert memory["ma_trend_scale"] == 0.6
 
 
 def test_apply_review_memory_changes_next_report():
@@ -733,6 +740,7 @@ def test_track_record_shows_review_memory():
             "ml_target_shift": -0.005,
             "ml_confidence_scale": 0.9,
             "rsi_extreme_scale": 0.9,
+            "ma_trend_scale": 0.9,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -758,6 +766,7 @@ def test_track_record_shows_review_memory():
     assert "ML 置信" in html and ">0.90<" in html
     assert "置信度按系数缩小" in html
     assert "RSI 极值" in html and "这档概率调整" in html
+    assert "均线趋势" in html and "排列对概率" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -1773,5 +1782,118 @@ def test_rsi_extreme_scale_shrinks_the_probability_nudge():
     )
     _, _, full = compute_levels_and_scenarios(market, None, rsi_scale=1.0)
     _, _, shrunk = compute_levels_and_scenarios(market, None, rsi_scale=0.6)
+    bear = lambda rows: next(s.probability for s in rows if s.direction == "下跌")
+    assert bear(shrunk) < bear(full)
+
+
+def _seed_ma_trend(dir_path, *, miss: bool, limit=None):
+    """
+    奇数周空头排列（短均线低于长均线，价格在短均线之下），主张下跌。
+    miss 时这些周上涨。偶数周两条均线都等于现价，不构成排列。
+    主导区间奇偶交替，命中率 50%。ML 中性，RSI 50，套保停在 65%。
+    limit 只把前几个奇数周写成排列。
+    """
+    price = 400.0
+    prices = [400.0]
+    plan = []
+    trends = 0
+    for i in range(8):
+        is_trend = i % 2 == 1 and (limit is None or trends < limit)
+        if is_trend:
+            trends += 1
+            move = "up" if miss else "down"
+        else:
+            move = "down" if miss else "up"
+        price = round(price * (1.02 if move == "up" else 0.98), 2)
+        prices.append(price)
+        plan.append(is_trend)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        trending = plan[i] if i < 8 else False
+        _write_case(
+            dir_path, f"2026-08-{i + 1:02d}", current,
+            ml_signal="NEUTRAL", hedge_ratio=0.65,
+            band_min=bmin, band_max=bmax, rsi=50.0,
+            ma20=(current * 1.04 if trending else current),
+            ma60=(current * 1.10 if trending else current),
+        )
+
+
+def test_recalibrate_ma_trends_that_miss_shrink_the_nudge(learn_env):
+    """空头排列却连着上涨：均线趋势系数降到 0.9。没有极值 RSI，旧系数不动。"""
+    _seed_ma_trend(learn_env / "history", miss=True)
+    result = recalibrate()
+    assert result["memory"]["ma_trend_scale"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["ml_accuracy"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    assert result["memory"]["rsi_extreme_scale"] == 1.0
+    assert result["memory"]["ml_confidence_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["fan_width"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ma_trend_scale"]
+    assert "趋势影响下调" in result["changed"][0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ma_trend_scale": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["ma_trend_scale"] == 0.6
+    assert all(c["param"] != "ma_trend_scale" for c in floored["changed"])
+
+
+def test_recalibrate_ma_trends_that_hit_restore_the_nudge(learn_env):
+    _seed_ma_trend(learn_env / "history", miss=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ma_trend_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ma_trend_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ma_trend_scale"]
+    assert "向基准回归" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_few_ma_trends_hold_the_nudge(learn_env):
+    _seed_ma_trend(learn_env / "history", miss=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ma_trend_scale": 0.85,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["ma_trend_scale"] == pytest.approx(0.85)
+
+
+def test_recalibrate_no_ma_trends_fade_the_nudge(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ma_trend_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ma_trend_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ma_trend_scale"]
+
+
+def test_ma_trend_scale_shrinks_the_probability_nudge():
+    from reports.pipeline import compute_levels_and_scenarios
+    from reports.models import MarketSnapshot
+
+    market = MarketSnapshot(
+        ticker="KC=F", current=300.0, change_1d_pct=0.0, change_30d_pct=0.0,
+        high_30d=320.0, low_30d=280.0, volume_ratio=1.0,
+        ma20=312.0, ma60=330.0, rsi_14=50.0,
+        close_5d=[300.0] * 5, vol_ratio_5d=[1.0] * 5, close_30d=[],
+    )
+    _, _, full = compute_levels_and_scenarios(market, None, ma_scale=1.0)
+    _, _, shrunk = compute_levels_and_scenarios(market, None, ma_scale=0.6)
     bear = lambda rows: next(s.probability for s in rows if s.direction == "下跌")
     assert bear(shrunk) < bear(full)

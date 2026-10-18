@@ -56,6 +56,9 @@ class ReportSummary:
     scenario_scorecard: dict = field(default_factory=dict)
     # 事件/市场/期限结构影子倾斜轻量快照（旧 JSON 无此键 → 空 dict）
     scenario_event_tilt: dict = field(default_factory=dict)
+    # 均线排列（旧 JSON 无此键 → 不构成趋势主张）
+    ma20: Optional[float] = None
+    ma60: Optional[float] = None
 
 
 def _history_dir() -> Path:
@@ -128,6 +131,12 @@ def _current_learned_scales() -> dict:
             rsi_scale = 1.0
         if rsi_scale < 0.999:
             scales["rsi_extreme_scale"] = rsi_scale
+        try:
+            ma_scale = float(memory.get("ma_trend_scale", 1.0))
+        except (TypeError, ValueError):
+            ma_scale = 1.0
+        if ma_scale < 0.999:
+            scales["ma_trend_scale"] = ma_scale
         return scales
     except Exception:
         return {}
@@ -203,6 +212,8 @@ def save_report_summary(report) -> Path:
             }
             if report.scenario_event_tilt else {}
         ),
+        ma20=m.ma20 if m else None,
+        ma60=m.ma60 if m else None,
     )
 
     path = summary_path(report.report_date)

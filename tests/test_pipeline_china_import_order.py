@@ -447,3 +447,28 @@ def test_low_rsi_extreme_scale_shrinks_published_bear_probability(synthetic_pipe
     monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
     adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
     assert _scenario_p(adjusted, "下跌") < _scenario_p(baseline, "下跌")
+
+
+def test_low_ma_trend_scale_shrinks_published_bull_probability(synthetic_pipeline, monkeypatch):
+    """多头排列时，趋势系数 0.6 让公布的上涨概率下降。"""
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
+        "ma_trend_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["ma_trend_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")

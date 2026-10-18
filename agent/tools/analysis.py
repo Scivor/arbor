@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度、扇面宽度、ML 目标偏移、ML 置信度、RSI 极值，以及最近 3 条调整。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度、扇面宽度、ML 目标偏移、ML 置信度、RSI 极值、均线趋势，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -122,6 +122,12 @@ def get_learning_status() -> str:
             rsi_scale = 1.0
         if rsi_scale < 0.999:
             lines.append(f"RSI 极值 {rsi_scale:.2f}")
+        try:
+            ma_scale = float(memory.get("ma_trend_scale", 1.0))
+        except (TypeError, ValueError):
+            ma_scale = 1.0
+        if ma_scale < 0.999:
+            lines.append(f"均线趋势 {ma_scale:.2f}")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

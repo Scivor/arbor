@@ -113,7 +113,7 @@ def test_quiet_quotes_degrades_when_fetch_fails():
     def boom():
         raise RuntimeError("yahoo down")
 
-    assert quiet_quotes(fetch=boom) == {"coffee": None, "fx": None, "yuan": None}
+    assert quiet_quotes(fetch=boom) == {"coffee": None, "fx": None, "yuan": None, "landed": None}
 
 
 def test_quiet_quotes_keeps_the_market_that_arrived():
@@ -122,6 +122,7 @@ def test_quiet_quotes_keeps_the_market_that_arrived():
     assert view["coffee"] is None
     assert view["fx"]["price"] == "7.1234"
     assert view["yuan"] is None
+    assert view["landed"] is None
 
 
 def test_yuan_converts_cents_with_the_landed_cost_ton():
@@ -137,6 +138,25 @@ def test_yuan_converts_cents_with_the_landed_cost_ton():
     assert yuan["per_ton"] == f"{per_ton:,.0f}"
     assert yuan["tone"] == "up"
     assert yuan["change_pts"] == f"+{per_jin - prev_jin:.2f}"
+
+
+def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
+    from arbor.domain.cost.landed_cost import LandedCostCalculator
+
+    coffee = _parse_chart(_chart("KC=F", 200.0, 190.0))
+    fx = _parse_chart(_chart("USDCNY=X", 7.2, 7.0))
+    view = quiet_quotes(fetch=lambda: (coffee, fx))
+    booked = LandedCostCalculator().calculate(
+        cyp_price_usd_lb=2.0, fx_rate_usd_cny=7.2, hedge_ratio=0.0,
+    )
+    landed = view["landed"]
+    assert landed["per_jin"] == f"{booked.total_cost_cny_jin:.2f}"
+    assert landed["per_ton"] == f"{booked.total_cost_cny_mt:,.0f}"
+    assert float(landed["per_jin"]) > float(view["yuan"]["per_jin"])
+    assert landed["freight"] == f"{booked.ocean_freight_usd_mt:.0f}"
+    assert landed["tariff"] == "8%"
+    assert landed["vat"] == "13%"
+    assert landed["tone"] == "up"
 
 
 @pytest.fixture
@@ -179,6 +199,16 @@ def _sample_quotes():
             "change_pts": "+0.74",
             "tone": "up",
         },
+        "landed": {
+            "per_jin": "28.40",
+            "per_ton": "56,800",
+            "change_text": "+3.10%",
+            "change_pts": "+0.85",
+            "tone": "up",
+            "freight": "85",
+            "tariff": "8%",
+            "vat": "13%",
+        },
     }
 
 
@@ -200,6 +230,11 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "元/斤" in html
     assert "44,975" in html
     assert "不含运费和关税" in html
+    assert "到库成本" in html
+    assert "28.40" in html
+    assert "未套保" in html
+    assert "关税 8%" in html
+    assert "增值税 13%" in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -218,6 +253,10 @@ def test_empty_page_english(client, monkeypatch):
     assert "Futures in yuan" in html
     assert "CNY/jin" in html
     assert "before freight and duty" in html
+    assert "Landed cost" in html
+    assert "Unhedged" in html
+    assert "duty 8%" in html
+    assert "VAT 13%" in html
     assert "7.1234" in html
 
 

@@ -201,6 +201,55 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     }
 
 
+def _landed_cost(cents_per_lb: float, yuan_per_dollar: float):
+    """未套保到库成本。传入美元/磅，避免计算器把 100 以下的美分再除一次。"""
+    return LandedCostCalculator().calculate(
+        cyp_price_usd_lb=float(cents_per_lb) / 100.0,
+        fx_rate_usd_cny=float(yuan_per_dollar),
+        hedge_ratio=0.0,
+    )
+
+
+def _rate_text(frac: float) -> str:
+    pct = frac * 100
+    if abs(pct - round(pct)) < 0.05:
+        return f"{pct:.0f}%"
+    return f"{pct:.1f}%"
+
+
+def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
+    if not coffee or not fx:
+        return None
+    cents, rate = coffee.get("price"), fx.get("price")
+    if cents is None or rate is None or rate <= 0 or cents <= 0:
+        return None
+    try:
+        now = _landed_cost(cents, rate)
+    except Exception:
+        return None
+    prev_jin = None
+    change = None
+    if coffee.get("prev") and fx.get("prev") and coffee["prev"] > 0 and fx["prev"] > 0:
+        try:
+            prev = _landed_cost(coffee["prev"], fx["prev"])
+            prev_jin = prev.total_cost_cny_jin
+            if prev_jin:
+                change = (now.total_cost_cny_jin - prev_jin) / prev_jin
+        except Exception:
+            prev_jin = None
+            change = None
+    return {
+        "per_jin": f"{now.total_cost_cny_jin:.2f}",
+        "per_ton": f"{now.total_cost_cny_mt:,.0f}",
+        "change_text": _pct(change),
+        "change_pts": _pts(now.total_cost_cny_jin, prev_jin, 2) if prev_jin is not None else None,
+        "tone": _tone(change),
+        "freight": f"{now.ocean_freight_usd_mt:.0f}",
+        "tariff": _rate_text(now.import_tariff_pct),
+        "vat": _rate_text(now.vat_pct),
+    }
+
+
 def _get_chart(symbol: str, range_: str) -> Optional[dict]:
     try:
         url = _CHART.format(symbol=quote(symbol, safe=""))
@@ -220,7 +269,7 @@ def _fetch_both() -> tuple[Optional[dict], Optional[dict]]:
 
 def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
     """
-    返回 {"coffee": view|None, "fx": view|None, "yuan": view|None}。
+    返回 coffee、fx、yuan（期货折算）、landed（未套保到库）。
 
     默认路径缓存 120 秒。传入 fetch 时不读不写缓存，供测试替换网络。
     """
@@ -237,6 +286,7 @@ def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
         "coffee": _view(coffee_raw, symbol="KC=F", decimals=2),
         "fx": _view(fx_raw, symbol="USDCNY=X", decimals=4),
         "yuan": _yuan(coffee_raw, fx_raw),
+        "landed": _landed(coffee_raw, fx_raw),
     }
     if fetch is None:
         _cache["at"] = now

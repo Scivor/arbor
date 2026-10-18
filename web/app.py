@@ -341,6 +341,7 @@ async def latest_report(request: Request):
             "coffee": (quotes or {}).get("coffee"),
             "fx": (quotes or {}).get("fx"),
             "yuan": (quotes or {}).get("yuan"),
+            "landed": (quotes or {}).get("landed"),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 

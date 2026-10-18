@@ -12,7 +12,7 @@ Usage:
     engine = PaperTradingEngine(db_path='~/.arbor/decisions.db')
     engine.open_position(price=215.5, tons=375, hedge_ratio=0.80)
     engine.mark_to_market(current_price=218.0)
-    engine.close_position(exit_price=220.0, reason='ratio_reduced')
+    engine.close_position(exit_price=220.0, reason='ratio_changed')
     summary = engine.get_summary()
 """
 
@@ -25,7 +25,7 @@ from typing import Optional
 from collections import deque
 
 from arbor.infrastructure.persistence.database import DecisionDB
-from arbor.domain.trading import HedgeRecord, HedgeAction, ExitReason
+from arbor.domain.trading import HedgeRecord, HedgeAction, ExitReason, coerce_exit_reason
 
 # Contract spec (KC futures)
 CONTRACT_SIZE_TONS = 37.5      # tons per contract
@@ -156,7 +156,7 @@ class PaperTradingEngine:
     def close_position(
         self,
         exit_price: float,
-        reason: str | ExitReason,
+        reason: str,
         narrative: str = '',
     ) -> tuple[float, float]:
         """
@@ -164,7 +164,7 @@ class PaperTradingEngine:
 
         Args:
             exit_price: exit price in cents/lb
-            reason: ExitReason or string
+            reason: an ExitReason value, such as "manual_close"
             narrative: optional description
 
         Returns:
@@ -174,8 +174,7 @@ class PaperTradingEngine:
         if pos is None:
             return 0.0, 0.0
 
-        if isinstance(reason, str):
-            reason = ExitReason(reason)
+        reason = coerce_exit_reason(reason)
 
         now = datetime.now(timezone.utc)
         holding_days = max(1, (now - pos.entry_time).days)
@@ -202,7 +201,7 @@ class PaperTradingEngine:
             exit_reason=reason,
             holding_days=holding_days,
             commission=commission,
-            narrative=narrative or f'Paper close: {reason.value}',
+            narrative=narrative or f'Paper close: {reason}',
             is_paper=True,
         )
 

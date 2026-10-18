@@ -28,6 +28,39 @@ class ExitReason:
     SIGNAL_OPEN = "signal_open"
 
 
+def coerce_exit_reason(reason: object) -> str:
+    """Map a reason constant or its text onto an ExitReason value.
+
+    ExitReason is a set of string constants, not a constructor.
+    ``ExitReason("manual_close")`` raises TypeError.
+    """
+    if isinstance(reason, str):
+        text = reason.strip()
+    else:
+        value = getattr(reason, "value", None)
+        if not isinstance(value, str):
+            raise ValueError(f"unknown exit reason: {reason!r}")
+        text = value.strip()
+    if not text:
+        raise ValueError("unknown exit reason: blank")
+    known = {
+        value
+        for name, value in vars(ExitReason).items()
+        if name.isupper() and isinstance(value, str)
+    }
+    if text in known:
+        return text
+    by_name = {
+        name.lower(): value
+        for name, value in vars(ExitReason).items()
+        if name.isupper() and isinstance(value, str)
+    }
+    canonical = by_name.get(text.lower())
+    if canonical is None:
+        raise ValueError(f"unknown exit reason: {text}")
+    return canonical
+
+
 @dataclass(frozen=True)
 class HedgeRecord:
     """A completed coffee hedge trade."""

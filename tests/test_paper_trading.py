@@ -92,21 +92,29 @@ def test_adjust_without_a_new_ratio_keeps_the_open_one(tmp_path):
     engine.close()
 
 
-def test_scale_up_reopens_at_the_new_price(tmp_path):
+def test_scale_up_adds_contracts_and_blends_the_entry(tmp_path):
     engine = _engine(tmp_path)
     engine.sync_to_ratio(0.40, 200.0, 375.0)
+    opened_at = engine._position.entry_time
+
     message = engine.sync_to_ratio(0.80, 210.0, 375.0)
 
-    assert message.startswith("ADJUSTED to 8 contracts @ 210.00")
+    assert message.startswith("ADJUSTED to 8 contracts @ 205.00")
     assert engine._position.contracts == 8
-    assert engine._position.entry_price == 210.0
+    assert engine._position.size_tons == 300.0
+    assert engine._position.entry_price == pytest.approx(205.0)
+    assert engine._position.entry_time == opened_at
     assert engine._position.hedge_ratio == 0.80
+    assert engine.mark_to_market(210.0) == pytest.approx(881.848)
     closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
     opens = [t for t in engine._trades if t.action == HedgeAction.BUY_HEDGE]
-    assert closes[-1].size == 150.0
-    assert closes[-1].hedge_ratio == 0.40
-    assert opens[-1].hedge_ratio == 0.80
+    assert closes == []
+    assert len(opens) == 2
+    assert opens[-1].size == 150.0
     assert opens[-1].entry_price == 210.0
+    assert opens[-1].commission == 60.0
+    assert opens[-1].pnl == 0.0
+    assert opens[-1].hedge_ratio == 0.80
     engine.close()
 
 

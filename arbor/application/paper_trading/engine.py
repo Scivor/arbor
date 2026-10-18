@@ -221,7 +221,7 @@ class PaperTradingEngine:
 
         Logic:
         - If |new_tons - current_tons| < 1 contract worth → skip
-        - If new_tons > current_tons → close and reopen larger (scale up)
+        - If new_tons > current_tons → add contracts at the current price
         - If new_tons < current_tons → partial close
         - If new_tons == 0 → full close
         """
@@ -269,18 +269,10 @@ class PaperTradingEngine:
             self._position.hedge_ratio = kept_ratio
             return False
 
-        # Scale up: close the whole position, then reopen larger.
-        # The ratio is captured above because close_position clears it.
-        self.close_position(
-            exit_price=current_price,
-            reason=ExitReason.RATIO_CHANGED,
-            narrative=narrative or f'Paper resize: {current_tons:.0f}t → {new_tons:.0f}t',
-        )
-        self.open_position(
-            price=current_price,
-            tons=new_tons,
-            hedge_ratio=kept_ratio,
-            narrative=narrative or f'Paper reopen after resize: {new_tons:.0f}t',
+        # Scale up adds contracts at the current price. The original lots
+        # keep their entry, blended into one average so the book stays one lot.
+        self._add_contracts(
+            target_contracts, current_price, narrative, kept_ratio,
         )
         return True
 
@@ -321,6 +313,46 @@ class PaperTradingEngine:
         )
         pos.contracts = target_contracts
         pos.size_tons = target_contracts * self.contract_size
+        pos.hedge_ratio = hedge_ratio
+        self._current_price = current_price
+
+    def _add_contracts(
+        self,
+        target_contracts: int,
+        current_price: float,
+        narrative: str,
+        hedge_ratio: float,
+    ) -> None:
+        """Buy the extra contracts. Entry becomes the size-weighted average."""
+        pos = self._position
+        added = target_contracts - pos.contracts
+        blended = (
+            pos.contracts * pos.entry_price + added * current_price
+        ) / target_contracts
+        now = datetime.now(timezone.utc)
+        commission = added * COMMISSION_PER_CONTRACT
+        self._equity -= commission
+        self._record_trade(
+            entry_time=now,
+            exit_time=now,
+            entry_price=current_price,
+            exit_price=current_price,
+            size_tons=added * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            action=HedgeAction.BUY_HEDGE,
+            pnl=0.0,
+            pnl_pct=0.0,
+            exit_reason=ExitReason.SIGNAL_OPEN,
+            holding_days=0,
+            commission=commission,
+            narrative=narrative or (
+                f'Paper add: {pos.contracts} → {target_contracts} contracts'
+            ),
+            is_paper=True,
+        )
+        pos.contracts = target_contracts
+        pos.size_tons = target_contracts * self.contract_size
+        pos.entry_price = blended
         pos.hedge_ratio = hedge_ratio
         self._current_price = current_price
 

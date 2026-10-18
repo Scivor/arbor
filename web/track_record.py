@@ -117,6 +117,14 @@ def _build_learning_html(learning: dict | None) -> str:
         side = "下移" if target_shift < 0 else "上移"
         target_html = f"""
     <div class="tr-learn-metrics">ML 目标 {side} {abs(target_shift) * 100:.2f}%</div>"""
+    conf_html = ""
+    try:
+        conf_scale = float(memory.get("ml_confidence_scale", 1.0))
+    except (TypeError, ValueError):
+        conf_scale = 1.0
+    if conf_scale < 0.999:
+        conf_html = f"""
+    <div class="tr-learn-metrics">ML 置信 <b>{conf_scale:.2f}</b></div>"""
     trust = memory.get("driver_trust") or {}
     if trust:
         discounted = " · ".join(
@@ -132,11 +140,11 @@ def _build_learning_html(learning: dict | None) -> str:
         trust_html = ""
     if learning.get("memory") is not None:
         trust_html += """
-    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。情景区间中心连续偏高或偏低时，下一期整段价格区间同向挪动，每步 0.5 个百分点，最多 3 个。横盘连续说错时，横盘概率按横盘信任分给上涨和下跌。近期情景概率比均匀猜测更差时，下一期往三个情景均匀靠。有方向的套保连续偏紧或偏松时，下一期比率再挪 1 个百分点，最多 4 个。三个情景区间都没罩住实际价格时，下一期整段扇面加宽，最多比原来宽 25%。ML 目标价连续偏高或偏低时，下一期目标同向挪动，每步 0.5 个百分点，最多 3 个。停在中性的周不给套保持信加分。</div>"""
+    <div class="tr-learn-metrics tr-learn-dim">仍在出现的不可靠因子会修正下一期：套保往反方向挪，该方向的情景概率让给横盘。合计都不超过 6 个百分点。机器学习和 RSI 走各自的系数。上涨或下跌连续说错时，该方向的概率按方向信任让给横盘。情景区间中心连续偏高或偏低时，下一期整段价格区间同向挪动，每步 0.5 个百分点，最多 3 个。横盘连续说错时，横盘概率按横盘信任分给上涨和下跌。近期情景概率比均匀猜测更差时，下一期往三个情景均匀靠。有方向的套保连续偏紧或偏松时，下一期比率再挪 1 个百分点，最多 4 个。三个情景区间都没罩住实际价格时，下一期整段扇面加宽，最多比原来宽 25%。ML 目标价连续偏高或偏低时，下一期目标同向挪动，每步 0.5 个百分点，最多 3 个。置信度不低于 70% 的 ML 方向连续说错时，下一期置信度按系数缩小，最低打到六成。停在中性的周不给套保持信加分。</div>"""
 
     rows = f"""
     <div class="tr-learn-coefs">{_coef("ml_bias_scale")} &nbsp;·&nbsp; {_coef("scenario_band_scale")}</div>
-    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{lean_html}{direction_html}{shift_html}{flat_html}{sharp_html}{fan_html}{target_html}{trust_html}"""
+    <div class="tr-learn-metrics">套保持信 hedge_conviction <b>{conviction:.2f}</b>{conviction_base}{hedge_acc_text}</div>{lean_html}{direction_html}{shift_html}{flat_html}{sharp_html}{fan_html}{target_html}{conf_html}{trust_html}"""
 
     if acc is not None and hit is not None:
         rows += f"""

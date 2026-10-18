@@ -35,6 +35,9 @@ reports/learning.py
 - ml_target_shift:     ML 30 日目标价相对现价的偏移（-3% ~ +3%）。
                         只统计目标离当时现价 15% 以内的周。连续偏高或偏低
                         时，下一期目标价同向挪 0.5 个百分点
+- ml_confidence_scale: ML 置信度进入情景概率的幅度（0.6 ~ 1.0）。
+                        只统计置信度不低于 70% 的看涨或看跌周。
+                        这些周连续说错时，下一期置信度按系数缩小
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -88,6 +91,9 @@ _ML_TARGET_STEP = 0.005
 _ML_TARGET_DEAD = 0.01
 _ML_TARGET_ANCHOR = 0.15
 _ML_TARGET_WINSOR = 0.08
+# 高置信方向说错时缩小下一期置信度。低于 70% 的周本来就没把概率推得很远。
+_ML_CONF_BOUNDS = (0.6, 1.0)
+_ML_CONF_FLOOR = 0.70
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -135,6 +141,7 @@ def _empty_memory() -> dict:
         "hedge_lean": 0.0,
         "fan_width": 1.0,
         "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
     }
 
 
@@ -196,6 +203,7 @@ def _load_state() -> dict:
         "hedge_lean": _hedge_lean(data.get("hedge_lean", 0.0)),
         "fan_width": _fan_width(data.get("fan_width", 1.0)),
         "ml_target_shift": _ml_target_shift(data.get("ml_target_shift", 0.0)),
+        "ml_confidence_scale": _ml_confidence_scale(data.get("ml_confidence_scale", 1.0)),
     }
 
 
@@ -221,7 +229,13 @@ def load_review_memory() -> dict:
         "hedge_lean": state["hedge_lean"],
         "fan_width": state["fan_width"],
         "ml_target_shift": state["ml_target_shift"],
+        "ml_confidence_scale": state["ml_confidence_scale"],
     }
+
+
+def _ml_confidence_scale(value) -> float:
+    """ML 置信度系数。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _ML_CONF_BOUNDS), 4)
 
 
 def _ml_target_shift(value) -> float:
@@ -437,6 +451,46 @@ def _ml_target_stats(pairs) -> dict:
     return {
         "samples": samples,
         "error": (signed / total) if ready else None,
+    }
+
+
+def _ml_confidence_stats(pairs) -> dict:
+    """
+    置信度不低于 70% 的看涨或看跌周，近期加权命中率。
+
+    中性信号和低置信周不计入。实际涨跌停在 ±1% 里算说错。
+    样本少于 4 对时 rate 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        pred = {"BULLISH": "up", "BEARISH": "down"}.get((getattr(cur, "ml_signal", "") or "").upper())
+        if pred is None:
+            continue
+        try:
+            conf = float(getattr(cur, "ml_confidence", 0) or 0)
+            price = float(cur.current_price)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if conf < _ML_CONF_FLOOR or not price or price != price or actual_price != actual_price:
+            continue
+        change = (actual_price - price) / price * 100
+        if change > 1.0:
+            actual = "up"
+        elif change < -1.0:
+            actual = "down"
+        else:
+            actual = "flat"
+        total += weight
+        samples += 1
+        if pred == actual:
+            hit += weight
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "rate": (hit / total) if ready else None,
     }
 
 
@@ -773,6 +827,23 @@ def apply_ml_target_shift(ml, shift, price) -> bool:
     if not spot or spot != spot or target != target:
         return False
     ml.price_target_30d = round(target + delta * spot, 2)
+    return True
+
+
+def apply_ml_confidence_scale(ml, scale) -> bool:
+    """把 ML 置信度按系数缩小。系数为 1 或没有快照时不改。"""
+    if ml is None or getattr(ml, "confidence", None) is None:
+        return False
+    factor = _ml_confidence_scale(scale)
+    if factor >= 1.0:
+        return False
+    try:
+        confidence = float(ml.confidence)
+    except (TypeError, ValueError):
+        return False
+    if confidence != confidence:
+        return False
+    ml.confidence = round(max(0.0, min(1.0, confidence * factor)), 4)
     return True
 
 
@@ -1186,6 +1257,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     lean_stats = _hedge_lean_stats(pairs)
     fan_stats = _fan_stats(pairs)
     target_stats = _ml_target_stats(pairs)
+    conf_stats = _ml_confidence_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1204,6 +1276,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "hedge_lean": state["hedge_lean"],
         "fan_width": state["fan_width"],
         "ml_target_shift": state["ml_target_shift"],
+        "ml_confidence_scale": state["ml_confidence_scale"],
     }
     changed: list[dict] = []
 
@@ -1404,6 +1477,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── ml_confidence_scale: 高置信方向说错就缩小；说对或本期没有高置信周则回到 1 ──
+    old_conf = new_values["ml_confidence_scale"]
+    conf_samples = conf_stats["samples"]
+    conf_rate = conf_stats["rate"]
+    if conf_samples >= _DRIVER_MIN_SAMPLES and conf_rate is not None:
+        if conf_rate < 0.45:
+            reason = f"ML 高置信方向命中率 {conf_rate:.0%} < 45%，置信度下调"
+            new_conf = _step_toward(old_conf, False, _ML_CONF_BOUNDS)
+        elif conf_rate > 0.65:
+            reason = f"ML 高置信方向命中率 {conf_rate:.0%} > 65%，置信度向基准回归"
+            new_conf = _step_toward(old_conf, True, _ML_CONF_BOUNDS)
+        else:
+            new_conf = old_conf
+            reason = ""
+    elif conf_samples == 0 and old_conf < 1.0:
+        reason = "本期没有高置信的 ML 方向，置信度向基准回归"
+        new_conf = _step_toward(old_conf, True, _ML_CONF_BOUNDS)
+    else:
+        new_conf = old_conf
+        reason = ""
+    new_conf = _ml_confidence_scale(new_conf)
+    if reason and new_conf != old_conf:
+        new_values["ml_confidence_scale"] = new_conf
+        changed.append({
+            "param": "ml_confidence_scale",
+            "old": old_conf,
+            "new": new_conf,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -1528,6 +1631,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "hedge_lean": new_values["hedge_lean"],
         "fan_width": new_values["fan_width"],
         "ml_target_shift": new_values["ml_target_shift"],
+        "ml_confidence_scale": new_values["ml_confidence_scale"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

@@ -116,6 +116,12 @@ def _current_learned_scales() -> dict:
             target_shift = 0.0
         if abs(target_shift) >= 0.0025:
             scales["ml_target_shift"] = target_shift
+        try:
+            conf_scale = float(memory.get("ml_confidence_scale", 1.0))
+        except (TypeError, ValueError):
+            conf_scale = 1.0
+        if conf_scale < 0.999:
+            scales["ml_confidence_scale"] = conf_scale
         return scales
     except Exception:
         return {}

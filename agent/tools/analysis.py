@@ -47,7 +47,7 @@ def get_driver_stats() -> str:
 
 @tool
 def get_learning_status() -> str:
-    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度、扇面宽度、ML 目标偏移，以及最近 3 条调整。"""
+    """获取系数自校准状态：ml_bias、scenario_band、套保持信、套保偏向、被压低的驱动、方向信任、区间中心、横盘信任、概率锐度、扇面宽度、ML 目标偏移、ML 置信度，以及最近 3 条调整。"""
     try:
         from reports.learning import learning_status
         st = learning_status()
@@ -110,6 +110,12 @@ def get_learning_status() -> str:
         if abs(target_shift) >= 0.0025:
             side = "下移" if target_shift < 0 else "上移"
             lines.append(f"ML 目标 {side} {abs(target_shift) * 100:.2f}%")
+        try:
+            conf_scale = float(memory.get("ml_confidence_scale", 1.0))
+        except (TypeError, ValueError):
+            conf_scale = 1.0
+        if conf_scale < 0.999:
+            lines.append(f"ML 置信 {conf_scale:.2f}")
         changelog = st.get("changelog") or []
         if changelog:
             lines.append("最近调整:")

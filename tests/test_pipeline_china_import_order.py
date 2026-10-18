@@ -388,3 +388,34 @@ def test_ml_target_shift_moves_published_level_without_changing_hedge(synthetic_
     assert _ml_level(baseline) == pytest.approx(270.0)
     assert _ml_level(adjusted) == pytest.approx(264.0)
     assert adjusted.hedge_advice.ratio == pytest.approx(baseline.hedge_advice.ratio)
+
+
+def test_low_ml_confidence_scale_shrinks_published_confidence(synthetic_pipeline, monkeypatch):
+    """置信度系数 0.6 时，公布的置信度和上涨概率一起下降。"""
+    from reports.models import MLSnapshot
+
+    def _snap(current_price=None):
+        return MLSnapshot(signal="BULLISH", confidence=0.80, bias=0.0, price_target_30d=None)
+
+    monkeypatch.setattr("reports.pipeline.fetch_ml_snapshot", _snap)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["ml_confidence_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert baseline.ml_snapshot.confidence == pytest.approx(0.80)
+    assert adjusted.ml_snapshot.confidence == pytest.approx(0.48)
+    assert _scenario_p(adjusted, "上涨") < _scenario_p(baseline, "上涨")

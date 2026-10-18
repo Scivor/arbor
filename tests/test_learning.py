@@ -349,7 +349,7 @@ def test_save_summary_records_learned_scales(tmp_path, monkeypatch):
 
 def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_ratio=0.65,
                 band_min=0.0, band_max=9999.0, drivers=None, direction="横盘",
-                scenarios=None, ml_target=None):
+                scenarios=None, ml_target=None, ml_confidence=0.5):
     data = {
         "report_date": report_date,
         "forecast_week_start": report_date,
@@ -359,7 +359,7 @@ def _write_case(dir_path, report_date, price, *, ml_signal="NEUTRAL", hedge_rati
         "change_30d_pct": 0.0,
         "rsi_14": 50.0,
         "ml_signal": ml_signal,
-        "ml_confidence": 0.5,
+        "ml_confidence": ml_confidence,
         "ml_price_target_30d": ml_target,
         "hedge_ratio": hedge_ratio,
         "hedge_signal": "TIGHT" if hedge_ratio >= 0.70 else "MEDIUM_HEDGE",
@@ -556,6 +556,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "hedge_lean": 9,
         "fan_width": 9,
         "ml_target_shift": 9,
+        "ml_confidence_scale": 0.1,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -568,6 +569,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["hedge_lean"] == 0.04
     assert memory["fan_width"] == 1.25
     assert memory["ml_target_shift"] == 0.03
+    assert memory["ml_confidence_scale"] == 0.6
 
 
 def test_apply_review_memory_changes_next_report():
@@ -727,6 +729,7 @@ def test_track_record_shows_review_memory():
             "hedge_lean": -0.01,
             "fan_width": 1.05,
             "ml_target_shift": -0.005,
+            "ml_confidence_scale": 0.9,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -749,6 +752,8 @@ def test_track_record_shows_review_memory():
     assert "扇面宽度" in html and ">1.05<" in html
     assert "整段扇面加宽" in html
     assert "ML 目标" in html and "目标同向挪动" in html
+    assert "ML 置信" in html and ">0.90<" in html
+    assert "置信度按系数缩小" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -1534,3 +1539,122 @@ def test_ml_target_shift_moves_the_published_target():
     missing = MLSnapshot(signal="NEUTRAL", confidence=0.5, bias=0.0, price_target_30d=None)
     assert apply_ml_target_shift(missing, -0.02, 300.0) is False
     assert missing.price_target_30d is None
+
+
+def _seed_ml_confidence(dir_path, *, miss_high: bool, limit=None):
+    """
+    看涨信号。奇数周置信度 0.80，偶数周 0.40。
+    miss_high 时高置信周下跌（说错），低置信周上涨（说对），方向准确率正好 50%。
+    否则八周都上涨。主导区间奇偶交替，命中率 50%。套保停在 65%。
+    limit 只把前几期写成高置信，其余保持 0.40。
+    """
+    moves = []
+    confs = []
+    high_used = 0
+    for i in range(8):
+        want_high = i % 2 == 1
+        if want_high and (limit is None or high_used < limit):
+            confs.append(0.80)
+            moves.append("down" if miss_high else "up")
+            high_used += 1
+        elif limit is not None and i < limit:
+            confs.append(0.80)
+            moves.append("down" if miss_high else "up")
+            high_used += 1
+        else:
+            confs.append(0.40)
+            moves.append("up")
+    price = 400.0
+    prices = [price]
+    for move in moves:
+        price = round(price * (1.02 if move == "up" else 0.98), 2)
+        prices.append(price)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        _write_case(
+            dir_path, f"2026-10-{i + 1:02d}", current,
+            ml_signal="BULLISH", hedge_ratio=0.65,
+            band_min=bmin, band_max=bmax,
+            ml_confidence=confs[i] if i < 8 else 0.40,
+        )
+
+
+def test_recalibrate_high_confidence_misses_shrink_scale(learn_env):
+    """高置信看涨却连着下跌：置信度降到 0.9。低置信说对把方向准确率留在 50%，旧系数不动。"""
+    _seed_ml_confidence(learn_env / "history", miss_high=True)
+    result = recalibrate()
+    assert result["memory"]["ml_confidence_scale"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["ml_accuracy"] == 0.5
+    assert result["memory"]["ml_target_shift"] == 0.0
+    assert result["memory"]["fan_width"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    assert [c["param"] for c in result["changed"]] == ["ml_confidence_scale"]
+    assert "置信度下调" in result["changed"][0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_confidence_scale": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["ml_confidence_scale"] == 0.6
+    assert all(c["param"] != "ml_confidence_scale" for c in floored["changed"])
+
+
+def test_recalibrate_high_confidence_hits_restore_scale(learn_env):
+    _seed_ml_confidence(learn_env / "history", miss_high=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_confidence_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_confidence_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_confidence_scale"]
+    assert "向基准回归" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_few_high_confidence_calls_hold_scale(learn_env):
+    _seed_ml_confidence(learn_env / "history", miss_high=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_confidence_scale": 0.85,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["ml_confidence_scale"] == pytest.approx(0.85)
+    assert result["current"]["ml_bias_scale"] == 1.0
+
+
+def test_recalibrate_no_high_confidence_fades_scale(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_confidence_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_confidence_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_confidence_scale"]
+
+
+def test_ml_confidence_scale_shrinks_the_published_confidence():
+    from reports.learning import apply_ml_confidence_scale
+    from reports.models import MLSnapshot
+
+    ml = MLSnapshot(signal="BULLISH", confidence=0.80, bias=0.0)
+    assert apply_ml_confidence_scale(ml, 0.9) is True
+    assert ml.confidence == pytest.approx(0.72)
+
+    same = MLSnapshot(signal="BULLISH", confidence=0.80, bias=0.0)
+    assert apply_ml_confidence_scale(same, 1.0) is False
+    assert same.confidence == 0.80
+
+    floored = MLSnapshot(signal="BULLISH", confidence=0.80, bias=0.0)
+    assert apply_ml_confidence_scale(floored, 0.5) is True
+    assert floored.confidence == pytest.approx(0.48)

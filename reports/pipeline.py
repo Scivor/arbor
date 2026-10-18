@@ -627,6 +627,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             apply_driver_weights,
             apply_hedge_conviction,
             apply_hedge_lean,
+            apply_ml_confidence_scale,
             apply_ml_target_shift,
             load_learned,
             load_review_memory,
@@ -650,9 +651,10 @@ def run(config: PipelineConfig) -> PredictionReport:
             "hedge_lean": 0.0,
             "fan_width": 1.0,
             "ml_target_shift": 0.0,
+            "ml_confidence_scale": 1.0,
         }
         apply_driver_weights = apply_hedge_conviction = apply_hedge_lean = scale_trusted_events = None
-        apply_ml_target_shift = None
+        apply_ml_target_shift = apply_ml_confidence_scale = None
         apply_band_center_shift = apply_fan_width = apply_flat_trust = apply_prob_sharpness = None
         apply_direction_trust = apply_driver_hedge_nudge = None
         apply_driver_scenario_tilt = scale_analyst_event = None
@@ -667,6 +669,9 @@ def run(config: PipelineConfig) -> PredictionReport:
             apply_ml_target_shift(
                 ml, memory.get("ml_target_shift", 0.0), market.current,
             )
+        # 置信度只进情景概率。概率在后面才算套保，所以这里不单独重算。
+        if apply_ml_confidence_scale is not None:
+            apply_ml_confidence_scale(ml, memory.get("ml_confidence_scale", 1.0))
 
     # ── Step 3: Compute derived fields ──────────────────────────
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(

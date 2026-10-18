@@ -514,3 +514,45 @@ def test_low_month_extreme_scale_shrinks_published_hedge(synthetic_pipeline, mon
     monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
     adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
     assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio
+
+
+def test_low_day_shock_scale_shrinks_published_hedge(synthetic_pipeline, monkeypatch):
+    """日涨冲击事件在场时，系数 0.6 让公布的套保比率少加。"""
+    from datetime import datetime
+
+    from arbor.domain.types.enums import Domain, EventType
+    from arbor.domain.types.event import CoffeeEvent
+    from reports.pipeline import gather_report_events as real_gather
+
+    def gather(*args, **kwargs):
+        events = list(real_gather(*args, **kwargs))
+        events.append(CoffeeEvent(
+            EventType.PRICE_SHOCK_UP, Domain.FINANCE, datetime.now(),
+            3, 300.0, "日涨幅超5%", "test",
+        ))
+        return events
+
+    monkeypatch.setattr("reports.pipeline.gather_report_events", gather)
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
+        "ma_trend_scale": 1.0,
+        "month_extreme_scale": 1.0,
+        "day_shock_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["day_shock_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio

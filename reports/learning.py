@@ -48,6 +48,9 @@ reports/learning.py
 - month_extreme_scale: 30 日涨跌超过 20% 时的套保调整幅度（0.6 ~ 1.0）。
                         月涨主张回调（加套保），月跌主张反弹（减套保）。
                         连续说错时，下一期这档调整按系数缩小
+- day_shock_scale:    日涨跌超过 5% 时的套保调整幅度（0.6 ~ 1.0）。
+                        日涨主张回调（加套保），日跌主张反弹（减套保）。
+                        连续说错时，下一期这档调整按系数缩小
 
 每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
 reports/pipeline.run() 在生成时读取并应用。
@@ -114,6 +117,9 @@ _MA_GAP = 0.02
 # 30 日极端。月涨主张回调，月跌主张反弹。绝对值小于 2 的按小数存（0.20 = 20%）。
 _MONTH_EXTREME_BOUNDS = (0.6, 1.0)
 _MONTH_EXTREME = 0.20
+# 日内冲击。日涨主张回调，日跌主张反弹。绝对值大于等于 2 的按百分数换算。
+_DAY_SHOCK_BOUNDS = (0.6, 1.0)
+_DAY_SHOCK = 0.05
 # 半宽超过现价 8% 的「横盘」不是在说价格会留在这里。
 _FLAT_HALF_WIDTH = 0.08
 
@@ -165,6 +171,7 @@ def _empty_memory() -> dict:
         "rsi_extreme_scale": 1.0,
         "ma_trend_scale": 1.0,
         "month_extreme_scale": 1.0,
+        "day_shock_scale": 1.0,
     }
 
 
@@ -230,6 +237,7 @@ def _load_state() -> dict:
         "rsi_extreme_scale": _rsi_extreme_scale(data.get("rsi_extreme_scale", 1.0)),
         "ma_trend_scale": _ma_trend_scale(data.get("ma_trend_scale", 1.0)),
         "month_extreme_scale": _month_extreme_scale(data.get("month_extreme_scale", 1.0)),
+        "day_shock_scale": _day_shock_scale(data.get("day_shock_scale", 1.0)),
     }
 
 
@@ -259,7 +267,13 @@ def load_review_memory() -> dict:
         "rsi_extreme_scale": state["rsi_extreme_scale"],
         "ma_trend_scale": state["ma_trend_scale"],
         "month_extreme_scale": state["month_extreme_scale"],
+        "day_shock_scale": state["day_shock_scale"],
     }
+
+
+def _day_shock_scale(value) -> float:
+    """日内冲击系数。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _DAY_SHOCK_BOUNDS), 4)
 
 
 def _month_extreme_scale(value) -> float:
@@ -652,6 +666,57 @@ def _month_fraction(value) -> float | None:
     if abs(number) >= 2.0:
         number = number / 100.0
     return number
+
+
+def _day_side(change) -> str | None:
+    """与评分规则同一条线：日涨超 5% 主张回调，日跌超 5% 主张反弹。"""
+    fraction = _month_fraction(change)
+    if fraction is None:
+        return None
+    if fraction >= _DAY_SHOCK:
+        return "down"
+    if fraction <= -_DAY_SHOCK:
+        return "up"
+    return None
+
+
+def _day_shock_stats(pairs) -> dict:
+    """
+    日涨跌超过 5% 的周，近期加权命中率。
+
+    日涨主张下跌，日跌主张上涨。实际涨跌停在 ±1% 里算说错。
+    没到这条线的周不计入。样本少于 4 对时 rate 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        pred = _day_side(getattr(cur, "change_1d_pct", None))
+        if pred is None:
+            continue
+        try:
+            price = float(cur.current_price)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if not price or actual_price != actual_price:
+            continue
+        change = (actual_price - price) / price * 100
+        if change > 1.0:
+            actual = "up"
+        elif change < -1.0:
+            actual = "down"
+        else:
+            actual = "flat"
+        total += weight
+        samples += 1
+        if pred == actual:
+            hit += weight
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "rate": (hit / total) if ready else None,
+    }
 
 
 def _month_side(change) -> str | None:
@@ -1472,6 +1537,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     rsi_stats = _rsi_extreme_stats(pairs)
     ma_stats = _ma_trend_stats(pairs)
     month_stats = _month_extreme_stats(pairs)
+    day_stats = _day_shock_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1494,6 +1560,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "rsi_extreme_scale": state["rsi_extreme_scale"],
         "ma_trend_scale": state["ma_trend_scale"],
         "month_extreme_scale": state["month_extreme_scale"],
+        "day_shock_scale": state["day_shock_scale"],
     }
     changed: list[dict] = []
 
@@ -1814,6 +1881,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── day_shock_scale: 日内冲击说错就缩小这档套保；说对或本期没有冲击则回到 1 ──
+    old_day = new_values["day_shock_scale"]
+    day_samples = day_stats["samples"]
+    day_rate = day_stats["rate"]
+    if day_samples >= _DRIVER_MIN_SAMPLES and day_rate is not None:
+        if day_rate < 0.45:
+            reason = f"日内冲击方向命中率 {day_rate:.0%} < 45%，冲击影响下调"
+            new_day = _step_toward(old_day, False, _DAY_SHOCK_BOUNDS)
+        elif day_rate > 0.65:
+            reason = f"日内冲击方向命中率 {day_rate:.0%} > 65%，冲击影响向基准回归"
+            new_day = _step_toward(old_day, True, _DAY_SHOCK_BOUNDS)
+        else:
+            new_day = old_day
+            reason = ""
+    elif day_samples == 0 and old_day < 1.0:
+        reason = "本期没有日内冲击，冲击影响向基准回归"
+        new_day = _step_toward(old_day, True, _DAY_SHOCK_BOUNDS)
+    else:
+        new_day = old_day
+        reason = ""
+    new_day = _day_shock_scale(new_day)
+    if reason and new_day != old_day:
+        new_values["day_shock_scale"] = new_day
+        changed.append({
+            "param": "day_shock_scale",
+            "old": old_day,
+            "new": new_day,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -1942,6 +2039,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "rsi_extreme_scale": new_values["rsi_extreme_scale"],
         "ma_trend_scale": new_values["ma_trend_scale"],
         "month_extreme_scale": new_values["month_extreme_scale"],
+        "day_shock_scale": new_values["day_shock_scale"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

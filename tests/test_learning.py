@@ -566,6 +566,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
         "ma_trend_scale": 0.1,
         "month_extreme_scale": 0.1,
         "day_shock_scale": 0.1,
+        "ml_neutral_scale": 0.1,
     }), encoding="utf-8")
     assert load_learned()["ml_bias_scale"] == 0.8
     memory = load_review_memory()
@@ -583,6 +584,7 @@ def test_load_review_memory_clamps_and_drops_garbage(learn_env):
     assert memory["ma_trend_scale"] == 0.6
     assert memory["month_extreme_scale"] == 0.6
     assert memory["day_shock_scale"] == 0.6
+    assert memory["ml_neutral_scale"] == 0.6
 
 
 def test_apply_review_memory_changes_next_report():
@@ -747,6 +749,7 @@ def test_track_record_shows_review_memory():
             "ma_trend_scale": 0.9,
             "month_extreme_scale": 0.9,
             "day_shock_scale": 0.9,
+            "ml_neutral_scale": 0.9,
         },
     }
     stats = [{"param_name": "RSI超买", "samples": 4, "hits": 1, "rate": 0.25}]
@@ -775,6 +778,7 @@ def test_track_record_shows_review_memory():
     assert "均线趋势" in html and "排列对概率" in html
     assert "月度极端" in html and "这档套保调整" in html
     assert "日内冲击" in html and "冲击对套保" in html
+    assert "ML 中性" in html and "中性对概率" in html
     assert "压低的驱动" in html and "RSI超买 0.81" in html
     assert "<th>信任</th>" in html and ">0.81<" in html
 
@@ -2185,3 +2189,134 @@ def test_day_shock_scale_shrinks_the_hedge_adjustment():
     plain = compute_hedge_advice(market, scenarios, [], day_shock_scale=0.6)
     plain_full = compute_hedge_advice(market, scenarios, [], day_shock_scale=1.0)
     assert plain.ratio == plain_full.ratio
+
+
+def _seed_ml_neutral(dir_path, *, miss: bool, limit=None, confidence=0.8):
+    """
+    奇数周是置信度不低于 70% 的 ML 中性，主张价格留在 ±1%。
+    miss 时这些周上涨 2%。偶数周置信度 0.5，不构成高置信中性。
+    主导区间奇偶交替，命中率 50%。RSI 50，套保停在 65%，日变动和月变动为 0。
+    """
+    price = 400.0
+    prices = [400.0]
+    plan = []
+    called = 0
+    for i in range(8):
+        is_call = i % 2 == 1 and (limit is None or called < limit)
+        if is_call:
+            called += 1
+            move = "up" if miss else "flat"
+        else:
+            move = "down"
+        if move == "up":
+            price = round(price * 1.02, 2)
+        elif move == "down":
+            price = round(price * 0.98, 2)
+        else:
+            price = round(price * 1.004, 2)
+        prices.append(price)
+        plan.append(is_call)
+    for i, current in enumerate(prices):
+        nxt = prices[i + 1] if i < 8 else None
+        if nxt is None or i % 2 == 1:
+            bmin, bmax = (0.0, 9999.0) if nxt is None else (nxt + 1000.0, nxt + 2000.0)
+        else:
+            bmin, bmax = nxt - 1.0, nxt + 1.0
+        high = plan[i] if i < 8 else False
+        _write_case(
+            dir_path, f"2026-08-{i + 1:02d}", current,
+            ml_signal="NEUTRAL", hedge_ratio=0.65,
+            band_min=bmin, band_max=bmax, rsi=50.0,
+            ml_confidence=(confidence if high else 0.5),
+        )
+
+
+def test_recalibrate_neutral_calls_that_break_shrink_the_nudge(learn_env):
+    """高置信中性却连着上涨：中性系数降到 0.9。方向置信度不动。"""
+    _seed_ml_neutral(learn_env / "history", miss=True)
+    result = recalibrate()
+    assert result["memory"]["ml_neutral_scale"] == pytest.approx(0.9)
+    assert result["current"] == {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0}
+    assert result["ml_accuracy"] == 1.0
+    assert result["band_hit_rate"] == 0.5
+    assert result["memory"]["ml_confidence_scale"] == 1.0
+    assert result["memory"]["day_shock_scale"] == 1.0
+    assert result["memory"]["month_extreme_scale"] == 1.0
+    assert result["memory"]["rsi_extreme_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["hedge_lean"] == 0.0
+    assert result["memory"]["band_center_shift"] == 0.0
+    assert result["memory"]["prob_sharpness"] == 1.0
+    assert result["memory"]["fan_width"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_neutral_scale"]
+    assert "中性影响下调" in result["changed"][0]["reason"]
+
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_neutral_scale": 0.6,
+    }))
+    floored = recalibrate()
+    assert floored["memory"]["ml_neutral_scale"] == 0.6
+    assert all(c["param"] != "ml_neutral_scale" for c in floored["changed"])
+
+
+def test_recalibrate_neutral_calls_that_hold_restore_the_nudge(learn_env):
+    _seed_ml_neutral(learn_env / "history", miss=False)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_neutral_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_neutral_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_neutral_scale"]
+    assert "向基准回归" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_few_neutral_calls_hold_the_scale(learn_env):
+    _seed_ml_neutral(learn_env / "history", miss=True, limit=3)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_neutral_scale": 0.85,
+    }))
+    result = recalibrate()
+    assert result["changed"] == []
+    assert result["memory"]["ml_neutral_scale"] == pytest.approx(0.85)
+
+
+def test_recalibrate_low_confidence_neutral_is_not_a_call(learn_env):
+    """置信度 0.5 的中性不进样本，已缩小的系数向 1 淡。"""
+    _seed_ml_neutral(learn_env / "history", miss=True, confidence=0.5)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_neutral_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_neutral_scale"] == pytest.approx(0.84)
+    assert [c["param"] for c in result["changed"]] == ["ml_neutral_scale"]
+    assert "没有高置信中性" in result["changed"][0]["reason"]
+
+
+def test_recalibrate_no_neutral_call_fades_the_scale(learn_env):
+    _seed_hedges(learn_env / "history", ["down"] * 8, hedge_ratio=0.65)
+    (learn_env / "learned_adjustments.json").write_text(json.dumps({
+        "ml_bias_scale": 1.0, "scenario_band_scale": 1.0, "ml_neutral_scale": 0.8,
+    }))
+    result = recalibrate()
+    assert result["memory"]["ml_neutral_scale"] == pytest.approx(0.84)
+    assert result["current"]["ml_bias_scale"] == 1.0
+    assert result["memory"]["hedge_conviction"] == 1.0
+    assert result["memory"]["ml_confidence_scale"] == 1.0
+    assert [c["param"] for c in result["changed"]] == ["ml_neutral_scale"]
+
+
+def test_ml_neutral_scale_shrinks_the_flat_nudge():
+    from reports.models import MLSnapshot, MarketSnapshot
+
+    market = MarketSnapshot(
+        ticker="KC=F", current=300.0, change_1d_pct=0.0, change_30d_pct=0.0,
+        high_30d=320.0, low_30d=280.0, volume_ratio=1.0,
+        ma20=300.0, ma60=300.0, rsi_14=50.0,
+        close_5d=[300.0] * 5, vol_ratio_5d=[1.0] * 5, close_30d=[],
+    )
+    ml = MLSnapshot(signal="NEUTRAL", confidence=0.8, bias=0.0, model_type="timesfm")
+    _, _, full = compute_levels_and_scenarios(market, ml, ml_neutral_scale=1.0)
+    _, _, shrunk = compute_levels_and_scenarios(market, ml, ml_neutral_scale=0.6)
+    flat = lambda rows: next(s.probability for s in rows if s.direction == "横盘")
+    assert flat(shrunk) < flat(full)

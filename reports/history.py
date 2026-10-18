@@ -149,6 +149,12 @@ def _current_learned_scales() -> dict:
             day_scale = 1.0
         if day_scale < 0.999:
             scales["day_shock_scale"] = day_scale
+        try:
+            neutral_scale = float(memory.get("ml_neutral_scale", 1.0))
+        except (TypeError, ValueError):
+            neutral_scale = 1.0
+        if neutral_scale < 0.999:
+            scales["ml_neutral_scale"] = neutral_scale
         return scales
     except Exception:
         return {}

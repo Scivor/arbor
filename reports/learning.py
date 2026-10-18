@@ -38,6 +38,9 @@ reports/learning.py
 - ml_confidence_scale: ML 置信度进入情景概率的幅度（0.6 ~ 1.0）。
                         只统计置信度不低于 70% 的看涨或看跌周。
                         这些周连续说错时，下一期置信度按系数缩小
+- ml_neutral_scale:   ML 中性把概率推向横盘的幅度（0.6 ~ 1.0）。
+                        只统计置信度不低于 70% 的中性周。
+                        价格随后突破 ±1% 时，下一期这档调整按系数缩小
 - rsi_extreme_scale:  RSI 极值推动情景概率的幅度（0.6 ~ 1.0）。
                         只统计 RSI 低于 35 或高于 65 的周。
                         超卖却没涨、超买却没跌时，下一期这档调整按系数缩小
@@ -107,6 +110,8 @@ _ML_TARGET_WINSOR = 0.08
 # 高置信方向说错时缩小下一期置信度。低于 70% 的周本来就没把概率推得很远。
 _ML_CONF_BOUNDS = (0.6, 1.0)
 _ML_CONF_FLOOR = 0.70
+# 高置信中性。主张价格留在 ±1% 里。看涨看跌不走这条。
+_ML_NEUTRAL_BOUNDS = (0.6, 1.0)
 # RSI 极值。低于 35 主张反弹，高于 65 主张回调。中间的周不推概率。
 _RSI_EXTREME_BOUNDS = (0.6, 1.0)
 _RSI_OVERSOLD = 35.0
@@ -172,6 +177,7 @@ def _empty_memory() -> dict:
         "ma_trend_scale": 1.0,
         "month_extreme_scale": 1.0,
         "day_shock_scale": 1.0,
+        "ml_neutral_scale": 1.0,
     }
 
 
@@ -238,6 +244,7 @@ def _load_state() -> dict:
         "ma_trend_scale": _ma_trend_scale(data.get("ma_trend_scale", 1.0)),
         "month_extreme_scale": _month_extreme_scale(data.get("month_extreme_scale", 1.0)),
         "day_shock_scale": _day_shock_scale(data.get("day_shock_scale", 1.0)),
+        "ml_neutral_scale": _ml_neutral_scale(data.get("ml_neutral_scale", 1.0)),
     }
 
 
@@ -268,7 +275,13 @@ def load_review_memory() -> dict:
         "ma_trend_scale": state["ma_trend_scale"],
         "month_extreme_scale": state["month_extreme_scale"],
         "day_shock_scale": state["day_shock_scale"],
+        "ml_neutral_scale": state["ml_neutral_scale"],
     }
+
+
+def _ml_neutral_scale(value) -> float:
+    """ML 中性系数。坏值当 1，越界钳到 0.6–1.0。"""
+    return round(_clamp(_finite(value, 1.0), _ML_NEUTRAL_BOUNDS), 4)
 
 
 def _day_shock_scale(value) -> float:
@@ -544,6 +557,44 @@ def _ml_confidence_stats(pairs) -> dict:
         total += weight
         samples += 1
         if pred == actual:
+            hit += weight
+    ready = samples >= _DRIVER_MIN_SAMPLES and total
+    return {
+        "samples": samples,
+        "rate": (hit / total) if ready else None,
+    }
+
+
+def _is_ml_neutral(signal) -> bool:
+    """只认明确的中性标签。看涨、看跌和空信号都不算。"""
+    return (signal or "").strip().upper() in {"NEUTRAL", "FLAT", "中性", "横盘"}
+
+
+def _ml_neutral_stats(pairs) -> dict:
+    """
+    置信度不低于 70% 的中性周，近期加权命中率。
+
+    中性主张下一周涨跌停在 ±1% 里。走出来算说错。
+    看涨、看跌和低置信周不计入。样本少于 4 对时 rate 为 None。
+    """
+    weights = _pair_weights(len(pairs))
+    total = hit = 0.0
+    samples = 0
+    for (cur, nxt), weight in zip(pairs, weights):
+        if not _is_ml_neutral(getattr(cur, "ml_signal", "")):
+            continue
+        try:
+            conf = float(getattr(cur, "ml_confidence", 0) or 0)
+            price = float(cur.current_price)
+            actual_price = float(nxt.current_price)
+        except (TypeError, ValueError):
+            continue
+        if conf < _ML_CONF_FLOOR or not price or price != price or actual_price != actual_price:
+            continue
+        change = (actual_price - price) / price * 100
+        total += weight
+        samples += 1
+        if abs(change) <= 1.0:
             hit += weight
     ready = samples >= _DRIVER_MIN_SAMPLES and total
     return {
@@ -1538,6 +1589,7 @@ def recalibrate(min_samples: int = 8) -> dict:
     ma_stats = _ma_trend_stats(pairs)
     month_stats = _month_extreme_stats(pairs)
     day_stats = _day_shock_stats(pairs)
+    neutral_stats = _ml_neutral_stats(pairs)
     logger.info(
         "recalibrate: n=%d ml_accuracy=%.2f band_hit_rate=%.2f hedge_accuracy=%s",
         n, ml_accuracy, band_hit_rate,
@@ -1561,6 +1613,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "ma_trend_scale": state["ma_trend_scale"],
         "month_extreme_scale": state["month_extreme_scale"],
         "day_shock_scale": state["day_shock_scale"],
+        "ml_neutral_scale": state["ml_neutral_scale"],
     }
     changed: list[dict] = []
 
@@ -1911,6 +1964,36 @@ def recalibrate(min_samples: int = 8) -> dict:
             "reason": reason,
         })
 
+    # ── ml_neutral_scale: 高置信中性被突破就缩小这档概率；说对或本期没有则回到 1 ──
+    old_neutral = new_values["ml_neutral_scale"]
+    neutral_samples = neutral_stats["samples"]
+    neutral_rate = neutral_stats["rate"]
+    if neutral_samples >= _DRIVER_MIN_SAMPLES and neutral_rate is not None:
+        if neutral_rate < 0.45:
+            reason = f"ML 中性方向命中率 {neutral_rate:.0%} < 45%，中性影响下调"
+            new_neutral = _step_toward(old_neutral, False, _ML_NEUTRAL_BOUNDS)
+        elif neutral_rate > 0.65:
+            reason = f"ML 中性方向命中率 {neutral_rate:.0%} > 65%，中性影响向基准回归"
+            new_neutral = _step_toward(old_neutral, True, _ML_NEUTRAL_BOUNDS)
+        else:
+            new_neutral = old_neutral
+            reason = ""
+    elif neutral_samples == 0 and old_neutral < 1.0:
+        reason = "本期没有高置信中性，中性影响向基准回归"
+        new_neutral = _step_toward(old_neutral, True, _ML_NEUTRAL_BOUNDS)
+    else:
+        new_neutral = old_neutral
+        reason = ""
+    new_neutral = _ml_neutral_scale(new_neutral)
+    if reason and new_neutral != old_neutral:
+        new_values["ml_neutral_scale"] = new_neutral
+        changed.append({
+            "param": "ml_neutral_scale",
+            "old": old_neutral,
+            "new": new_neutral,
+            "reason": reason,
+        })
+
     # ── flat_trust: 横盘说错 → 概率分给涨跌；说对或本期没主张 → 向 1.0 回归 ──
     old_flat = new_values["flat_trust"]
     flat_samples = flat_stats["samples"]
@@ -2040,6 +2123,7 @@ def recalibrate(min_samples: int = 8) -> dict:
         "ma_trend_scale": new_values["ma_trend_scale"],
         "month_extreme_scale": new_values["month_extreme_scale"],
         "day_shock_scale": new_values["day_shock_scale"],
+        "ml_neutral_scale": new_values["ml_neutral_scale"],
         "hedge_accuracy": hedge_accuracy,
     }
     return {"changed": changed, "current": scales, "n_samples": n,

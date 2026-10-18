@@ -72,6 +72,7 @@ def compute_levels_and_scenarios(
     band_scale: float = 1.0,
     rsi_scale: float = 1.0,
     ma_scale: float = 1.0,
+    ml_neutral_scale: float = 1.0,
 ) -> tuple[list[Level], list[Level], list[Scenario]]:
     """
     Derive support/resistance levels and three price scenarios from market data.
@@ -79,6 +80,7 @@ def compute_levels_and_scenarios(
     band_scale: 情景区间宽度缩放（自校准系数，中心不变，默认 1.0 不缩放）。
     rsi_scale: RSI 极值对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
     ma_scale: 均线排列对情景概率的推动（0.6–1.0，默认 1.0 不缩放）。
+    ml_neutral_scale: ML 中性把概率推向横盘的幅度（0.6–1.0，默认 1.0 不缩放）。
     """
     if market is None:
         return [], [], []
@@ -141,9 +143,17 @@ def compute_levels_and_scenarios(
             p_neutral -= 0.10 * conf
             p_bear -= 0.05 * conf
         else:
-            p_neutral += 0.10 * conf
-            p_bull -= 0.05 * conf
-            p_bear -= 0.05 * conf
+            # 高置信中性连续被突破时，复盘把这档概率按系数缩小。
+            try:
+                ml_neutral_scale = float(ml_neutral_scale)
+            except (TypeError, ValueError):
+                ml_neutral_scale = 1.0
+            if ml_neutral_scale != ml_neutral_scale:
+                ml_neutral_scale = 1.0
+            ml_neutral_scale = max(0.6, min(1.0, ml_neutral_scale))
+            p_neutral += 0.10 * conf * ml_neutral_scale
+            p_bull -= 0.05 * conf * ml_neutral_scale
+            p_bear -= 0.05 * conf * ml_neutral_scale
 
     # RSI adjustment. 极值连续说错时，复盘把这档概率按系数缩小。
     try:
@@ -676,6 +686,7 @@ def run(config: PipelineConfig) -> PredictionReport:
             "ma_trend_scale": 1.0,
             "month_extreme_scale": 1.0,
             "day_shock_scale": 1.0,
+            "ml_neutral_scale": 1.0,
         }
         month_scale = 1.0
         day_scale = 1.0
@@ -704,6 +715,7 @@ def run(config: PipelineConfig) -> PredictionReport:
         market, ml, band_scale=learned["scenario_band_scale"],
         rsi_scale=memory.get("rsi_extreme_scale", 1.0),
         ma_scale=memory.get("ma_trend_scale", 1.0),
+        ml_neutral_scale=memory.get("ml_neutral_scale", 1.0),
     )
     # 扇面加宽和中心平移都只改价格，不改概率，所以这里不重算套保。
     if apply_fan_width is not None:

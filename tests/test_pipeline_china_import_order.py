@@ -556,3 +556,39 @@ def test_low_day_shock_scale_shrinks_published_hedge(synthetic_pipeline, monkeyp
     monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
     adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
     assert adjusted.hedge_advice.ratio < baseline.hedge_advice.ratio
+
+
+def test_low_ml_neutral_scale_shrinks_published_flat_probability(synthetic_pipeline, monkeypatch):
+    """高置信中性时，系数 0.6 让公布的横盘概率下降。"""
+    from reports.models import MLSnapshot
+
+    monkeypatch.setattr(
+        "reports.pipeline.fetch_ml_snapshot",
+        lambda current_price=None: MLSnapshot(
+            signal="NEUTRAL", confidence=0.8, bias=0.0, model_type="timesfm",
+        ),
+    )
+    memory = {
+        "hedge_conviction": 1.0,
+        "driver_trust": {},
+        "direction_trust": {},
+        "band_center_shift": 0.0,
+        "flat_trust": 1.0,
+        "prob_sharpness": 1.0,
+        "hedge_lean": 0.0,
+        "fan_width": 1.0,
+        "ml_target_shift": 0.0,
+        "ml_confidence_scale": 1.0,
+        "rsi_extreme_scale": 1.0,
+        "ma_trend_scale": 1.0,
+        "month_extreme_scale": 1.0,
+        "day_shock_scale": 1.0,
+        "ml_neutral_scale": 1.0,
+    }
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: dict(memory))
+    baseline = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    scaled = dict(memory)
+    scaled["ml_neutral_scale"] = 0.6
+    monkeypatch.setattr("reports.learning.load_review_memory", lambda: scaled)
+    adjusted = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
+    assert _scenario_p(adjusted, "横盘") < _scenario_p(baseline, "横盘")

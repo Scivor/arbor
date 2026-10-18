@@ -18,7 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -33,14 +33,23 @@ COMMISSION_PER_CONTRACT = 15.0  # USD/contract (one-way)
 
 
 @dataclass
+class PaperLot:
+    """Contracts opened at one price. Newer lots sit at the end."""
+    entry_time: datetime
+    entry_price: float
+    contracts: int
+
+
+@dataclass
 class PaperPosition:
     """An open paper futures position."""
     entry_time: datetime
-    entry_price: float          # cents/lb
+    entry_price: float          # cents/lb, size-weighted across lots
     size_tons: float
     hedge_ratio: float
     contracts: int
     narrative: str = ''
+    lots: list[PaperLot] = field(default_factory=list)
 
 
 @dataclass
@@ -126,6 +135,7 @@ class PaperTradingEngine:
             hedge_ratio=hedge_ratio,
             contracts=contracts,
             narrative=narrative or f'Paper open: {contracts} contracts',
+            lots=[PaperLot(now, price, contracts)],
         )
         self._position = pos
         self._current_price = price
@@ -175,39 +185,18 @@ class PaperTradingEngine:
             return 0.0, 0.0
 
         reason = coerce_exit_reason(reason)
-
         now = datetime.now(timezone.utc)
-        holding_days = max(1, (now - pos.entry_time).days)
-
-        # PnL in USD:
-        # (exit_price - entry_price) * contracts * 2204.62 (lbs/ton) / 100 (cents/lb → $/lb)
-        pnl = (exit_price - pos.entry_price) * pos.contracts * 2204.62 / 100.0
-
-        commission = pos.contracts * COMMISSION_PER_CONTRACT
-        net_pnl = pnl - commission
-
-        self._equity += net_pnl
-
-        self._record_trade(
-            entry_time=pos.entry_time,
-            exit_time=now,
-            entry_price=pos.entry_price,
-            exit_price=exit_price,
-            size_tons=pos.size_tons,
-            hedge_ratio=pos.hedge_ratio,
-            action=HedgeAction.CLOSE_HEDGE,
-            pnl=net_pnl,
-            pnl_pct=net_pnl / (pos.entry_price * pos.contracts * 2204.62 / 100.0) if pos.entry_price else 0,
-            exit_reason=reason,
-            holding_days=holding_days,
-            commission=commission,
-            narrative=narrative or f'Paper close: {reason}',
-            is_paper=True,
-        )
-
-        closed_pnl = net_pnl
+        narrative = narrative or f'Paper close: {reason}'
+        total_net = 0.0
+        total_commission = 0.0
+        for lot in list(pos.lots):
+            net, commission = self._realize_close(
+                lot, lot.contracts, exit_price, now, pos.hedge_ratio, reason, narrative,
+            )
+            total_net += net
+            total_commission += commission
         self._position = None
-        return closed_pnl, commission
+        return total_net, total_commission
 
     def adjust_position(
         self,
@@ -283,38 +272,26 @@ class PaperTradingEngine:
         narrative: str,
         hedge_ratio: float,
     ) -> None:
-        """Close only the contracts being dropped. The rest keep their entry."""
+        """Lift the newest lots first. Older lots keep their own entry."""
         pos = self._position
-        closed_contracts = pos.contracts - target_contracts
+        left = pos.contracts - target_contracts
+        opened_ratio = pos.hedge_ratio
         now = datetime.now(timezone.utc)
-        holding_days = max(1, (now - pos.entry_time).days)
-        gross = (current_price - pos.entry_price) * closed_contracts * 2204.62 / 100.0
-        commission = closed_contracts * COMMISSION_PER_CONTRACT
-        net_pnl = gross - commission
-        self._equity += net_pnl
-        notional = pos.entry_price * closed_contracts * 2204.62 / 100.0
-        self._record_trade(
-            entry_time=pos.entry_time,
-            exit_time=now,
-            entry_price=pos.entry_price,
-            exit_price=current_price,
-            size_tons=closed_contracts * self.contract_size,
-            hedge_ratio=pos.hedge_ratio,
-            action=HedgeAction.CLOSE_HEDGE,
-            pnl=net_pnl,
-            pnl_pct=net_pnl / notional if notional else 0.0,
-            exit_reason=ExitReason.RATIO_CHANGED,
-            holding_days=holding_days,
-            commission=commission,
-            narrative=narrative or (
-                f'Paper partial close: {pos.contracts} → {target_contracts} contracts'
-            ),
-            is_paper=True,
+        note = narrative or (
+            f'Paper partial close: {pos.contracts} → {target_contracts} contracts'
         )
-        pos.contracts = target_contracts
-        pos.size_tons = target_contracts * self.contract_size
-        pos.hedge_ratio = hedge_ratio
-        self._current_price = current_price
+        while left > 0:
+            lot = pos.lots[-1]
+            take = min(lot.contracts, left)
+            self._realize_close(
+                lot, take, current_price, now, opened_ratio,
+                ExitReason.RATIO_CHANGED, note,
+            )
+            lot.contracts -= take
+            left -= take
+            if lot.contracts == 0:
+                pos.lots.pop()
+        self._sync_position_totals(pos, hedge_ratio, current_price)
 
     def _add_contracts(
         self,
@@ -323,12 +300,9 @@ class PaperTradingEngine:
         narrative: str,
         hedge_ratio: float,
     ) -> None:
-        """Buy the extra contracts. Entry becomes the size-weighted average."""
+        """Buy the extra contracts as their own lot. The shown entry is the average."""
         pos = self._position
         added = target_contracts - pos.contracts
-        blended = (
-            pos.contracts * pos.entry_price + added * current_price
-        ) / target_contracts
         now = datetime.now(timezone.utc)
         commission = added * COMMISSION_PER_CONTRACT
         self._equity -= commission
@@ -350,11 +324,57 @@ class PaperTradingEngine:
             ),
             is_paper=True,
         )
-        pos.contracts = target_contracts
-        pos.size_tons = target_contracts * self.contract_size
-        pos.entry_price = blended
+        pos.lots.append(PaperLot(now, current_price, added))
+        self._sync_position_totals(pos, hedge_ratio, current_price)
+
+    def _sync_position_totals(
+        self,
+        pos: PaperPosition,
+        hedge_ratio: float,
+        current_price: float,
+    ) -> None:
+        contracts = sum(lot.contracts for lot in pos.lots)
+        pos.contracts = contracts
+        pos.size_tons = contracts * self.contract_size
+        pos.entry_price = (
+            sum(lot.contracts * lot.entry_price for lot in pos.lots) / contracts
+        )
+        pos.entry_time = pos.lots[0].entry_time
         pos.hedge_ratio = hedge_ratio
         self._current_price = current_price
+
+    def _realize_close(
+        self,
+        lot: PaperLot,
+        contracts: int,
+        exit_price: float,
+        now: datetime,
+        hedge_ratio: float,
+        reason: str,
+        narrative: str,
+    ) -> tuple[float, float]:
+        gross = (exit_price - lot.entry_price) * contracts * 2204.62 / 100.0
+        commission = contracts * COMMISSION_PER_CONTRACT
+        net = gross - commission
+        self._equity += net
+        notional = lot.entry_price * contracts * 2204.62 / 100.0
+        self._record_trade(
+            entry_time=lot.entry_time,
+            exit_time=now,
+            entry_price=lot.entry_price,
+            exit_price=exit_price,
+            size_tons=contracts * self.contract_size,
+            hedge_ratio=hedge_ratio,
+            action=HedgeAction.CLOSE_HEDGE,
+            pnl=net,
+            pnl_pct=net / notional if notional else 0.0,
+            exit_reason=reason,
+            holding_days=max(1, (now - lot.entry_time).days),
+            commission=commission,
+            narrative=narrative,
+            is_paper=True,
+        )
+        return net, commission
 
     # ─── Mark-to-market ──────────────────────────────────────────────────────
 

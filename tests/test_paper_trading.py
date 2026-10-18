@@ -118,6 +118,43 @@ def test_scale_up_adds_contracts_and_blends_the_entry(tmp_path):
     engine.close()
 
 
+def test_reduction_after_add_lifts_the_newest_lot(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    opened_at = engine._position.entry_time
+    engine.sync_to_ratio(0.80, 210.0, 375.0)
+
+    message = engine.sync_to_ratio(0.40, 220.0, 375.0)
+
+    assert message.startswith("ADJUSTED to 4 contracts @ 200.00")
+    assert engine._position.contracts == 4
+    assert engine._position.entry_price == 200.0
+    assert engine._position.entry_time == opened_at
+    assert engine._position.hedge_ratio == 0.40
+    closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
+    assert len(closes) == 1
+    assert closes[0].entry_price == 210.0
+    assert closes[0].size == 150.0
+    assert closes[0].commission == 60.0
+    assert closes[0].pnl == pytest.approx(821.848)
+    assert engine.mark_to_market(220.0) == pytest.approx(1763.696)
+    engine.close()
+
+
+def test_full_close_books_each_lot(tmp_path):
+    engine = _engine(tmp_path)
+    engine.sync_to_ratio(0.40, 200.0, 375.0)
+    engine.sync_to_ratio(0.80, 210.0, 375.0)
+    pnl, commission = engine.close_position(220.0, "manual_close")
+
+    assert engine._position is None
+    assert commission == 120.0
+    assert pnl == pytest.approx(2525.544)
+    closes = [t for t in engine._trades if t.action == HedgeAction.CLOSE_HEDGE]
+    assert [(c.entry_price, c.size) for c in closes] == [(200.0, 150.0), (210.0, 150.0)]
+    engine.close()
+
+
 def test_small_ratio_step_holds_size_and_stores_the_new_ratio(tmp_path):
     engine = _engine(tmp_path)
     engine.sync_to_ratio(0.80, 200.0, 375.0)

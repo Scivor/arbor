@@ -324,9 +324,9 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "增值税 13%" in html
     assert "期货占 78.2%" in html
     assert "到库多 6.29 元/斤" in html
-    assert "期货 +1.10，汇率 −0.20" in html
-    assert "期货 +0.90，汇率 −0.05，一起 +0.01" in html
-    assert "期货 +1.10，汇率 −0.20，一起" not in html
+    assert "上一交易日 +1.10，汇率 −0.20" in html
+    assert "上一交易日 +0.90，汇率 −0.05，一起 +0.01" in html
+    assert "期货 +1.10，汇率 −0.20" not in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -353,9 +353,24 @@ def test_empty_page_english(client, monkeypatch):
     assert "VAT 13%" in html
     assert "Futures 78.2%" in html
     assert "landing adds 6.29 CNY/jin" in html
-    assert "Price +1.10, rate −0.20" in html
-    assert "Price +0.90, rate −0.05, together +0.01" in html
+    assert "Last session +1.10, rate −0.20" in html
+    assert "Last session +0.90, rate −0.05, together +0.01" in html
+    assert "Price +1.10, rate −0.20" not in html
     assert "7.1234" in html
+
+
+def test_live_session_keeps_calling_the_move_the_futures(client, monkeypatch):
+    quotes = _sample_quotes()
+    quotes["coffee"]["session"] = "live"
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: quotes)
+    html = client.get("/").text
+    assert "期货 +1.10，汇率 −0.20" in html
+    assert "上一交易日 +1.10" not in html
+    assert "期货是上一交易日的价" not in html
+    en = client.get("/?lang=en").text
+    assert "Price +1.10, rate −0.20" in en
+    assert "Last session +1.10" not in en
 
 
 def test_empty_page_survives_quote_failure(client, monkeypatch):

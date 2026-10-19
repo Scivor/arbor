@@ -179,6 +179,24 @@ def _cny_amounts(cents_per_lb: float, yuan_per_dollar: float) -> tuple[float, fl
     return cny_per_ton / _JIN_PER_MT, cny_per_ton
 
 
+def _split_move(value_at, cents: float, rate: float, prev_cents, prev_rate) -> tuple[Optional[str], Optional[str]]:
+    """昨日为底，分别只让期货或只让汇率走到今天。单位是元/斤。"""
+    try:
+        prev_cents = float(prev_cents)
+        prev_rate = float(prev_rate)
+    except (TypeError, ValueError):
+        return None, None
+    if prev_cents <= 0 or prev_rate <= 0:
+        return None, None
+    try:
+        base = value_at(prev_cents, prev_rate)
+        price_only = value_at(cents, prev_rate) - base
+        rate_only = value_at(prev_cents, rate) - base
+    except Exception:
+        return None, None
+    return _pts(base + price_only, base, 2), _pts(base + rate_only, base, 2)
+
+
 def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     if not coffee or not fx:
         return None
@@ -192,12 +210,17 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         prev_jin, _prev_ton = _cny_amounts(coffee["prev"], fx["prev"])
         if prev_jin:
             change = (per_jin - prev_jin) / prev_jin
+    price_leg, fx_leg = _split_move(
+        lambda c, r: _cny_amounts(c, r)[0], cents, rate, coffee.get("prev"), fx.get("prev"),
+    )
     return {
         "per_jin": f"{per_jin:.2f}",
         "per_ton": f"{per_ton:,.0f}",
         "change_text": _pct(change),
         "change_pts": _pts(per_jin, prev_jin, 2) if prev_jin is not None else None,
         "tone": _tone(change),
+        "price_leg": price_leg,
+        "fx_leg": fx_leg,
     }
 
 
@@ -238,6 +261,10 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         except Exception:
             prev_jin = None
             change = None
+    price_leg, fx_leg = _split_move(
+        lambda c, r: _landed_cost(c, r).total_cost_cny_jin,
+        cents, rate, coffee.get("prev"), fx.get("prev"),
+    )
     return {
         "per_jin": f"{now.total_cost_cny_jin:.2f}",
         "per_ton": f"{now.total_cost_cny_mt:,.0f}",
@@ -249,6 +276,8 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         "vat": _rate_text(now.vat_pct),
         "share": _rate_text(now.cyp_fraction_pct),
         "addon_jin": f"{now.total_cost_cny_jin - now.cyp_price_cny_jin:.2f}",
+        "price_leg": price_leg,
+        "fx_leg": fx_leg,
     }
 
 

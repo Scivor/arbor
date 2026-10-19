@@ -138,6 +138,38 @@ def test_yuan_converts_cents_with_the_landed_cost_ton():
     assert yuan["per_ton"] == f"{per_ton:,.0f}"
     assert yuan["tone"] == "up"
     assert yuan["change_pts"] == f"+{per_jin - prev_jin:.2f}"
+    assert yuan["price_leg"].startswith("+")
+    assert yuan["fx_leg"].startswith("+")
+
+
+def test_day_move_splits_a_falling_futures_from_a_rising_rate():
+    from web.quiet_market import _cny_amounts, _pts
+
+    coffee = _parse_chart(_chart("KC=F", 200.0, 210.0))
+    fx = _parse_chart(_chart("USDCNY=X", 7.2, 7.0))
+    view = quiet_quotes(fetch=lambda: (coffee, fx))
+    base = _cny_amounts(210.0, 7.0)[0]
+    price_only = _cny_amounts(200.0, 7.0)[0] - base
+    rate_only = _cny_amounts(210.0, 7.2)[0] - base
+    cross = _cny_amounts(200.0, 7.2)[0] - base - price_only - rate_only
+    yuan = view["yuan"]
+    assert yuan["price_leg"] == _pts(base + price_only, base, 2)
+    assert yuan["fx_leg"] == _pts(base + rate_only, base, 2)
+    assert yuan["price_leg"].startswith("−")
+    assert yuan["fx_leg"].startswith("+")
+    assert abs(price_only + rate_only + cross - (_cny_amounts(200.0, 7.2)[0] - base)) < 1e-9
+    assert view["landed"]["price_leg"].startswith("−")
+    assert view["landed"]["fx_leg"].startswith("+")
+
+
+def test_split_omitted_without_yesterday():
+    coffee = _parse_chart(_chart("KC=F", 200.0, 190.0))
+    coffee["prev"] = None
+    fx = _parse_chart(_chart("USDCNY=X", 7.2, 7.0))
+    yuan = quiet_quotes(fetch=lambda: (coffee, fx))["yuan"]
+    assert yuan["price_leg"] is None
+    assert yuan["fx_leg"] is None
+    assert yuan["change_pts"] is None
 
 
 def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
@@ -203,6 +235,8 @@ def _sample_quotes():
             "change_text": "+3.40%",
             "change_pts": "+0.74",
             "tone": "up",
+            "price_leg": "+1.10",
+            "fx_leg": "−0.20",
         },
         "landed": {
             "per_jin": "28.40",
@@ -215,6 +249,8 @@ def _sample_quotes():
             "vat": "13%",
             "share": "78.2%",
             "addon_jin": "6.29",
+            "price_leg": "+0.90",
+            "fx_leg": "−0.05",
         },
     }
 
@@ -244,6 +280,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "增值税 13%" in html
     assert "期货占 78.2%" in html
     assert "到库多 6.29 元/斤" in html
+    assert "期货 +1.10，汇率 −0.20" in html
+    assert "期货 +0.90，汇率 −0.05" in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -268,6 +306,8 @@ def test_empty_page_english(client, monkeypatch):
     assert "VAT 13%" in html
     assert "Futures 78.2%" in html
     assert "landing adds 6.29 CNY/jin" in html
+    assert "Price +1.10, rate −0.20" in html
+    assert "Price +0.90, rate −0.05" in html
     assert "7.1234" in html
 
 

@@ -63,8 +63,11 @@ def _parse_chart(payload: dict) -> Optional[dict]:
         prev = None
         change = None
 
-    highs = [h for h in (quote_bar.get("high") or []) if h is not None]
-    lows = [x for x in (quote_bar.get("low") or []) if x is not None]
+    high_raw = quote_bar.get("high") or []
+    low_raw = quote_bar.get("low") or []
+    highs = [h for h in high_raw if h is not None]
+    lows = [x for x in low_raw if x is not None]
+    session_low, session_high = _session_band(high_raw, low_raw)
     volumes = [v for v in (quote_bar.get("volume") or []) if v is not None]
     as_of = None
     ts = meta.get("regularMarketTime")
@@ -82,6 +85,8 @@ def _parse_chart(payload: dict) -> Optional[dict]:
         "change_pct": change,
         "high": max(float(h) for h in highs) if highs else None,
         "low": min(float(x) for x in lows) if lows else None,
+        "session_high": session_high,
+        "session_low": session_low,
         "volume": float(volumes[-1]) if volumes else None,
         "as_of": as_of,
         "closes": [float(c) for c in closes],
@@ -163,6 +168,23 @@ def _sparkline(series: list[float], *, width: float = 168, height: float = 36, p
     return " ".join(coords)
 
 
+def _session_band(highs, lows) -> tuple[Optional[float], Optional[float]]:
+    """最后一根同时有高有低的日线，就是这一笔报价的区间。"""
+    highs = highs or []
+    lows = lows or []
+    for high, low in zip(reversed(highs), reversed(lows)):
+        if high is None or low is None:
+            continue
+        try:
+            hi, lo = float(high), float(low)
+        except (TypeError, ValueError):
+            continue
+        if hi < lo:
+            continue
+        return lo, hi
+    return None, None
+
+
 def _volume(value: Optional[float]) -> Optional[str]:
     if value is None or value <= 0:
         return None
@@ -182,6 +204,8 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int, clock: datetime) -
         "tone": _tone(raw.get("change_pct")),
         "low": f"{raw['low']:.{decimals}f}" if raw.get("low") is not None else None,
         "high": f"{raw['high']:.{decimals}f}" if raw.get("high") is not None else None,
+        "session_low": f"{raw['session_low']:.{decimals}f}" if raw.get("session_low") is not None else None,
+        "session_high": f"{raw['session_high']:.{decimals}f}" if raw.get("session_high") is not None else None,
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
         "session": _trading_session(raw.get("as_of"), clock),

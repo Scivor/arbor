@@ -18,6 +18,9 @@
       {% if coffee.change_pts or coffee.change_text %}
       <span class="quiet-chg {{ coffee.tone }}">{% if coffee.change_pts %}{{ coffee.change_pts }}{% endif %}{% if coffee.change_text %} {{ coffee.change_text }}{% endif %}</span>
       {% endif %}
+      {% if coffee.session_low and coffee.session_high %}
+      <span class="quiet-meta">{% if coffee.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif coffee.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ coffee.session_low }} – {{ coffee.session_high }}</span>
+      {% endif %}
       {% if coffee.low and coffee.high %}
       <span class="quiet-meta">{% if lang == 'en' %}30-day {{ coffee.low }} – {{ coffee.high }}{% else %}近30日 {{ coffee.low }} – {{ coffee.high }}{% endif %}</span>
       {% endif %}
@@ -39,6 +42,9 @@
       {% endif %}
       {% if fx.change_pts or fx.change_text %}
       <span class="quiet-chg {{ fx.tone }}">{% if fx.change_pts %}{{ fx.change_pts }}{% endif %}{% if fx.change_text %} {{ fx.change_text }}{% endif %}</span>
+      {% endif %}
+      {% if fx.session_low and fx.session_high %}
+      <span class="quiet-meta">{% if fx.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif fx.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ fx.session_low }} – {{ fx.session_high }}</span>
       {% endif %}
       {% if fx.low and fx.high %}
       <span class="quiet-meta">{% if lang == 'en' %}30-day {{ fx.low }} – {{ fx.high }}{% else %}近30日 {{ fx.low }} – {{ fx.high }}{% endif %}</span>

@@ -192,6 +192,25 @@ def test_split_omitted_without_yesterday():
     assert yuan["change_pts"] is None
 
 
+def test_a_print_older_than_eighteen_hours_is_the_last_session():
+    from datetime import datetime, timedelta, timezone
+    from web.quiet_market import _trading_session
+
+    clock = datetime(2026, 10, 19, 2, 30, tzinfo=timezone.utc)
+    friday = datetime(2026, 10, 16, 17, 29, tzinfo=timezone.utc)
+    assert _trading_session(friday, clock) == "last"
+    assert _trading_session(clock - timedelta(hours=18), clock) == "live"
+    assert _trading_session(clock - timedelta(hours=18, seconds=1), clock) == "last"
+    assert _trading_session(None, clock) == ""
+
+    coffee = _parse_chart(_chart("KC=F", 305.55, 294.80, name="Coffee Dec 26", ts=friday.timestamp()))
+    fx = _parse_chart(_chart("USDCNY=X", 6.6818, 6.69, ts=clock.timestamp()))
+    view = quiet_quotes(fetch=lambda: (coffee, fx), clock=clock)
+    assert view["coffee"]["session"] == "last"
+    assert view["coffee"]["as_of"] == "10-16 17:29 UTC"
+    assert view["fx"]["session"] == "live"
+
+
 def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
     from arbor.domain.cost.landed_cost import LandedCostCalculator
 
@@ -233,7 +252,8 @@ def _sample_quotes():
             "low": "360.10",
             "high": "389.40",
             "volume": "12,430",
-            "as_of": "10-17 18:30 UTC",
+            "as_of": "10-16 17:29 UTC",
+            "session": "last",
             "spark": "3.0,30.0 165.0,6.0",
         },
         "fx": {
@@ -246,7 +266,8 @@ def _sample_quotes():
             "low": None,
             "high": None,
             "volume": None,
-            "as_of": "10-17 22:00 UTC",
+            "as_of": "10-19 02:30 UTC",
+            "session": "live",
             "spark": "3.0,6.0 165.0,30.0",
         },
         "yuan": {
@@ -294,6 +315,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "元/斤" in html
     assert "44,975" in html
     assert "不含运费和关税" in html
+    assert "上一交易日" in html
+    assert "期货是上一交易日的价，汇率是刚才的。" in html
     assert "到库成本" in html
     assert "28.40" in html
     assert "未套保" in html
@@ -322,6 +345,8 @@ def test_empty_page_english(client, monkeypatch):
     assert "Futures in yuan" in html
     assert "CNY/jin" in html
     assert "before freight and duty" in html
+    assert "last session" in html
+    assert "Futures are the last session. The rate is the latest print." in html
     assert "Landed cost" in html
     assert "Unhedged" in html
     assert "duty 8%" in html

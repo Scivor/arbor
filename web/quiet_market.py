@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 from urllib.parse import quote
 
@@ -114,10 +114,25 @@ def _tone(frac: Optional[float]) -> str:
     return "up" if frac > 0 else "down"
 
 
+_LAST_SESSION = timedelta(hours=18)
+
+
 def _as_of(moment: Optional[datetime]) -> Optional[str]:
     if moment is None:
         return None
     return moment.astimezone(timezone.utc).strftime("%m-%d %H:%M UTC")
+
+
+def _trading_session(moment: Optional[datetime], clock: datetime) -> str:
+    """超过 18 小时的报价视为上一交易日。没有时间戳时不判断。"""
+    if moment is None:
+        return ""
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    age = clock - moment.astimezone(timezone.utc)
+    if age > _LAST_SESSION:
+        return "last"
+    return "live"
 
 
 def _series(raw: dict) -> list[float]:
@@ -154,7 +169,7 @@ def _volume(value: Optional[float]) -> Optional[str]:
     return f"{int(value):,}"
 
 
-def _view(raw: Optional[dict], *, symbol: str, decimals: int) -> Optional[dict]:
+def _view(raw: Optional[dict], *, symbol: str, decimals: int, clock: datetime) -> Optional[dict]:
     if not raw or raw.get("price") is None:
         return None
     price = float(raw["price"])
@@ -169,6 +184,7 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int) -> Optional[dict]:
         "high": f"{raw['high']:.{decimals}f}" if raw.get("high") is not None else None,
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
+        "session": _trading_session(raw.get("as_of"), clock),
         "spark": _sparkline(_series(raw)),
     }
 
@@ -331,12 +347,13 @@ def _fetch_both() -> tuple[Optional[dict], Optional[dict]]:
         return coffee.result(), fx.result()
 
 
-def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
+def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None, clock: Optional[datetime] = None) -> dict:
     """
     返回 coffee、fx、yuan（期货折算）、landed（未套保到库）。
 
     默认路径缓存 120 秒。传入 fetch 时不读不写缓存，供测试替换网络。
     """
+    when = clock or datetime.now(timezone.utc)
     now = time.monotonic()
     if fetch is None:
         cached = _cache.get("value")
@@ -347,8 +364,8 @@ def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None) -> dict:
     except Exception:
         coffee_raw, fx_raw = None, None
     value = {
-        "coffee": _view(coffee_raw, symbol="KC=F", decimals=2),
-        "fx": _view(fx_raw, symbol="USDCNY=X", decimals=4),
+        "coffee": _view(coffee_raw, symbol="KC=F", decimals=2, clock=when),
+        "fx": _view(fx_raw, symbol="USDCNY=X", decimals=4, clock=when),
         "yuan": _yuan(coffee_raw, fx_raw),
         "landed": _landed(coffee_raw, fx_raw),
     }

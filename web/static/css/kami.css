@@ -351,7 +351,7 @@ body {
   width: auto;
   height: auto;
   max-width: min(420px, 78vw);
-  max-height: 30vh;
+  max-height: 24vh;
   display: block;
 }
 .quiet-line {
@@ -389,6 +389,10 @@ body {
   align-items: flex-start;
   flex-wrap: wrap;
   margin-top: 8px;
+}
+.quiet-mix {
+  flex: 1 0 100%;
+  margin-top: 2px;
 }
 .quiet-kicker {
   font-family: var(--sans);

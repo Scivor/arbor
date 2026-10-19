@@ -25,7 +25,7 @@
       <span class="quiet-meta">{% if lang == 'en' %}Volume {{ coffee.volume }}{% else %}成交 {{ coffee.volume }}{% endif %}</span>
       {% endif %}
       {% if coffee.name or coffee.as_of %}
-      <span class="quiet-meta">{% if coffee.name %}{{ coffee.name }}{% endif %}{% if coffee.name and coffee.as_of %} · {% endif %}{% if coffee.as_of %}{{ coffee.as_of }}{% endif %}</span>
+      <span class="quiet-meta">{% if coffee.name %}{{ coffee.name }}{% endif %}{% if coffee.name and coffee.as_of %} · {% endif %}{% if coffee.as_of %}{{ coffee.as_of }}{% endif %}{% if coffee.session == 'last' %} · {% if lang == 'en' %}last session{% else %}上一交易日{% endif %}{% endif %}</span>
       {% endif %}
     </div>
     {% endif %}
@@ -45,7 +45,7 @@
       {% endif %}
       <span class="quiet-meta">{% if lang == 'en' %}yuan per dollar{% else %}1 美元兑人民币{% endif %}</span>
       {% if fx.as_of %}
-      <span class="quiet-meta">{{ fx.as_of }}</span>
+      <span class="quiet-meta">{{ fx.as_of }}{% if fx.session == 'last' %} · {% if lang == 'en' %}last session{% else %}上一交易日{% endif %}{% endif %}</span>
       {% endif %}
     </div>
     {% endif %}
@@ -80,6 +80,9 @@
         <span class="quiet-meta">{% if lang == 'en' %}Futures {{ landed.share }}, landing adds {{ landed.addon_jin }} CNY/jin{% else %}期货占 {{ landed.share }}，到库多 {{ landed.addon_jin }} 元/斤{% endif %}</span>
         <span class="quiet-meta">{% if lang == 'en' %}Unhedged. Freight ${{ landed.freight }}/t, duty {{ landed.tariff }}, VAT {{ landed.vat }}{% else %}未套保。海运 {{ landed.freight }} 美元/吨，关税 {{ landed.tariff }}，增值税 {{ landed.vat }}{% endif %}</span>
       </div>
+      {% endif %}
+      {% if coffee.session == 'last' and fx and fx.session != 'last' %}
+      <span class="quiet-meta quiet-mix">{% if lang == 'en' %}Futures are the last session. The rate is the latest print.{% else %}期货是上一交易日的价，汇率是刚才的。{% endif %}</span>
       {% endif %}
     </div>
     {% endif %}

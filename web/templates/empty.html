@@ -61,7 +61,7 @@
         <span class="quiet-chg {{ yuan.tone }}">{% if yuan.change_pts %}{{ yuan.change_pts }}{% endif %}{% if yuan.change_text %} {{ yuan.change_text }}{% endif %}</span>
         {% endif %}
         {% if yuan.price_leg and yuan.fx_leg %}
-        <span class="quiet-meta">{% if lang == 'en' %}Price {{ yuan.price_leg }}, rate {{ yuan.fx_leg }}{% else %}期货 {{ yuan.price_leg }}，汇率 {{ yuan.fx_leg }}{% endif %}</span>
+        <span class="quiet-meta">{% if lang == 'en' %}Price {{ yuan.price_leg }}, rate {{ yuan.fx_leg }}{% if yuan.together %}, together {{ yuan.together }}{% endif %}{% else %}期货 {{ yuan.price_leg }}，汇率 {{ yuan.fx_leg }}{% if yuan.together %}，一起 {{ yuan.together }}{% endif %}{% endif %}</span>
         {% endif %}
         <span class="quiet-meta">{% if lang == 'en' %}The two prints above, before freight and duty{% else %}只按上面两行现价折算，不含运费和关税{% endif %}</span>
       </div>
@@ -75,7 +75,7 @@
         <span class="quiet-chg {{ landed.tone }}">{% if landed.change_pts %}{{ landed.change_pts }}{% endif %}{% if landed.change_text %} {{ landed.change_text }}{% endif %}</span>
         {% endif %}
         {% if landed.price_leg and landed.fx_leg %}
-        <span class="quiet-meta">{% if lang == 'en' %}Price {{ landed.price_leg }}, rate {{ landed.fx_leg }}{% else %}期货 {{ landed.price_leg }}，汇率 {{ landed.fx_leg }}{% endif %}</span>
+        <span class="quiet-meta">{% if lang == 'en' %}Price {{ landed.price_leg }}, rate {{ landed.fx_leg }}{% if landed.together %}, together {{ landed.together }}{% endif %}{% else %}期货 {{ landed.price_leg }}，汇率 {{ landed.fx_leg }}{% if landed.together %}，一起 {{ landed.together }}{% endif %}{% endif %}</span>
         {% endif %}
         <span class="quiet-meta">{% if lang == 'en' %}Futures {{ landed.share }}, landing adds {{ landed.addon_jin }} CNY/jin{% else %}期货占 {{ landed.share }}，到库多 {{ landed.addon_jin }} 元/斤{% endif %}</span>
         <span class="quiet-meta">{% if lang == 'en' %}Unhedged. Freight ${{ landed.freight }}/t, duty {{ landed.tariff }}, VAT {{ landed.vat }}{% else %}未套保。海运 {{ landed.freight }} 美元/吨，关税 {{ landed.tariff }}，增值税 {{ landed.vat }}{% endif %}</span>

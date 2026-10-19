@@ -160,6 +160,25 @@ def test_day_move_splits_a_falling_futures_from_a_rising_rate():
     assert abs(price_only + rate_only + cross - (_cny_amounts(200.0, 7.2)[0] - base)) < 1e-9
     assert view["landed"]["price_leg"].startswith("−")
     assert view["landed"]["fx_leg"].startswith("+")
+    from web.quiet_market import _fen
+    for row in (yuan, view["landed"]):
+        extra = _fen(row["together"]) if row["together"] else 0
+        assert _fen(row["price_leg"]) + _fen(row["fx_leg"]) + extra == _fen(row["change_pts"])
+
+
+def test_together_appears_only_when_a_fen_is_left_over():
+    from web.quiet_market import _split_move
+
+    def product(cents, rate):
+        return cents * rate
+
+    price, rate, together = _split_move(product, 1.014, 1.014, 1.0, 1.0)
+    assert price == "+0.01"
+    assert rate == "+0.01"
+    assert together == "+0.01"
+
+    price, rate, together = _split_move(lambda c, r: c + r, 2.10, 3.20, 2.00, 3.00)
+    assert (price, rate, together) == ("+0.10", "+0.20", None)
 
 
 def test_split_omitted_without_yesterday():
@@ -169,6 +188,7 @@ def test_split_omitted_without_yesterday():
     yuan = quiet_quotes(fetch=lambda: (coffee, fx))["yuan"]
     assert yuan["price_leg"] is None
     assert yuan["fx_leg"] is None
+    assert yuan["together"] is None
     assert yuan["change_pts"] is None
 
 
@@ -251,6 +271,7 @@ def _sample_quotes():
             "addon_jin": "6.29",
             "price_leg": "+0.90",
             "fx_leg": "−0.05",
+            "together": "+0.01",
         },
     }
 
@@ -281,7 +302,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "期货占 78.2%" in html
     assert "到库多 6.29 元/斤" in html
     assert "期货 +1.10，汇率 −0.20" in html
-    assert "期货 +0.90，汇率 −0.05" in html
+    assert "期货 +0.90，汇率 −0.05，一起 +0.01" in html
+    assert "期货 +1.10，汇率 −0.20，一起" not in html
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
@@ -307,7 +329,7 @@ def test_empty_page_english(client, monkeypatch):
     assert "Futures 78.2%" in html
     assert "landing adds 6.29 CNY/jin" in html
     assert "Price +1.10, rate −0.20" in html
-    assert "Price +0.90, rate −0.05" in html
+    assert "Price +0.90, rate −0.05, together +0.01" in html
     assert "7.1234" in html
 
 

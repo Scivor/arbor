@@ -179,22 +179,53 @@ def _cny_amounts(cents_per_lb: float, yuan_per_dollar: float) -> tuple[float, fl
     return cny_per_ton / _JIN_PER_MT, cny_per_ton
 
 
-def _split_move(value_at, cents: float, rate: float, prev_cents, prev_rate) -> tuple[Optional[str], Optional[str]]:
-    """昨日为底，分别只让期货或只让汇率走到今天。单位是元/斤。"""
+def _fen(text: Optional[str]) -> Optional[int]:
+    """把带符号的元/斤读回分。0.00 记为 0。"""
+    if not text:
+        return None
+    sign = -1 if text[0] in "−-" else 1
+    body = text[1:] if text[0] in "+−-" else text
+    try:
+        return sign * int(round(float(body) * 100))
+    except ValueError:
+        return None
+
+
+def _from_fen(fen: int) -> str:
+    if fen == 0:
+        return "0.00"
+    sign = "+" if fen > 0 else "−"
+    return f"{sign}{abs(fen) / 100:.2f}"
+
+
+def _split_move(value_at, cents: float, rate: float, prev_cents, prev_rate) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    昨日为底，分别只让期货或只让汇率走到今天。单位是元/斤。
+
+    第三项是凑齐后才够一厘的余额。两笔四舍五入已经对上日变动时为 None。
+    """
     try:
         prev_cents = float(prev_cents)
         prev_rate = float(prev_rate)
     except (TypeError, ValueError):
-        return None, None
+        return None, None, None
     if prev_cents <= 0 or prev_rate <= 0:
-        return None, None
+        return None, None, None
     try:
         base = value_at(prev_cents, prev_rate)
+        now = value_at(cents, rate)
         price_only = value_at(cents, prev_rate) - base
         rate_only = value_at(prev_cents, rate) - base
     except Exception:
-        return None, None
-    return _pts(base + price_only, base, 2), _pts(base + rate_only, base, 2)
+        return None, None, None
+    price_leg = _pts(base + price_only, base, 2)
+    fx_leg = _pts(base + rate_only, base, 2)
+    total = _pts(now, base, 2)
+    if price_leg is None or fx_leg is None or total is None:
+        return price_leg, fx_leg, None
+    leftover = _fen(total) - _fen(price_leg) - _fen(fx_leg)
+    together = None if leftover == 0 else _from_fen(leftover)
+    return price_leg, fx_leg, together
 
 
 def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
@@ -210,7 +241,7 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         prev_jin, _prev_ton = _cny_amounts(coffee["prev"], fx["prev"])
         if prev_jin:
             change = (per_jin - prev_jin) / prev_jin
-    price_leg, fx_leg = _split_move(
+    price_leg, fx_leg, together = _split_move(
         lambda c, r: _cny_amounts(c, r)[0], cents, rate, coffee.get("prev"), fx.get("prev"),
     )
     return {
@@ -221,6 +252,7 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         "tone": _tone(change),
         "price_leg": price_leg,
         "fx_leg": fx_leg,
+        "together": together,
     }
 
 
@@ -261,7 +293,7 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         except Exception:
             prev_jin = None
             change = None
-    price_leg, fx_leg = _split_move(
+    price_leg, fx_leg, together = _split_move(
         lambda c, r: _landed_cost(c, r).total_cost_cny_jin,
         cents, rate, coffee.get("prev"), fx.get("prev"),
     )
@@ -278,6 +310,7 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         "addon_jin": f"{now.total_cost_cny_jin - now.cyp_price_cny_jin:.2f}",
         "price_leg": price_leg,
         "fx_leg": fx_leg,
+        "together": together,
     }
 
 

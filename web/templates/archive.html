@@ -12,11 +12,12 @@
     margin-bottom: 28px;
   }
   .archive-hero h1 {
-    font-family: var(--serif);
+    font-family: var(--display);
     font-size: 22px;
     font-weight: 600;
     color: var(--near-black);
     margin-bottom: 6px;
+    letter-spacing: 0.02em;
   }
   .archive-hero p {
     font-size: 14px;
@@ -26,11 +27,11 @@
     margin-bottom: 28px;
   }
   .year-label {
-    font-family: var(--serif);
+    font-family: var(--display);
     font-size: 14px;
     font-weight: 600;
     color: var(--stone);
-    letter-spacing: 0.5px;
+    letter-spacing: 0.08em;
     text-transform: uppercase;
     margin-bottom: 12px;
     padding-bottom: 6px;
@@ -132,9 +133,35 @@
 {% endfor %}
 
 {% if not year_groups %}
-<div class="empty-state">
-  <h2>{% if lang == 'en' %}No reports yet{% else %}暂无归档{% endif %}</h2>
-  <p>{% if lang == 'en' %}Reports are auto-generated every Saturday.{% else %}报告将在每周六凌晨自动生成。{% endif %}</p>
+<p class="specimen-note">
+  {% if lang == 'en' %}
+  The bindery is empty. These three cards are specimens: dashes, not prices. Saturday replaces them with dates you can open.
+  {% else %}
+  装订台是空的。下面三张是版式样张，价格是破折号，不是行情。周六生成后，这里会换成可点开的日期。
+  {% endif %}
+</p>
+<div class="specimen-grid" aria-label="{% if lang == 'en' %}Specimen report cards{% else %}报告版式样张{% endif %}">
+  <article class="specimen">
+    <div class="specimen-tag">{% if lang == 'en' %}Specimen{% else %}样张{% endif %}</div>
+    <div class="specimen-date">{% if lang == 'en' %}A future Saturday{% else %}某个周六{% endif %}</div>
+    <div class="specimen-sig">BULLISH</div>
+    <div class="specimen-price">— ¢/lb</div>
+    <div class="specimen-hedge">{% if lang == 'en' %}Hedge tightens off 65%{% else %}套保离开 65%，偏紧{% endif %}</div>
+  </article>
+  <article class="specimen">
+    <div class="specimen-tag">{% if lang == 'en' %}Specimen{% else %}样张{% endif %}</div>
+    <div class="specimen-date">{% if lang == 'en' %}The week after{% else %}再下一周{% endif %}</div>
+    <div class="specimen-sig">NEUTRAL</div>
+    <div class="specimen-price">— ¢/lb</div>
+    <div class="specimen-hedge">{% if lang == 'en' %}Stay on the baseline{% else %}维持基准，钉子不动{% endif %}</div>
+  </article>
+  <article class="specimen">
+    <div class="specimen-tag">{% if lang == 'en' %}Specimen{% else %}样张{% endif %}</div>
+    <div class="specimen-date">{% if lang == 'en' %}And the one after that{% else %}再再下一周{% endif %}</div>
+    <div class="specimen-sig">BEARISH</div>
+    <div class="specimen-price">— ¢/lb</div>
+    <div class="specimen-hedge">{% if lang == 'en' %}Hedge loosens, still above 20%{% else %}套保放松，仍高于 20%{% endif %}</div>
+  </article>
 </div>
 {% endif %}
 

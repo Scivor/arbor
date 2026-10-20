@@ -1,0 +1,10 @@
+Ma Shan Zheng
+Copyright 2018 The Ma Shan Zheng Project Authors (https://github.com/googlefonts/mashanzheng)
+Licensed under the SIL Open Font License, Version 1.1.
+
+Caveat
+Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat)
+Licensed under the SIL Open Font License, Version 1.1.
+
+These files are subsets containing only the glyphs used by the empty-report line.
+The full license text is at https://openfontlicense.org

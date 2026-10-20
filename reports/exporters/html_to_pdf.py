@@ -38,8 +38,9 @@ from reports.formatters import (
 
 _TRANSLATIONS = {
     # Report meta
-    "report_title": {"zh": "Arbor 咖啡期货下周预测", "en": "Arbor Coffee Futures Weekly Prediction"},
-    "page_title": {"zh": "Arbor 咖啡期货下周预测 · {date}", "en": "Arbor Coffee Futures Weekly Prediction · {date}"},
+    # 标题文案不含 “Arbor”——字标由 hero-logo 展示
+    "report_title": {"zh": "咖啡期货下周预测", "en": "Coffee Futures Weekly Prediction"},
+    "page_title": {"zh": "Arbor · 咖啡期货下周预测 · {date}", "en": "Arbor · Coffee Futures Weekly Prediction · {date}"},
     "hero_eyebrow": {"zh": "Weekly Futures Outlook", "en": "Weekly Futures Outlook"},
     "forecast_range": {"zh": "预测区间", "en": "Forecast"},
     "contract": {"zh": "合约", "en": "Contract"},
@@ -941,9 +942,18 @@ def build_report_html(report, lang: str = "zh") -> str:
 
     html_lang = "en" if lang == "en" else "zh-CN"
     body_font = "var(--serif)" if lang == "en" else "var(--sans)"
-    from reports.fonts import css_sans_stack, css_serif_stack
+    from reports.fonts import (
+        arbor_wordmark_data_uri,
+        css_display_stack,
+        css_sans_stack,
+        css_serif_stack,
+        embedded_comfortaa_font_face_css,
+    )
     serif_stack = css_serif_stack()
     sans_stack = css_sans_stack()
+    display_stack = css_display_stack()
+    logo_uri = arbor_wordmark_data_uri("brand")
+    comfortaa_faces = embedded_comfortaa_font_face_css()
 
     html = f"""<!DOCTYPE html>
 <html lang="{html_lang}">
@@ -952,6 +962,7 @@ def build_report_html(report, lang: str = "zh") -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_t("page_title", lang, date=report.report_date)}</title>
 <style>
+{comfortaa_faces}
   @page {{
     size: A4;
     margin: 14mm 16mm;
@@ -973,6 +984,7 @@ def build_report_html(report, lang: str = "zh") -> str:
     --stone:       #6b6a64;
     --border:      #e8e6dc;
     --border-soft: #e5e3d8;
+    --display: {display_stack};
     --serif: {serif_stack};
     --sans:  {sans_stack};
     --mono:  "SF Mono", Monaco, Consolas, monospace;
@@ -1017,14 +1029,26 @@ def build_report_html(report, lang: str = "zh") -> str:
     align-items: flex-start;
     gap: 10mm;
   }}
+  .hero-title-row {{
+    display: flex;
+    align-items: center;
+    gap: 3.2mm;
+    flex-wrap: wrap;
+  }}
+  .hero-logo {{
+    height: 9.5mm;
+    width: auto;
+    display: block;
+    flex-shrink: 0;
+  }}
   .hero-title {{
-    font-family: var(--serif);
-    font-size: 21pt;
+    font-family: var(--display);
+    font-size: 18pt;
     font-weight: 600;
-    line-height: 1.08;
+    line-height: 1.15;
     color: var(--near-black);
     margin: 0;
-    letter-spacing: 0;
+    letter-spacing: 0.02em;
   }}
   .hero-sub {{
     font-family: var(--sans);
@@ -1070,7 +1094,7 @@ def build_report_html(report, lang: str = "zh") -> str:
     page-break-inside: auto;
   }}
   .section-title {{
-    font-family: var(--serif);
+    font-family: var(--display);
     font-size: 13pt;
     font-weight: 600;
     color: var(--near-black);
@@ -1682,7 +1706,10 @@ def build_report_html(report, lang: str = "zh") -> str:
   <div class="hero-eyebrow">Weekly Futures Outlook &nbsp;·&nbsp; {report.report_date} &nbsp;·&nbsp; {report.ticker}</div>
   <div class="hero-main">
     <div>
-      <div class="hero-title">{_t("report_title", lang)}</div>
+      <div class="hero-title-row">
+        <img class="hero-logo" src="{logo_uri}" alt="Arbor" />
+        <div class="hero-title">{_t("report_title", lang)}</div>
+      </div>
       <div class="hero-sub">{_t("forecast_range", lang)} {report.forecast_week_start} – {report.forecast_week_end} &nbsp;|&nbsp; {_t("contract", lang)} KC=F (Coffee Sep 26)</div>
     </div>
     <div class="hero-price">

@@ -35,8 +35,9 @@ from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from reports.fonts import css_serif_stack
+from reports.fonts import css_display_stack, css_serif_stack
 from web.chat import build_chat_page
+from web.quiet_market import quiet_quotes
 from web.track_record import build_track_record_html
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ def _read_report_meta(report_date: str) -> dict:
 def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str = "zh") -> str:
     """Build the past-index HTML snippet to inject into report pages."""
     serif = css_serif_stack()
+    display = css_display_stack()
     items_html = ""
     for r in recent_meta:
         current_cls = "past-item-current" if r["date"] == report_date else ""
@@ -152,11 +154,11 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   margin-bottom: 16px;
 }}
 .past-index-title {{
-  font-family: {serif};
+  font-family: {display};
   font-size: 15px;
   font-weight: 600;
   color: #141413;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.02em;
 }}
 .past-index-all {{
   font-size: 12px;
@@ -284,9 +286,21 @@ ERROR_MESSAGES = {
 }
 
 
+# Starlette 对未匹配路由给出的英文原因，不要盖掉中文说明。
+_STOCK_HTTP_DETAILS = {
+    "Bad Request",
+    "Forbidden",
+    "Not Found",
+    "Unprocessable Entity",
+    "Internal Server Error",
+    "Bad Gateway",
+    "Service Unavailable",
+}
+
+
 def _error_response(status_code: int, detail: str | None = None, lang: str = "zh") -> HTMLResponse:
     title, desc = ERROR_MESSAGES.get(status_code, ("出错了", "发生未知错误。"))
-    if detail and detail not in (str(status_code), ""):
+    if detail and detail not in (str(status_code), "") and detail not in _STOCK_HTTP_DETAILS:
         desc = detail
     # Build minimal request-like object for template context
     class _DummyReq:
@@ -319,7 +333,17 @@ async def latest_report(request: Request):
     lang = request.query_params.get("lang", "zh")
     latest = _latest_report_date()
     if not latest:
-        return templates.TemplateResponse(request, "empty.html", {"lang": lang})
+        try:
+            quotes = await asyncio.to_thread(quiet_quotes)
+        except Exception:
+            quotes = {"coffee": None, "fx": None}
+        return templates.TemplateResponse(request, "empty.html", {
+            "lang": lang,
+            "coffee": (quotes or {}).get("coffee"),
+            "fx": (quotes or {}).get("fx"),
+            "yuan": (quotes or {}).get("yuan"),
+            "landed": (quotes or {}).get("landed"),
+        })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 
 

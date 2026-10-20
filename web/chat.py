@@ -15,7 +15,7 @@ import html as html_lib
 import json
 from typing import Optional, Sequence
 
-from reports.fonts import css_sans_stack, css_serif_stack
+from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack
 
 
 def build_chat_page(
@@ -44,6 +44,8 @@ def build_chat_page(
     )
     sans = css_sans_stack()
     serif = css_serif_stack()
+    display = css_display_stack()
+    from reports.fonts import comfortaa_font_face_css
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -52,6 +54,7 @@ def build_chat_page(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>采购顾问 · Arbor</title>
 <style>
+{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
@@ -74,12 +77,22 @@ def build_chat_page(
     margin-bottom: 18px;
     gap: 12px;
   }}
+  .chat-brand {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .chat-logo {{
+    height: 22px;
+    width: auto;
+    display: block;
+  }}
   .chat-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 22px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
   }}
   .chat-hdr-actions {{
     display: flex;
@@ -111,10 +124,24 @@ def build_chat_page(
     background: #faf9f5;
     border: 1px solid #e8e6dc;
     border-radius: 6px;
-    padding: 28px 20px;
-    text-align: center;
+    padding: 22px 20px 18px;
+    text-align: left;
+    color: #504e49;
+    font-size: 13.5px;
+    line-height: 1.65;
+  }}
+  .chat-empty-kicker {{
+    font-family: {serif};
+    font-size: 18px;
+    font-weight: 600;
+    color: #141413;
+    margin-bottom: 8px;
+  }}
+  .chat-empty p {{ margin: 0; }}
+  .chat-empty-ask {{
+    margin-top: 8px;
     color: #6b6a64;
-    font-size: 13px;
+    font-size: 12.5px;
   }}
   .chat-brief-meta {{
     font-size: 11px;
@@ -222,14 +249,21 @@ def build_chat_page(
 <body>
 <div class="chat-wrap">
   <div class="chat-hdr">
-    <span class="chat-title">采购顾问</span>
+    <div class="chat-brand">
+      <img class="chat-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
+      <span class="chat-title">采购顾问</span>
+    </div>
     <div class="chat-hdr-actions">
       <button type="button" class="chat-reset" id="chatReset">清空追问</button>
       <a class="chat-back" href="/">← 返回最新周报</a>
     </div>
   </div>
   <div class="chat-list" id="chatList">
-    <div class="chat-empty" id="chatEmpty">追问采购建议，如「这周该不该买」「套保要紧还是松」「到库成本怎么看」</div>
+    <div class="chat-empty" id="chatEmpty">
+      <div class="chat-empty-kicker">顾问在岗，简报未到</div>
+      <p>没有本期采购简报时，我只接问题，不编数字，也不替你下单。周六周报靠岸之后，开场白会换成五段采购建议。</p>
+      <p class="chat-empty-ask">可以先点下面的句子。没有简报时，我会老实说还不能回答。</p>
+    </div>
   </div>
   <div class="chat-chips" id="chatChips" hidden></div>
   <div class="chat-input-row">

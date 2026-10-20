@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from html import escape as _esc
 
-from reports.fonts import css_sans_stack, css_serif_stack
+from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack, comfortaa_font_face_css
 
 
 def _build_learning_html(learning: dict | None) -> str:
@@ -81,7 +81,18 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     pending = record.get("pending")
 
     if not weeks:
-        body = '<div class="tr-empty">暂无历史复盘数据</div>'
+        body = """
+  <div class="tr-empty">
+    <div class="tr-empty-title">暂无历史复盘数据</div>
+    <p class="tr-empty-lead">记分牌要两期相邻周报才肯开口：用上一期的预测区间，去罩这一期的实际价。中间缺一周，就不算一对。</p>
+    <ul class="tr-legend">
+      <li><b>区间命中</b>高低有没有罩住现价</li>
+      <li><b>方向</b>涨跌有没有说对</li>
+      <li><b>套保</b>建议比率有没有少亏</li>
+      <li><b>Brier</b>概率有多老实。瞎猜大约 0.667，越靠近 0 越准</li>
+    </ul>
+    <p class="tr-empty-foot">现在四格都是空的。不是模型沉默，是还没有可以打分的航次。</p>
+  </div>"""
     else:
         # ── Brier 记分卡（None 时显示 —）──
         mean_brier = record.get("mean_brier")
@@ -182,6 +193,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 
     sans = css_sans_stack()
     serif = css_serif_stack()
+    display = css_display_stack()
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -189,6 +201,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>预测战绩 · Arbor</title>
 <style>
+{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
@@ -207,12 +220,22 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     justify-content: space-between;
     margin-bottom: 24px;
   }}
+  .tr-brand {{
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }}
+  .tr-logo {{
+    height: 22px;
+    width: auto;
+    display: block;
+  }}
   .tr-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 22px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
   }}
   .tr-back {{
     font-size: 12px;
@@ -294,11 +317,11 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     margin-top: 14px;
   }}
   .tr-drivers-title {{
-    font-family: {serif};
+    font-family: {display};
     font-size: 15px;
     font-weight: 600;
     color: #141413;
-    letter-spacing: 0.3px;
+    letter-spacing: 0.02em;
     margin: 28px 0 12px;
   }}
   .tr-drivers {{ margin-bottom: 4px; }}
@@ -342,10 +365,49 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     background: #faf9f5;
     border: 1px solid #e8e6dc;
     border-radius: 6px;
-    padding: 40px 20px;
-    text-align: center;
+    padding: 28px 24px 22px;
+    text-align: left;
     color: #6b6a64;
     font-size: 13px;
+  }}
+  .tr-empty-title {{
+    font-family: {serif};
+    font-size: 22px;
+    font-weight: 600;
+    color: #141413;
+    margin-bottom: 10px;
+  }}
+  .tr-empty-lead, .tr-empty-foot {{
+    color: #504e49;
+    line-height: 1.65;
+    max-width: 58ch;
+  }}
+  .tr-legend {{
+    list-style: none;
+    margin: 16px 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }}
+  .tr-legend li {{
+    background: #f5f4ed;
+    border-radius: 6px;
+    padding: 12px 12px 10px;
+    color: #504e49;
+    line-height: 1.5;
+  }}
+  .tr-legend b {{
+    display: block;
+    font-family: {serif};
+    font-size: 15px;
+    font-weight: 600;
+    color: #1B365D;
+    margin-bottom: 2px;
+  }}
+  .tr-empty-foot {{
+    font-size: 12px;
+    color: #6b6a64;
   }}
   .tr-foot {{
     font-size: 11px;
@@ -357,13 +419,17 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   @media (max-width: 768px) {{
     .tr-wrap {{ padding: 24px 16px 32px; }}
     .tr-metrics {{ grid-template-columns: repeat(2, 1fr); }}
+    .tr-legend {{ grid-template-columns: 1fr; }}
   }}
 </style>
 </head>
 <body>
 <div class="tr-wrap">
   <div class="tr-hdr">
-    <span class="tr-title">预测战绩</span>
+    <div class="tr-brand">
+      <img class="tr-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
+      <span class="tr-title">预测战绩</span>
+    </div>
     <a class="tr-back" href="/">← 返回最新周报</a>
   </div>
   {body}

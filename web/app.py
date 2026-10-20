@@ -331,19 +331,32 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
-def _morning_gap(coffee: Optional[dict]) -> Optional[dict]:
-    """空页现价相对最新早报里阿拉比卡结算价。没有现价就不写。"""
-    if not coffee or not coffee.get("price"):
+def _morning_mark(price: Optional[str], reference: Optional[str], decimals: int) -> Optional[dict]:
+    """现价相对早报里的一个公布价。没有现价或公布价就不写。"""
+    if not price or not reference:
         return None
     issue = latest_issue() or {}
-    contracts = issue.get("contracts") or []
-    if not contracts or not contracts[0].get("price") or not issue.get("date"):
+    if not issue.get("date"):
         return None
-    gap = versus_settlement(coffee["price"], contracts[0]["price"], 2)
+    gap = versus_settlement(price, reference, decimals)
     if not gap:
         return None
     gap["date"] = issue["date"]
     return gap
+
+
+def _morning_gap(coffee: Optional[dict]) -> Optional[dict]:
+    """空页现价相对最新早报里阿拉比卡结算价。"""
+    issue = latest_issue() or {}
+    contracts = issue.get("contracts") or []
+    settlement = contracts[0].get("price") if contracts else None
+    return _morning_mark((coffee or {}).get("price"), settlement, 2)
+
+
+def _morning_fix(fx: Optional[dict]) -> Optional[dict]:
+    """空页汇率相对最新早报里的中间价。"""
+    fixing = ((latest_issue() or {}).get("fix") or {}).get("price")
+    return _morning_mark((fx or {}).get("price"), fixing, 4)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -357,14 +370,16 @@ async def latest_report(request: Request):
         except Exception:
             quotes = {"coffee": None, "fx": None}
         coffee = (quotes or {}).get("coffee")
+        fx = (quotes or {}).get("fx")
         return templates.TemplateResponse(request, "empty.html", {
             "lang": lang,
             "coffee": coffee,
-            "fx": (quotes or {}).get("fx"),
+            "fx": fx,
             "yuan": (quotes or {}).get("yuan"),
             "landed": (quotes or {}).get("landed"),
             "source": (quotes or {}).get("source"),
             "note": _morning_gap(coffee),
+            "fix": _morning_fix(fx),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 

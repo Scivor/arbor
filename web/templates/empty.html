@@ -25,6 +25,11 @@
 {%- endif -%}
 {%- endif -%}
 {%- endmacro %}
+{% macro morning_mark(row, noun_zh, noun_en) -%}
+{%- if row -%}
+<span class="quiet-meta">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
+{%- endif -%}
+{%- endmacro %}
 <section class="quiet">
   <img src="/static/img/empty-at-sea.svg" alt="{% if lang == 'en' %}Ink sketch of a quiet coffee shop and a paper boat carrying a letter.{% else %}钢笔速写：安静的咖啡店，门口一只载着信的纸船。{% endif %}">
   <p class="quiet-line">{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
@@ -40,9 +45,7 @@
       {% if coffee.change_pts or coffee.change_text %}
       <span class="quiet-chg {{ coffee.tone }}">{% if coffee.change_pts %}{{ coffee.change_pts }}{% endif %}{% if coffee.change_text %} {{ coffee.change_text }}{% endif %}</span>
       {% endif %}
-      {% if note %}
-      <span class="quiet-meta">{% if note.side == 'same' %}{% if lang == 'en' %}Same as the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}与 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 相同{% endif %}{% elif note.side == 'above' %}{% if lang == 'en' %}{{ note.gap }} above the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}较 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 高 {{ note.gap }}{% endif %}{% else %}{% if lang == 'en' %}{{ note.gap }} below the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}较 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 低 {{ note.gap }}{% endif %}{% endif %}</span>
-      {% endif %}
+      {{ morning_mark(note, '结算', 'settlement') }}
       {% if coffee.session_low and coffee.session_high %}
       <span class="quiet-meta">{% if coffee.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif coffee.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ coffee.session_low }} – {{ coffee.session_high }}{% if coffee.range_place %} · {{ range_place(coffee.range_place) }}{% endif %}</span>
       {% endif %}
@@ -74,6 +77,7 @@
       {% if fx.change_pts or fx.change_text %}
       <span class="quiet-chg {{ fx.tone }}">{% if fx.change_pts %}{{ fx.change_pts }}{% endif %}{% if fx.change_text %} {{ fx.change_text }}{% endif %}</span>
       {% endif %}
+      {{ morning_mark(fix, '中间价', 'fixing') }}
       {% if fx.session_low and fx.session_high %}
       <span class="quiet-meta">{% if fx.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif fx.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ fx.session_low }} – {{ fx.session_high }}{% if fx.range_place %} · {{ range_place(fx.range_place) }}{% endif %}</span>
       {% endif %}

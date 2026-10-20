@@ -17,10 +17,6 @@ from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
 
-_MODEL = "deepseek-chat"
-# base_url 按 _load_api_key 的 provider 决定（与 agent.agents.analyst 同口径）
-_BASE_URLS = {"deepseek": "https://api.deepseek.com", "openai": None}
-
 # 方向标记（点评入归因：正文第一行的机器可读标记）
 _DIRECTION_RE = re.compile(r"^\[DIRECTION:(上涨|下跌|横盘)\]\s*")
 
@@ -170,22 +166,22 @@ def generate_commentary(report, lang: str = "zh") -> Optional[tuple[str, str]]:
         (清洗后正文, direction)；无 API key 或任何异常 → None（静默，报告不含此板块）。
     """
     try:
-        from arbor.infrastructure.secrets import load_llm_api_key
-        api_key, provider = load_llm_api_key()
+        from arbor.infrastructure.llm import resolve_llm
+        endpoint = resolve_llm()
     except Exception as e:
         logger.warning("llm_commentary: 读取 API key 失败: %s", e)
         return None
-    if not api_key:
+    if not endpoint["api_key"]:
         logger.info("llm_commentary: 未配置 API key，跳过采购建议")
         return None
 
     try:
         llm = ChatOpenAI(
-            model=_MODEL,
+            model=endpoint["model"],
             temperature=0.3,
             max_tokens=800,
-            api_key=api_key,
-            base_url=_BASE_URLS.get(provider),
+            api_key=endpoint["api_key"],
+            base_url=endpoint["base_url"],
         )
         resp = llm.invoke([
             ("system", _SYSTEM_PROMPT_EN if lang == "en" else _SYSTEM_PROMPT),

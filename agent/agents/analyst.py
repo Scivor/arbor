@@ -8,8 +8,6 @@ CoffeeAnalyst — Arbor 采购顾问智能体
 
 from __future__ import annotations
 import logging
-import os
-from pathlib import Path
 from typing import Optional
 
 from langchain_openai import ChatOpenAI
@@ -17,7 +15,8 @@ from langchain.agents import create_openai_tools_agent, AgentExecutor
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from agent.tools import ALL_TOOLS
-from arbor.infrastructure.secrets import ENV_FILE, load_llm_api_key
+from arbor.infrastructure.llm import resolve_llm
+from arbor.infrastructure.secrets import ENV_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +25,9 @@ _ENV_FILE = ENV_FILE
 
 
 def _load_api_key() -> tuple[Optional[str], Optional[str]]:
-    """Compatibility wrapper around arbor.infrastructure.secrets.load_llm_api_key."""
-    return load_llm_api_key(env_file=_ENV_FILE)
+    """Compatibility wrapper. 测试仍会直接调用它。"""
+    endpoint = resolve_llm(env_file=_ENV_FILE)
+    return endpoint["api_key"], endpoint["provider"]
 
 
 _SYSTEM_PROMPT = """你是 Arbor 采购顾问——为中国咖啡生豆进口商服务的决策智能体。
@@ -95,13 +95,13 @@ class CoffeeAnalyst:
         temperature: float = 0.2,
         verbose: bool = False,
     ):
-        self.model_name = model or os.getenv("AGENT_MODEL", "deepseek-chat")
         self.temperature = temperature
         self.verbose = verbose
 
         # API key: env 优先（DEEPSEEK > OPENAI），~/.arbor/.env 兜底
-        api_key, provider = _load_api_key()
-        if not api_key:
+        endpoint = resolve_llm(model=model, env_file=_ENV_FILE)
+        self.model_name = endpoint["model"] or "deepseek-chat"
+        if not endpoint["api_key"]:
             raise RuntimeError(
                 "未找到 LLM API key。请配置其一:\n"
                 "  export DEEPSEEK_API_KEY=sk-...   # DeepSeek（默认供应商）\n"
@@ -109,20 +109,12 @@ class CoffeeAnalyst:
                 "或写入 ~/.arbor/.env（DEEPSEEK_API_KEY=... 或 OPENAI_API_KEY=...）"
             )
 
-        # base_url: 默认 DeepSeek；OpenAI key 兜底时走 OpenAI 默认（None）；
-        # AGENT_BASE_URL 环境变量可覆盖
-        if os.getenv("AGENT_BASE_URL"):
-            base_url = os.getenv("AGENT_BASE_URL")
-        elif provider == "deepseek":
-            base_url = "https://api.deepseek.com"
-        else:
-            base_url = None
-
+        self.provider = endpoint["provider"]
         self.llm = ChatOpenAI(
             model=self.model_name,
             temperature=temperature,
-            api_key=api_key,
-            base_url=base_url,
+            api_key=endpoint["api_key"],
+            base_url=endpoint["base_url"],
         )
 
         self.tools = ALL_TOOLS

@@ -97,3 +97,29 @@ def test_agent_analyst_invoke(mock_chat, mock_executor, mock_create_agent):
 
     assert result["output"] == "测试回答"
     mock_executor_instance.invoke.assert_called_once()
+
+
+@pytest.mark.unit
+@patch("agent.agents.analyst.create_openai_tools_agent")
+@patch("agent.agents.analyst.AgentExecutor")
+@patch("agent.agents.analyst.ChatOpenAI")
+def test_deepseek_is_the_agent_service(mock_chat, mock_executor, mock_create_agent, monkeypatch):
+    """DEEPSEEK_API_KEY 把采购顾问接到 api.deepseek.com 的 deepseek-chat。"""
+    from agent.agents.analyst import CoffeeAnalyst
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "sk-deepseek")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    monkeypatch.delenv("AGENT_BASE_URL", raising=False)
+    mock_chat.return_value = MagicMock()
+    mock_executor.return_value = MagicMock()
+    mock_create_agent.return_value = MagicMock()
+
+    analyst = CoffeeAnalyst()
+
+    kwargs = mock_chat.call_args.kwargs
+    assert analyst.provider == "deepseek"
+    assert analyst.model_name == "deepseek-chat"
+    assert kwargs["model"] == "deepseek-chat"
+    assert kwargs["base_url"] == "https://api.deepseek.com"
+    assert kwargs["api_key"] == "sk-deepseek"

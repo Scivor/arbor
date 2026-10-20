@@ -4,6 +4,8 @@ Arbor Report, Minimal Static Site (FastAPI)
 
 Routes:
   /                → Latest report (full HTML, no nav bar, past index at bottom)
+  /daily/          → Morning note (latest)
+  /daily/{date}/   → One morning note
   /reports/        → Archive list (with nav bar)
   /reports/{date}/ → Single report (full HTML, no nav bar, past index at bottom)
   /reports/{date}.pdf → PDF download
@@ -37,6 +39,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from reports.fonts import css_display_stack, css_serif_stack
 from web.chat import build_chat_page
+from web.daily_brief import bias_label, get_issue, latest_issue
 from web.quiet_market import quiet_quotes
 from web.track_record import build_track_record_html
 
@@ -581,6 +584,31 @@ async def chat_api(request: Request):
 
     _append_session(session_id, message, output)
     return {"output": output, "session_id": session_id}
+
+
+def _daily_response(request: Request, issue: dict) -> HTMLResponse:
+    lang = request.query_params.get("lang", "zh")
+    return templates.TemplateResponse(request, "daily.html", {
+        "lang": lang,
+        "issue": issue,
+        "bias": bias_label,
+    })
+
+
+@app.get("/daily/", response_class=HTMLResponse)
+async def daily_latest(request: Request):
+    """最新一期早报。周报仍走首页。"""
+    return _daily_response(request, latest_issue())
+
+
+@app.get("/daily/{issue_date}/", response_class=HTMLResponse)
+async def daily_issue(issue_date: str, request: Request):
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", issue_date):
+        raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD。")
+    issue = get_issue(issue_date)
+    if issue is None:
+        raise HTTPException(status_code=404, detail="没有这一期早报。")
+    return _daily_response(request, issue)
 
 
 @app.get("/reports/", response_class=HTMLResponse)

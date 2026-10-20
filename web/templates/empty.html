@@ -33,7 +33,7 @@
       <span class="quiet-meta">{% if coffee.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif coffee.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ coffee.session_low }} – {{ coffee.session_high }}{% if coffee.range_place %} · {{ range_place(coffee.range_place) }}{% endif %}</span>
       {% endif %}
       {% if coffee.low and coffee.high %}
-      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ coffee.low }} – {{ coffee.high }}{% else %}近30日 {{ coffee.low }} – {{ coffee.high }}{% endif %}</span>
+      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ coffee.low }} – {{ coffee.high }}{% else %}近30日 {{ coffee.low }} – {{ coffee.high }}{% endif %}{% if coffee.month_place %} · {{ range_place(coffee.month_place) }}{% endif %}</span>
       {% endif %}
       {% if coffee.volume %}
       <span class="quiet-meta">{% if lang == 'en' %}Volume {{ coffee.volume }}{% else %}成交 {{ coffee.volume }}{% endif %}</span>
@@ -58,7 +58,7 @@
       <span class="quiet-meta">{% if fx.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif fx.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ fx.session_low }} – {{ fx.session_high }}{% if fx.range_place %} · {{ range_place(fx.range_place) }}{% endif %}</span>
       {% endif %}
       {% if fx.low and fx.high %}
-      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ fx.low }} – {{ fx.high }}{% else %}近30日 {{ fx.low }} – {{ fx.high }}{% endif %}</span>
+      <span class="quiet-meta">{% if lang == 'en' %}30-day {{ fx.low }} – {{ fx.high }}{% else %}近30日 {{ fx.low }} – {{ fx.high }}{% endif %}{% if fx.month_place %} · {{ range_place(fx.month_place) }}{% endif %}</span>
       {% endif %}
       <span class="quiet-meta">{% if lang == 'en' %}yuan per dollar{% else %}1 美元兑人民币{% endif %}</span>
       {% if fx.as_of %}

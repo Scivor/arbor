@@ -68,6 +68,20 @@ def test_range_place_uses_the_printed_decimals():
     assert _range_place(200.0, None, 210.0, 2) is None
 
 
+def test_month_place_can_differ_from_the_session_place():
+    payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
+    quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
+    quote["high"] = [210.0, 205.0, 202.0]
+    quote["low"] = [170.0, 185.0, 198.0]
+    view = quiet_quotes(fetch=lambda: (_parse_chart(payload), None))["coffee"]
+    assert view["session_low"] == "198.00"
+    assert view["session_high"] == "202.00"
+    assert view["range_place"] == "mid"
+    assert view["low"] == "170.00"
+    assert view["high"] == "210.00"
+    assert view["month_place"] == "near_high"
+
+
 def test_session_band_is_the_last_bar_inside_the_month():
     payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
@@ -322,6 +336,7 @@ def _sample_quotes():
             "tone": "up",
             "low": "360.10",
             "high": "389.40",
+            "month_place": "mid",
             "session_low": "372.00",
             "session_high": "378.20",
             "range_place": "near_high",
@@ -385,7 +400,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "美分/磅" in html
     assert "上一交易日 372.00 – 378.20 · 靠近高点" in html
     assert "今日 7.1000 – 7.1600 · 区间中部" in html
-    assert "近30日" in html
+    assert "近30日 360.10 – 389.40 · 区间中部" in html
     assert "人民币对美元" in html
     assert "7.1234" in html
     assert "1 美元兑人民币" in html
@@ -420,7 +435,7 @@ def test_empty_page_english(client, monkeypatch):
     assert "¢/lb" in html
     assert "Last session 372.00 – 378.20 · Near the high" in html
     assert "Today 7.1000 – 7.1600 · Mid-range" in html
-    assert "30-day" in html
+    assert "30-day 360.10 – 389.40 · Mid-range" in html
     assert "RMB vs USD" in html
     assert "yuan per dollar" in html
     assert "Futures in yuan" in html

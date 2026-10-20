@@ -240,6 +240,7 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int, clock: datetime) -
         "session_low": f"{raw['session_low']:.{decimals}f}" if raw.get("session_low") is not None else None,
         "session_high": f"{raw['session_high']:.{decimals}f}" if raw.get("session_high") is not None else None,
         "range_place": _range_place(price, raw.get("session_low"), raw.get("session_high"), decimals),
+        "month_place": _range_place(price, raw.get("low"), raw.get("high"), decimals),
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
         "session": _trading_session(raw.get("as_of"), clock),

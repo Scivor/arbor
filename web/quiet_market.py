@@ -129,13 +129,19 @@ def _as_of(moment: Optional[datetime]) -> Optional[str]:
 
 
 def _trading_session(moment: Optional[datetime], clock: datetime) -> str:
-    """超过 18 小时的报价视为上一交易日。没有时间戳时不判断。"""
+    """UTC 日期早于此刻，或超过 18 小时，视为上一交易日。没有时间戳时不判断。"""
     if moment is None:
         return ""
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=timezone.utc)
-    age = clock - moment.astimezone(timezone.utc)
-    if age > _LAST_SESSION:
+    moment = moment.astimezone(timezone.utc)
+    if clock.tzinfo is None:
+        clock = clock.replace(tzinfo=timezone.utc)
+    else:
+        clock = clock.astimezone(timezone.utc)
+    if moment.date() < clock.date():
+        return "last"
+    if clock - moment > _LAST_SESSION:
         return "last"
     return "live"
 

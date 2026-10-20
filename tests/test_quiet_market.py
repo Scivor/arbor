@@ -218,9 +218,10 @@ def test_a_print_older_than_eighteen_hours_is_the_last_session():
 
     clock = datetime(2026, 10, 19, 2, 30, tzinfo=timezone.utc)
     friday = datetime(2026, 10, 16, 17, 29, tzinfo=timezone.utc)
+    same_day = datetime(2026, 10, 19, 20, 0, tzinfo=timezone.utc)
     assert _trading_session(friday, clock) == "last"
-    assert _trading_session(clock - timedelta(hours=18), clock) == "live"
-    assert _trading_session(clock - timedelta(hours=18, seconds=1), clock) == "last"
+    assert _trading_session(same_day - timedelta(hours=18), same_day) == "live"
+    assert _trading_session(same_day - timedelta(hours=18, seconds=1), same_day) == "last"
     assert _trading_session(None, clock) == ""
 
     coffee = _parse_chart(_chart("KC=F", 305.55, 294.80, name="Coffee Dec 26", ts=friday.timestamp()))
@@ -229,6 +230,40 @@ def test_a_print_older_than_eighteen_hours_is_the_last_session():
     assert view["coffee"]["session"] == "last"
     assert view["coffee"]["as_of"] == "10-16 17:29 UTC"
     assert view["fx"]["session"] == "live"
+
+
+def test_a_previous_utc_date_is_the_last_session_inside_eighteen_hours(client, monkeypatch):
+    from datetime import timedelta
+
+    clock = datetime(2026, 10, 20, 2, 15, tzinfo=timezone.utc)
+    monday = datetime(2026, 10, 19, 17, 30, tzinfo=timezone.utc)
+    from web.quiet_market import _trading_session
+    assert _trading_session(monday, clock) == "last"
+    assert monday < clock
+    assert clock - monday < timedelta(hours=18)
+
+    coffee = _parse_chart(_chart(
+        "KC=F", 309.50, 305.60, name="Coffee Dec 26",
+        high=310.20, low=303.00, ts=monday.timestamp(),
+    ))
+    fx = _parse_chart(_chart(
+        "USDCNY=X", 6.6700, 6.6900, high=6.6900, low=6.6600, ts=clock.timestamp(),
+    ))
+    quotes = quiet_quotes(fetch=lambda: (coffee, fx), clock=clock)
+    assert quotes["coffee"]["session"] == "last"
+    assert quotes["coffee"]["as_of"] == "10-19 17:30 UTC"
+    assert quotes["fx"]["session"] == "live"
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: quotes)
+    html = client.get("/").text
+    assert "上一交易日 303.00 – 310.20" in html
+    assert "今日 6.6600 – 6.6900" in html
+    assert "期货是上一交易日的价，汇率是刚才的。" in html
+    assert "今日 303.00" not in html
+    en = client.get("/?lang=en").text
+    assert "Last session 303.00 – 310.20" in en
+    assert "Today 6.6600 – 6.6900" in en
+    assert "Futures are the last session. The rate is the latest print." in en
 
 
 def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():

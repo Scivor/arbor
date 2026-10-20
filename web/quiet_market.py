@@ -231,6 +231,36 @@ def _range_place(price: float, low: Optional[float], high: Optional[float], deci
     return "mid"
 
 
+def _range_room(price: float, low: Optional[float], high: Optional[float], decimals: int) -> Optional[dict]:
+    """现价离这一段两端多远，按页面上已经四舍五入的数字。高低重合时不写。"""
+    if low is None or high is None:
+        return None
+    p = round(float(price), decimals)
+    lo = round(float(low), decimals)
+    hi = round(float(high), decimals)
+    if hi < lo or hi == lo:
+        return None
+    fmt = f"{{:.{decimals}f}}"
+    if p > hi:
+        high_side, high_gap = "above", fmt.format(p - hi)
+    elif p == hi:
+        high_side, high_gap = "at", fmt.format(0)
+    else:
+        high_side, high_gap = "under", fmt.format(hi - p)
+    if p < lo:
+        low_side, low_gap = "below", fmt.format(lo - p)
+    elif p == lo:
+        low_side, low_gap = "at", fmt.format(0)
+    else:
+        low_side, low_gap = "above", fmt.format(p - lo)
+    return {
+        "high_side": high_side,
+        "high_gap": high_gap,
+        "low_side": low_side,
+        "low_gap": low_gap,
+    }
+
+
 def _volume(value: Optional[float]) -> Optional[str]:
     if value is None or value <= 0:
         return None
@@ -254,6 +284,8 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int, clock: datetime) -
         "session_high": f"{raw['session_high']:.{decimals}f}" if raw.get("session_high") is not None else None,
         "range_place": _range_place(price, raw.get("session_low"), raw.get("session_high"), decimals),
         "month_place": _range_place(price, raw.get("low"), raw.get("high"), decimals),
+        "session_room": _range_room(price, raw.get("session_low"), raw.get("session_high"), decimals),
+        "month_room": _range_room(price, raw.get("low"), raw.get("high"), decimals),
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
         "session": _trading_session(raw.get("as_of"), clock),

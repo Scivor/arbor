@@ -14,6 +14,17 @@
 {%- elif code == 'flat' -%}{% if lang == 'en' %}Flat range{% else %}区间持平{% endif %}
 {%- endif -%}
 {%- endmacro %}
+{% macro range_room(room) -%}
+{%- if room -%}
+{%- if room.high_side == 'under' -%}{% if lang == 'en' %}{{ room.high_gap }} below the high{% else %}距高点 {{ room.high_gap }}{% endif %}
+{%- elif room.high_side == 'above' -%}{% if lang == 'en' %}{{ room.high_gap }} above the high{% else %}高出高点 {{ room.high_gap }}{% endif %}
+{%- endif -%}
+{%- if room.high_side != 'at' and room.low_side != 'at' -%}{% if lang == 'en' %}, {% else %}，{% endif %}{%- endif -%}
+{%- if room.low_side == 'above' -%}{% if lang == 'en' %}{{ room.low_gap }} above the low{% else %}距低点 {{ room.low_gap }}{% endif %}
+{%- elif room.low_side == 'below' -%}{% if lang == 'en' %}{{ room.low_gap }} below the low{% else %}低于低点 {{ room.low_gap }}{% endif %}
+{%- endif -%}
+{%- endif -%}
+{%- endmacro %}
 <section class="quiet">
   <img src="/static/img/empty-at-sea.svg" alt="{% if lang == 'en' %}Ink sketch of a quiet coffee shop and a paper boat carrying a letter.{% else %}钢笔速写：安静的咖啡店，门口一只载着信的纸船。{% endif %}">
   <p class="quiet-line">{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
@@ -32,8 +43,14 @@
       {% if coffee.session_low and coffee.session_high %}
       <span class="quiet-meta">{% if coffee.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif coffee.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ coffee.session_low }} – {{ coffee.session_high }}{% if coffee.range_place %} · {{ range_place(coffee.range_place) }}{% endif %}</span>
       {% endif %}
+      {% if coffee.session_room %}
+      <span class="quiet-meta">{{ range_room(coffee.session_room) }}</span>
+      {% endif %}
       {% if coffee.low and coffee.high %}
       <span class="quiet-meta">{% if lang == 'en' %}30-day {{ coffee.low }} – {{ coffee.high }}{% else %}近30日 {{ coffee.low }} – {{ coffee.high }}{% endif %}{% if coffee.month_place %} · {{ range_place(coffee.month_place) }}{% endif %}</span>
+      {% endif %}
+      {% if coffee.month_room %}
+      <span class="quiet-meta">{% if lang == 'en' %}30-day: {{ range_room(coffee.month_room) }}{% else %}近30日{{ range_room(coffee.month_room) }}{% endif %}</span>
       {% endif %}
       {% if coffee.volume %}
       <span class="quiet-meta">{% if lang == 'en' %}Volume {{ coffee.volume }}{% else %}成交 {{ coffee.volume }}{% endif %}</span>
@@ -57,8 +74,14 @@
       {% if fx.session_low and fx.session_high %}
       <span class="quiet-meta">{% if fx.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif fx.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ fx.session_low }} – {{ fx.session_high }}{% if fx.range_place %} · {{ range_place(fx.range_place) }}{% endif %}</span>
       {% endif %}
+      {% if fx.session_room %}
+      <span class="quiet-meta">{{ range_room(fx.session_room) }}</span>
+      {% endif %}
       {% if fx.low and fx.high %}
       <span class="quiet-meta">{% if lang == 'en' %}30-day {{ fx.low }} – {{ fx.high }}{% else %}近30日 {{ fx.low }} – {{ fx.high }}{% endif %}{% if fx.month_place %} · {{ range_place(fx.month_place) }}{% endif %}</span>
+      {% endif %}
+      {% if fx.month_room %}
+      <span class="quiet-meta">{% if lang == 'en' %}30-day: {{ range_room(fx.month_room) }}{% else %}近30日{{ range_room(fx.month_room) }}{% endif %}</span>
       {% endif %}
       <span class="quiet-meta">{% if lang == 'en' %}yuan per dollar{% else %}1 美元兑人民币{% endif %}</span>
       {% if fx.as_of %}

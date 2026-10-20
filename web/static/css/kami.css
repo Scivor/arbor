@@ -534,6 +534,171 @@ body {
   color: var(--olive);
 }
 
+/* ── Morning note ── */
+.daily { max-width: 760px; margin: 0 auto; }
+.daily-mast { margin-bottom: 28px; }
+.daily-kicker {
+  font-family: var(--sans);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--stone);
+}
+.daily h1 {
+  margin-top: 8px;
+  font-family: var(--serif);
+  font-size: 36px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  line-height: 1.25;
+}
+.daily-date {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--stone);
+}
+.daily h2 {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1.4;
+  margin-bottom: 10px;
+}
+.daily-contracts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+.daily-contract,
+.daily-fix,
+.daily-signals li,
+.daily-sides > div {
+  background: var(--ivory);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.daily-contract,
+.daily-fix { padding: 20px 22px 18px; }
+.daily-fix { margin-top: 16px; }
+.daily-px {
+  font-family: var(--serif);
+  font-size: 32px;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+}
+.daily-px small {
+  font-family: var(--sans);
+  font-size: 13px;
+  color: var(--olive);
+  letter-spacing: 0.04em;
+}
+.daily-chg {
+  margin-top: 4px;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  color: #3d5c45;
+}
+.daily-meta,
+.daily-yuan,
+.daily-morning {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--stone);
+  line-height: 1.5;
+}
+.daily-yuan { color: var(--olive); }
+.daily-prose,
+.daily-signals p,
+.daily-diverge p,
+.daily-sides li {
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--dark-warm);
+}
+.daily-block { margin-top: 36px; }
+.daily-lead {
+  margin: -2px 0 14px;
+  font-size: 13px;
+  color: var(--stone);
+}
+.daily-signals {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.daily-signals li { padding: 14px 16px 12px; }
+.daily-signal-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px 14px;
+}
+.daily-name { font-weight: 600; }
+.daily-print {
+  font-family: var(--serif);
+  font-variant-numeric: tabular-nums;
+  color: var(--brand);
+}
+.daily-print small {
+  font-family: var(--sans);
+  font-size: 12px;
+  color: var(--olive);
+}
+.daily-bias {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--olive);
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 1px 8px;
+}
+.daily-bias.bull,
+.daily-bias.slight-bull { color: #3d5c45; }
+.daily-bias.slight-bear,
+.daily-bias.diverge { color: #8a4b3a; }
+.daily-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-top: 14px;
+}
+.daily-sides > div { padding: 16px 18px 14px; }
+.daily-sides h3 {
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+.daily-sides ol { margin: 8px 0 0 1.2em; }
+.daily-sides li { margin-top: 8px; }
+.daily-diverge {
+  margin-top: 16px;
+  padding: 14px 16px;
+  background: var(--ivory);
+  border-left: 3px solid #8a4b3a;
+  border-radius: 0 8px 8px 0;
+}
+.daily-diverge .daily-kicker { color: #8a4b3a; }
+.daily-sources ol { margin: 8px 0 0 1.2em; }
+.daily-sources li { margin-top: 8px; line-height: 1.5; }
+.daily-sources a { color: var(--brand); overflow-wrap: anywhere; }
+.daily-quotes-label {
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--olive);
+}
+.daily-quotes { margin-top: 6px; line-height: 1.8; }
+.daily-foot {
+  margin-top: 16px;
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--stone);
+}
+
 /* ── Footer ── */
 .site-footer {
   border-top: 1px solid var(--border-soft);
@@ -548,7 +713,13 @@ body {
 /* ── Responsive ── */
 @media (max-width: 768px) {
   .site-nav-inner { padding: 0 20px; }
+  .site-links { gap: 14px; }
   .site-main { padding: 48px 20px 64px; }
+  .daily h1 { font-size: 28px; }
+  .daily-contracts,
+  .daily-sides { grid-template-columns: 1fr; }
+  .daily-px { font-size: 28px; }
+  .daily-bias { margin-left: 0; }
   .site-main:has(.quiet) { padding: 16px 16px 24px; }
   .hero-card { padding: 20px; }
   .hero-title { font-size: 22px; }

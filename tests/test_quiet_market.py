@@ -68,6 +68,34 @@ def test_range_place_uses_the_printed_decimals():
     assert _range_place(200.0, None, 210.0, 2) is None
 
 
+def test_range_room_uses_the_printed_decimals():
+    from web.quiet_market import _range_room
+
+    assert _range_room(376.55, 372.0, 378.2, 2) == {
+        "high_side": "under", "high_gap": "1.65",
+        "low_side": "above", "low_gap": "4.55",
+    }
+    at_high = _range_room(378.2, 372.0, 378.2, 2)
+    assert at_high["high_side"] == "at"
+    assert at_high["low_gap"] == "6.20"
+    at_low = _range_room(372.0, 372.0, 378.2, 2)
+    assert at_low["low_side"] == "at"
+    assert at_low["high_gap"] == "6.20"
+    above = _range_room(379.0, 372.0, 378.2, 2)
+    assert above["high_side"] == "above" and above["high_gap"] == "0.80"
+    assert above["low_side"] == "above"
+    below = _range_room(370.0, 372.0, 378.2, 2)
+    assert below["low_side"] == "below" and below["low_gap"] == "2.00"
+    assert below["high_side"] == "under"
+    rounded = _range_room(3.004, 1.0, 3.004, 2)
+    assert rounded["high_side"] == "at"
+    assert rounded["low_gap"] == "2.00"
+    assert _range_room(7.1234, 7.1, 7.16, 4)["high_gap"] == "0.0366"
+    assert _range_room(1.0, 1.0, 1.0, 2) is None
+    assert _range_room(200.0, None, 210.0, 2) is None
+    assert _range_room(1.0, 3.0, 2.0, 2) is None
+
+
 def test_month_place_can_differ_from_the_session_place():
     payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
@@ -80,6 +108,12 @@ def test_month_place_can_differ_from_the_session_place():
     assert view["low"] == "170.00"
     assert view["high"] == "210.00"
     assert view["month_place"] == "near_high"
+    assert view["session_room"] == {
+        "high_side": "under", "high_gap": "2.00",
+        "low_side": "above", "low_gap": "2.00",
+    }
+    assert view["month_room"]["high_gap"] == "10.00"
+    assert view["month_room"]["low_gap"] == "30.00"
 
 
 def test_session_band_is_the_last_bar_inside_the_month():
@@ -342,6 +376,14 @@ def _sample_quotes():
             "session_low": "372.00",
             "session_high": "378.20",
             "range_place": "near_high",
+            "session_room": {
+                "high_side": "under", "high_gap": "1.65",
+                "low_side": "above", "low_gap": "4.55",
+            },
+            "month_room": {
+                "high_side": "under", "high_gap": "12.85",
+                "low_side": "above", "low_gap": "16.45",
+            },
             "volume": "12,430",
             "as_of": "10-16 17:29 UTC",
             "session": "last",
@@ -359,6 +401,10 @@ def _sample_quotes():
             "session_low": "7.1000",
             "session_high": "7.1600",
             "range_place": "mid",
+            "session_room": {
+                "high_side": "under", "high_gap": "0.0366",
+                "low_side": "above", "low_gap": "0.0234",
+            },
             "volume": None,
             "as_of": "10-19 02:30 UTC",
             "session": "live",
@@ -401,8 +447,11 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "376.55" in html
     assert "美分/磅" in html
     assert "上一交易日 372.00 – 378.20 · 靠近高点" in html
+    assert "距高点 1.65，距低点 4.55" in html
     assert "今日 7.1000 – 7.1600 · 区间中部" in html
+    assert "距高点 0.0366，距低点 0.0234" in html
     assert "近30日 360.10 – 389.40 · 区间中部" in html
+    assert "近30日距高点 12.85，距低点 16.45" in html
     assert "人民币对美元" in html
     assert "7.1234" in html
     assert "1 美元兑人民币" in html
@@ -437,8 +486,11 @@ def test_empty_page_english(client, monkeypatch):
     assert "Coffee futures" in html
     assert "¢/lb" in html
     assert "Last session 372.00 – 378.20 · Near the high" in html
+    assert "1.65 below the high, 4.55 above the low" in html
     assert "Today 7.1000 – 7.1600 · Mid-range" in html
+    assert "0.0366 below the high, 0.0234 above the low" in html
     assert "30-day 360.10 – 389.40 · Mid-range" in html
+    assert "30-day: 12.85 below the high, 16.45 above the low" in html
     assert "RMB vs USD" in html
     assert "yuan per dollar" in html
     assert "Futures in yuan" in html
@@ -456,6 +508,34 @@ def test_empty_page_english(client, monkeypatch):
     assert "Last session +0.90, rate −0.05, together +0.01" in html
     assert "Price +1.10, rate −0.20" not in html
     assert "7.1234" in html
+
+
+def test_room_line_names_only_the_end_still_open(client, monkeypatch):
+    quotes = _sample_quotes()
+    quotes["coffee"]["session_room"] = {
+        "high_side": "at", "high_gap": "0.00",
+        "low_side": "above", "low_gap": "6.20",
+    }
+    quotes["coffee"]["month_room"] = {
+        "high_side": "under", "high_gap": "8.20",
+        "low_side": "below", "low_gap": "2.00",
+    }
+    quotes["fx"]["session_room"] = {
+        "high_side": "above", "high_gap": "0.0100",
+        "low_side": "above", "low_gap": "0.0700",
+    }
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: quotes)
+    html = client.get("/").text
+    assert "距低点 6.20" in html
+    assert "距高点 0.00" not in html
+    assert "近30日距高点 8.20，低于低点 2.00" in html
+    assert "高出高点 0.0100，距低点 0.0700" in html
+    en = client.get("/?lang=en").text
+    assert "6.20 above the low" in en
+    assert "0.00 below the high" not in en
+    assert "30-day: 8.20 below the high, 2.00 below the low" in en
+    assert "0.0100 above the high, 0.0700 above the low" in en
 
 
 def test_live_session_keeps_calling_the_move_the_futures(client, monkeypatch):

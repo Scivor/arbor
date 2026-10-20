@@ -191,6 +191,33 @@ def _session_band(highs, lows) -> tuple[Optional[float], Optional[float]]:
     return None, None
 
 
+def _range_place(price: float, low: Optional[float], high: Optional[float], decimals: int) -> Optional[str]:
+    """现价在这一段高低里的位置，按页面上的小数比较。"""
+    if low is None or high is None:
+        return None
+    p = round(float(price), decimals)
+    lo = round(float(low), decimals)
+    hi = round(float(high), decimals)
+    if hi < lo:
+        return None
+    if p > hi:
+        return "above"
+    if p < lo:
+        return "below"
+    if hi == lo:
+        return "flat"
+    if p == hi:
+        return "at_high"
+    if p == lo:
+        return "at_low"
+    pos = (p - lo) / (hi - lo)
+    if pos >= 2 / 3:
+        return "near_high"
+    if pos <= 1 / 3:
+        return "near_low"
+    return "mid"
+
+
 def _volume(value: Optional[float]) -> Optional[str]:
     if value is None or value <= 0:
         return None
@@ -212,6 +239,7 @@ def _view(raw: Optional[dict], *, symbol: str, decimals: int, clock: datetime) -
         "high": f"{raw['high']:.{decimals}f}" if raw.get("high") is not None else None,
         "session_low": f"{raw['session_low']:.{decimals}f}" if raw.get("session_low") is not None else None,
         "session_high": f"{raw['session_high']:.{decimals}f}" if raw.get("session_high") is not None else None,
+        "range_place": _range_place(price, raw.get("session_low"), raw.get("session_high"), decimals),
         "volume": _volume(raw.get("volume")),
         "as_of": _as_of(raw.get("as_of")),
         "session": _trading_session(raw.get("as_of"), clock),

@@ -52,6 +52,22 @@ def test_parse_chart_price_change_and_range():
     assert raw["as_of"] == datetime.fromtimestamp(1_760_720_400, tz=timezone.utc)
 
 
+def test_range_place_uses_the_printed_decimals():
+    from web.quiet_market import _range_place
+
+    assert _range_place(2.0, 0.0, 3.0, 2) == "near_high"
+    assert _range_place(1.0, 0.0, 3.0, 2) == "near_low"
+    assert _range_place(1.5, 0.0, 3.0, 2) == "mid"
+    assert _range_place(3.0, 0.0, 3.0, 2) == "at_high"
+    assert _range_place(0.0, 0.0, 3.0, 2) == "at_low"
+    assert _range_place(3.01, 0.0, 3.0, 2) == "above"
+    assert _range_place(-0.01, 0.0, 3.0, 2) == "below"
+    assert _range_place(1.0, 1.0, 1.0, 2) == "flat"
+    assert _range_place(376.55, 372.0, 378.2, 2) == "near_high"
+    assert _range_place(3.004, 1.0, 3.004, 2) == "at_high"
+    assert _range_place(200.0, None, 210.0, 2) is None
+
+
 def test_session_band_is_the_last_bar_inside_the_month():
     payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
@@ -308,6 +324,7 @@ def _sample_quotes():
             "high": "389.40",
             "session_low": "372.00",
             "session_high": "378.20",
+            "range_place": "near_high",
             "volume": "12,430",
             "as_of": "10-16 17:29 UTC",
             "session": "last",
@@ -322,8 +339,9 @@ def _sample_quotes():
             "tone": "down",
             "low": None,
             "high": None,
-            "session_low": "7.1100",
-            "session_high": "7.1300",
+            "session_low": "7.1000",
+            "session_high": "7.1600",
+            "range_place": "mid",
             "volume": None,
             "as_of": "10-19 02:30 UTC",
             "session": "live",
@@ -365,8 +383,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "KC=F" in html
     assert "376.55" in html
     assert "美分/磅" in html
-    assert "上一交易日 372.00 – 378.20" in html
-    assert "今日 7.1100 – 7.1300" in html
+    assert "上一交易日 372.00 – 378.20 · 靠近高点" in html
+    assert "今日 7.1000 – 7.1600 · 区间中部" in html
     assert "近30日" in html
     assert "人民币对美元" in html
     assert "7.1234" in html
@@ -400,8 +418,8 @@ def test_empty_page_english(client, monkeypatch):
     assert "The report is still at sea." in html
     assert "Coffee futures" in html
     assert "¢/lb" in html
-    assert "Last session 372.00 – 378.20" in html
-    assert "Today 7.1100 – 7.1300" in html
+    assert "Last session 372.00 – 378.20 · Near the high" in html
+    assert "Today 7.1000 – 7.1600 · Mid-range" in html
     assert "30-day" in html
     assert "RMB vs USD" in html
     assert "yuan per dollar" in html
@@ -429,13 +447,13 @@ def test_live_session_keeps_calling_the_move_the_futures(client, monkeypatch):
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: quotes)
     html = client.get("/").text
     assert "期货 +1.10，汇率 −0.20" in html
-    assert "今日 372.00 – 378.20" in html
+    assert "今日 372.00 – 378.20 · 靠近高点" in html
     assert "上一交易日 372.00" not in html
     assert "上一交易日 +1.10" not in html
     assert "期货是上一交易日的价" not in html
     en = client.get("/?lang=en").text
     assert "Price +1.10, rate −0.20" in en
-    assert "Today 372.00 – 378.20" in en
+    assert "Today 372.00 – 378.20 · Near the high" in en
     assert "Last session 372.00" not in en
     assert "Last session +1.10" not in en
 

@@ -109,7 +109,7 @@
     {% endif %}
   </div>
   {% if coffee or fx %}
-  <p class="quiet-src">Yahoo Finance</p>
+  <p class="quiet-src">{{ source if source else 'Yahoo Finance' }}</p>
   {% endif %}
 </section>
 {% endblock %}

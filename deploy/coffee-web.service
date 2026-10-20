@@ -9,6 +9,7 @@ Group=coffee
 WorkingDirectory=/home/coffee/coffee-v3
 Environment=PYTHONPATH=/home/coffee/coffee-v3
 Environment=PATH=/home/coffee/.local/bin:/usr/local/bin:/usr/bin:/bin
+EnvironmentFile=-/home/coffee/.arbor/.env
 ExecStart=/usr/bin/python3.11 -m uvicorn web.app:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=5

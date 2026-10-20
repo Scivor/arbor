@@ -38,6 +38,7 @@ from starlette.requests import Request
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from reports.fonts import css_display_stack, css_serif_stack
+from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
 from web.daily_brief import bias_label, get_issue, latest_issue
 from web.quiet_market import quiet_quotes
@@ -535,7 +536,9 @@ async def chat_page():
     latest = _latest_report_date()
     briefing = _extract_procurement_briefing(latest) if latest else None
     return HTMLResponse(
-        content=build_chat_page(briefing=briefing, report_date=latest)
+        content=build_chat_page(
+            briefing=briefing, report_date=latest, agent=agent_status(),
+        )
     )
 
 
@@ -569,7 +572,7 @@ async def chat_api(request: Request):
     except RuntimeError:
         output = _offline_clarify(message, briefing, history=history)
         _append_session(session_id, message, output)
-        return {"output": output, "session_id": session_id}
+        return {"output": output, "session_id": session_id, "provider": "offline"}
 
     # 首轮注入本期简报；后续轮次靠 chat_history，避免重复灌简报
     agent_input = message
@@ -583,7 +586,18 @@ async def chat_api(request: Request):
         return JSONResponse({"error": str(e)[:200]}, status_code=500)
 
     _append_session(session_id, message, output)
-    return {"output": output, "session_id": session_id}
+    status = agent_status()
+    return {
+        "output": output,
+        "session_id": session_id,
+        "provider": status["provider"] or "deepseek",
+    }
+
+
+@app.get("/api/agent")
+async def api_agent():
+    """采购顾问是否已接通。响应里没有钥匙。"""
+    return agent_status()
 
 
 def _daily_response(request: Request, issue: dict) -> HTMLResponse:

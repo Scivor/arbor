@@ -22,6 +22,7 @@ def build_chat_page(
     briefing: Optional[str] = None,
     suggestions: Optional[Sequence[str]] = None,
     report_date: Optional[str] = None,
+    agent: Optional[dict] = None,
 ) -> str:
     """
     渲染采购顾问追问页（消息列表 + 输入框，fetch POST /api/chat）。
@@ -37,6 +38,15 @@ def build_chat_page(
     chips_json = json.dumps(chips, ensure_ascii=False)
     briefing_json = json.dumps(briefing or "", ensure_ascii=False)
     date_label = html_lib.escape(report_date) if report_date else ""
+    provider = (agent or {}).get("provider")
+    model = (agent or {}).get("model") or ""
+    if (agent or {}).get("configured") and provider == "deepseek":
+        provider_line = f"DeepSeek · {model}"
+    elif (agent or {}).get("configured") and provider:
+        provider_line = f"{provider} · {model}"
+    else:
+        provider_line = "尚未接通 DeepSeek"
+    provider_html = html_lib.escape(provider_line)
     date_note = (
         f'<div class="chat-brief-meta">本期简报 · {date_label} '
         f'<a href="/reports/{date_label}/">查看周报</a></div>'
@@ -93,6 +103,14 @@ def build_chat_page(
     font-weight: 600;
     color: #141413;
     letter-spacing: 0.02em;
+  }}
+  .chat-provider {{
+    display: block;
+    margin-top: 2px;
+    font-family: {sans};
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    color: #6b6a64;
   }}
   .chat-hdr-actions {{
     display: flex;
@@ -251,7 +269,7 @@ def build_chat_page(
   <div class="chat-hdr">
     <div class="chat-brand">
       <img class="chat-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
-      <span class="chat-title">采购顾问</span>
+      <span class="chat-title">采购顾问<span class="chat-provider">{provider_html}</span></span>
     </div>
     <div class="chat-hdr-actions">
       <button type="button" class="chat-reset" id="chatReset">清空追问</button>

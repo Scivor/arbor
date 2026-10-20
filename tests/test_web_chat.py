@@ -69,6 +69,37 @@ def test_chat_page_route(client):
     assert "采购顾问" in resp.text
 
 
+def test_agent_status_names_deepseek_and_hides_the_key(client, monkeypatch):
+    monkeypatch.setattr(
+        "arbor.infrastructure.secrets.load_llm_api_key",
+        lambda *args, **kwargs: ("sk-secret-value", "deepseek"),
+    )
+    monkeypatch.delenv("AGENT_MODEL", raising=False)
+    monkeypatch.delenv("AGENT_BASE_URL", raising=False)
+    status = client.get("/api/agent")
+    assert status.status_code == 200
+    body = status.json()
+    assert body == {
+        "configured": True,
+        "provider": "deepseek",
+        "model": "deepseek-chat",
+    }
+    assert "sk-secret-value" not in status.text
+    page = client.get("/chat/")
+    assert "DeepSeek · deepseek-chat" in page.text
+
+
+def test_agent_status_when_deepseek_is_not_configured(client, monkeypatch, tmp_path):
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setattr("arbor.infrastructure.secrets.ENV_FILE", tmp_path / "missing.env")
+    status = client.get("/api/agent")
+    assert status.json()["configured"] is False
+    assert status.json()["provider"] is None
+    page = client.get("/chat/")
+    assert "尚未接通 DeepSeek" in page.text
+
+
 # ── POST /api/chat ────────────────────────────────────────────────────────────
 
 def test_api_chat_empty_message(client):
@@ -140,6 +171,7 @@ def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):
     resp = client.post("/api/chat", json={"message": "这周该不该买"})
     assert resp.status_code == 200
     assert "分批小幅补库" in resp.json()["output"]
+    assert resp.json()["provider"] == "offline"
 
 
 def test_api_chat_agent_internal_error(client, monkeypatch):

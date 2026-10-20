@@ -163,7 +163,9 @@ def test_quiet_quotes_degrades_when_fetch_fails():
     def boom():
         raise RuntimeError("yahoo down")
 
-    assert quiet_quotes(fetch=boom) == {"coffee": None, "fx": None, "yuan": None, "landed": None}
+    assert quiet_quotes(fetch=boom) == {
+        "coffee": None, "fx": None, "yuan": None, "landed": None, "source": None,
+    }
 
 
 def test_quiet_quotes_keeps_the_market_that_arrived():
@@ -424,6 +426,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "empty-at-sea.svg" in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
+    assert "Yahoo Finance" in html
 
 
 def test_empty_page_english(client, monkeypatch):
@@ -511,3 +514,184 @@ def test_published_report_does_not_fetch_quotes(client, monkeypatch):
     assert resp.status_code == 200
     assert resp.text == "report-body"
     assert called["n"] == 0
+
+
+_SINA_KC = (
+    'var hq_str_hf_KC="314.110,,313.700,313.850,317.750,303.000,'
+    '01:29:59,305.600,303.000,0,3,2,2026-10-20,Coffee,20063";'
+)
+_SINA_KC_KLINE = (
+    'var _KC=([{"date":"2026-10-16","open":"300","high":"360","low":"290","close":"305.400"},'
+    '{"date":"2026-10-19","open":"306","high":"317.750","low":"303.000","close":"313.700"}]);'
+)
+_SINA_FX = (
+    'var hq_str_fx_susdcny="15:08:00,6.6700,,6.6810,,,6.6831,6.6789,6.6791,2026-10-20";'
+)
+_SINA_FX_KLINE = (
+    'var _fx=("2026-10-19,6.6800,6.6700,6.6900,6.6810,|'
+    '2026-10-20,6.6818,6.6789,6.6822,6.6791,");'
+)
+
+
+def test_sina_coffee_folds_the_live_print_into_the_previous_beijing_bar():
+    from web.quiet_market import _sina_coffee_from
+
+    raw = _sina_coffee_from(_SINA_KC, _SINA_KC_KLINE)
+    assert raw["source"] == "Sina Finance"
+    assert raw["price"] == pytest.approx(314.110)
+    assert raw["prev"] == pytest.approx(305.600)
+    assert raw["name"] == "Coffee"
+    assert raw["volume"] == pytest.approx(20063)
+    assert raw["as_of"] == datetime(2026, 10, 19, 17, 29, 59, tzinfo=timezone.utc)
+    assert raw["session_high"] == pytest.approx(317.750)
+    assert raw["session_low"] == pytest.approx(303.000)
+    assert raw["high"] == pytest.approx(360.0)
+    assert raw["low"] == pytest.approx(290.0)
+    assert raw["closes"][-1] == pytest.approx(314.110)
+
+    clock = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    view = quiet_quotes(fetch=lambda: (raw, None), clock=clock)["coffee"]
+    assert view["price"] == "314.11"
+    assert view["volume"] == "20,063"
+    assert view["as_of"] == "10-19 17:29 UTC"
+    assert view["session"] == "last"
+    assert view["range_place"] == "near_high"
+    assert view["month_place"] == "mid"
+
+
+def test_sina_fx_uses_the_onshore_print_and_keeps_open_low_high_close():
+    from web.quiet_market import _sina_fx_from
+
+    raw = _sina_fx_from(_SINA_FX, _SINA_FX_KLINE)
+    assert raw["symbol"] == "USDCNY=X"
+    assert raw["price"] == pytest.approx(6.6791)
+    assert raw["prev"] == pytest.approx(6.6810)
+    assert raw["as_of"] == datetime(2026, 10, 20, 7, 8, tzinfo=timezone.utc)
+    assert raw["session_high"] == pytest.approx(6.6822)
+    assert raw["session_low"] == pytest.approx(6.6789)
+    assert raw["high"] == pytest.approx(6.6900)
+    assert raw["low"] == pytest.approx(6.6700)
+    assert raw["closes"] == pytest.approx([6.6810, 6.6791])
+
+    clock = datetime(2026, 10, 20, 8, 0, tzinfo=timezone.utc)
+    view = quiet_quotes(fetch=lambda: (None, raw), clock=clock)
+    assert view["source"] == "Sina Finance"
+    assert view["fx"]["price"] == "6.6791"
+    assert view["fx"]["session"] == "live"
+    assert view["fx"]["as_of"] == "10-20 07:08 UTC"
+    assert view["fx"]["range_place"] == "near_low"
+
+
+def test_sina_quote_without_a_kline_still_has_a_session_band():
+    from web.quiet_market import _sina_coffee_from, _sina_fx_from
+
+    coffee = _sina_coffee_from(_SINA_KC, "")
+    assert coffee["closes"] == pytest.approx([314.110])
+    assert coffee["session_high"] == pytest.approx(317.750)
+    assert coffee["session_low"] == pytest.approx(303.000)
+    fx = _sina_fx_from(
+        'var hq_str_fx_susdcny="15:08:00,6.6791";',
+        "",
+    )
+    assert fx["price"] == pytest.approx(6.6791)
+    assert fx["prev"] is None
+    assert _sina_coffee_from('var hq_str_hf_KC="";', "") is None
+    assert _sina_coffee_from("no quote", _SINA_KC_KLINE) is None
+
+
+def test_a_print_outside_the_bar_widens_it_without_the_quote_high():
+    from web.quiet_market import _sina_fx_from
+
+    hq = _SINA_FX.replace("6.6791,2026-10-20", "6.6900,2026-10-20")
+    raw = _sina_fx_from(hq, _SINA_FX_KLINE)
+    assert raw["price"] == pytest.approx(6.6900)
+    assert raw["session_high"] == pytest.approx(6.6900)
+    assert raw["session_low"] == pytest.approx(6.6789)
+    assert raw["high"] == pytest.approx(6.6900)
+
+
+def test_a_quote_more_than_a_day_from_the_last_bar_starts_its_own_bar():
+    from web.quiet_market import _sina_coffee_from
+
+    hq = _SINA_KC.replace("2026-10-20", "2026-10-22")
+    raw = _sina_coffee_from(hq, _SINA_KC_KLINE)
+    assert raw["closes"] == pytest.approx([305.400, 313.700, 314.110])
+    assert raw["session_high"] == pytest.approx(317.750)
+    assert raw["session_low"] == pytest.approx(303.000)
+    assert raw["high"] == pytest.approx(360.0)
+    assert raw["low"] == pytest.approx(290.0)
+
+
+def test_yahoo_failure_falls_back_to_sina_per_symbol(monkeypatch):
+    import web.quiet_market as qm
+
+    def yahoo(symbol, range_):
+        if symbol == "KC=F":
+            return None
+        return {"symbol": symbol, "price": 7.2, "source": "Yahoo Finance"}
+
+    called = []
+
+    def sina(symbol):
+        called.append(symbol)
+        return {"symbol": symbol, "price": 314.0, "source": "Sina Finance"}
+
+    monkeypatch.setattr(qm, "_yahoo_chart", yahoo)
+    monkeypatch.setattr(qm, "_sina_chart", sina)
+    coffee = qm._get_chart("KC=F", "1mo")
+    fx = qm._get_chart("USDCNY=X", "1mo")
+    assert coffee["source"] == "Sina Finance"
+    assert fx["source"] == "Yahoo Finance"
+    assert called == ["KC=F"]
+    assert qm._source_line(coffee, fx) == "Sina Finance · Yahoo Finance"
+    assert qm._source_line(
+        {"source": "Sina Finance"}, {"source": "Sina Finance"},
+    ) == "Sina Finance"
+
+
+def test_a_total_miss_is_not_cached_and_a_quote_is(monkeypatch):
+    import web.quiet_market as qm
+
+    qm._cache["at"] = 0.0
+    qm._cache["value"] = None
+    calls = {"n": 0}
+
+    def miss():
+        calls["n"] += 1
+        return None, None
+
+    monkeypatch.setattr(qm, "_fetch_both", miss)
+    try:
+        first = qm.quiet_quotes()
+        second = qm.quiet_quotes()
+        assert first["coffee"] is None and first["source"] is None
+        assert calls["n"] == 2
+        assert qm._cache["value"] is None
+
+        coffee = _parse_chart(_chart("KC=F", 314.11, 305.60))
+        coffee["source"] = "Sina Finance"
+
+        def hit():
+            calls["n"] += 1
+            return coffee, None
+
+        monkeypatch.setattr(qm, "_fetch_both", hit)
+        cached = qm.quiet_quotes()
+        again = qm.quiet_quotes()
+        assert calls["n"] == 3
+        assert cached["source"] == "Sina Finance"
+        assert again["coffee"]["price"] == "314.11"
+        assert again is cached
+    finally:
+        qm._cache["at"] = 0.0
+        qm._cache["value"] = None
+
+
+def test_empty_page_names_sina_when_that_is_the_source(client, monkeypatch):
+    quotes = _sample_quotes()
+    quotes["source"] = "Sina Finance"
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: quotes)
+    html = client.get("/").text
+    assert 'class="quiet-src">Sina Finance' in html
+    assert "Yahoo Finance" not in html

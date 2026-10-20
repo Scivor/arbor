@@ -7,17 +7,30 @@ web/quiet_market.py
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Optional
 from urllib.parse import quote
+from zoneinfo import ZoneInfo
 
 import requests
 
 from arbor.domain.cost.landed_cost import LandedCostCalculator
 
 _CHART = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_SINA_HEADERS = {"Referer": "https://finance.sina.com.cn"}
+_SINA_KC_KLINE = (
+    "https://stock2.finance.sina.com.cn/futures/api/jsonp.php/"
+    "var%20_KC=/GlobalFuturesService.getGlobalFuturesDailyKLine?symbol=KC"
+)
+_SINA_FX_KLINE = (
+    "https://vip.stock.finance.sina.com.cn/forex/api/jsonp.php/"
+    "var%20_fx=/NewForexService.getDayKLine?symbol=fx_susdcny"
+)
 # 与到库成本同一套斤、吨换算。这里只折期货现价，不加运费和关税。
 _LB_PER_MT = LandedCostCalculator.MT_PER_LB
 _JIN_PER_MT = 2000.0
@@ -389,14 +402,222 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     }
 
 
-def _get_chart(symbol: str, range_: str) -> Optional[dict]:
+def _yahoo_chart(symbol: str, range_: str) -> Optional[dict]:
     try:
         url = _CHART.format(symbol=quote(symbol, safe=""))
         resp = _session.get(url, params={"interval": "1d", "range": range_}, timeout=8)
         resp.raise_for_status()
-        return _parse_chart(resp.json())
+        raw = _parse_chart(resp.json())
     except Exception:
         return None
+    if raw:
+        raw["source"] = "Yahoo Finance"
+    return raw
+
+
+def _num_at(fields: list[str], index: int) -> Optional[float]:
+    try:
+        if index >= len(fields) or fields[index] == "":
+            return None
+        return float(fields[index])
+    except (TypeError, ValueError):
+        return None
+
+
+def _hq_fields(text: str, key: str) -> Optional[list[str]]:
+    match = re.search(rf'hq_str_{re.escape(key)}="([^"]*)"', text or "")
+    if not match or not match.group(1).strip():
+        return None
+    return match.group(1).split(",")
+
+
+def _shanghai(date_text: str, time_text: str) -> Optional[datetime]:
+    date_text = (date_text or "").strip()
+    time_text = (time_text or "").strip() or "00:00:00"
+    if not date_text:
+        return None
+    try:
+        naive = datetime.strptime(f"{date_text} {time_text}", "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+    return naive.replace(tzinfo=_SHANGHAI)
+
+
+def _window(bars: list[dict]) -> list[dict]:
+    if not bars:
+        return []
+    cutoff = bars[-1]["date"] - timedelta(days=30)
+    kept = [bar for bar in bars if bar["date"] >= cutoff]
+    return kept or [bars[-1]]
+
+
+def _fold_live(bars: list[dict], moment: Optional[datetime], price: float, high: float, low: float) -> list[dict]:
+    """把现价并进最后一根日线。新浪的交易日标签可能比北京日期早一天。
+
+    已有那根柱时，只用现价扩高低。外汇报价自带的高低和日线不是同一组数。
+    没有对应柱时，才用报价里的高低新开一根。
+    """
+    if high < low:
+        high, low = low, high
+    quote_day = moment.astimezone(_SHANGHAI).date() if moment else None
+    if bars and quote_day is not None and abs((quote_day - bars[-1]["date"]).days) <= 1:
+        bars[-1]["high"] = max(bars[-1]["high"], price)
+        bars[-1]["low"] = min(bars[-1]["low"], price)
+        bars[-1]["close"] = price
+        return bars
+    bar = {"date": quote_day, "high": high, "low": low, "close": price}
+    return bars + [bar]
+
+
+def _raw_from_bars(symbol, name, price, prev, volume, moment, bars) -> dict:
+    change = (price - prev) / prev if prev else None
+    moment_utc = moment.astimezone(timezone.utc) if moment else None
+    return {
+        "symbol": symbol,
+        "name": name,
+        "price": price,
+        "prev": prev,
+        "change_pct": change,
+        "high": max(bar["high"] for bar in bars),
+        "low": min(bar["low"] for bar in bars),
+        "session_high": bars[-1]["high"],
+        "session_low": bars[-1]["low"],
+        "volume": volume,
+        "as_of": moment_utc,
+        "closes": [bar["close"] for bar in bars],
+        "source": "Sina Finance",
+    }
+
+
+def _coffee_bars(text: str) -> list[dict]:
+    match = re.search(r"\[.*\]", text or "", re.S)
+    if not match:
+        return []
+    try:
+        raw = json.loads(match.group(0))
+    except json.JSONDecodeError:
+        return []
+    bars = []
+    for item in raw:
+        try:
+            bars.append({
+                "date": datetime.strptime(item["date"], "%Y-%m-%d").date(),
+                "high": float(item["high"]),
+                "low": float(item["low"]),
+                "close": float(item["close"]),
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    return bars
+
+
+def _fx_bars(text: str) -> list[dict]:
+    """新浪外汇日线：日期,开盘,最低,最高,收盘。"""
+    match = re.search(r'"(.*)"', text or "", re.S)
+    if not match:
+        return []
+    bars = []
+    for row in match.group(1).split("|"):
+        parts = row.split(",")
+        if len(parts) < 5 or not parts[0]:
+            continue
+        try:
+            bars.append({
+                "date": datetime.strptime(parts[0], "%Y-%m-%d").date(),
+                "low": float(parts[2]),
+                "high": float(parts[3]),
+                "close": float(parts[4]),
+            })
+        except ValueError:
+            continue
+    return bars
+
+
+def _sina_coffee_from(hq_text: str, kline_text: str) -> Optional[dict]:
+    fields = _hq_fields(hq_text, "hf_KC")
+    if not fields:
+        return None
+    price = _num_at(fields, 0)
+    if price is None:
+        return None
+    high = _num_at(fields, 4)
+    low = _num_at(fields, 5)
+    prev = _num_at(fields, 7)
+    moment = _shanghai(fields[12] if len(fields) > 12 else "", fields[6] if len(fields) > 6 else "")
+    name = fields[13].strip() if len(fields) > 13 else ""
+    bars = _fold_live(
+        _window(_coffee_bars(kline_text)),
+        moment,
+        price,
+        high if high is not None else price,
+        low if low is not None else price,
+    )
+    return _raw_from_bars("KC=F", name, price, prev, _num_at(fields, 14), moment, bars)
+
+
+def _sina_fx_from(hq_text: str, kline_text: str) -> Optional[dict]:
+    fields = _hq_fields(hq_text, "fx_susdcny")
+    if not fields:
+        return None
+    price = _num_at(fields, 8)
+    if price is None:
+        price = _num_at(fields, 1)
+    if price is None:
+        return None
+    high = _num_at(fields, 6)
+    low = _num_at(fields, 7)
+    date_text = next((part.strip() for part in reversed(fields) if re.fullmatch(r"\d{4}-\d{2}-\d{2}", part.strip())), "")
+    moment = _shanghai(date_text, fields[0] if fields else "")
+    bars = _fold_live(
+        _window(_fx_bars(kline_text)),
+        moment,
+        price,
+        high if high is not None else price,
+        low if low is not None else price,
+    )
+    return _raw_from_bars("USDCNY=X", "", price, _num_at(fields, 3), None, moment, bars)
+
+
+def _sina_text(url: str) -> Optional[str]:
+    try:
+        resp = _session.get(url, headers=_SINA_HEADERS, timeout=8)
+        resp.raise_for_status()
+        resp.encoding = "gbk"
+        return resp.text
+    except Exception:
+        return None
+
+
+def _sina_chart(symbol: str) -> Optional[dict]:
+    if symbol == "KC=F":
+        hq = _sina_text("https://hq.sinajs.cn/list=hf_KC")
+        kline = _sina_text(_SINA_KC_KLINE)
+        if not hq:
+            return None
+        return _sina_coffee_from(hq, kline or "")
+    if symbol == "USDCNY=X":
+        hq = _sina_text("https://hq.sinajs.cn/list=fx_susdcny")
+        kline = _sina_text(_SINA_FX_KLINE)
+        if not hq:
+            return None
+        return _sina_fx_from(hq, kline or "")
+    return None
+
+
+def _get_chart(symbol: str, range_: str) -> Optional[dict]:
+    raw = _yahoo_chart(symbol, range_)
+    if raw:
+        return raw
+    return _sina_chart(symbol)
+
+
+def _source_line(coffee_raw: Optional[dict], fx_raw: Optional[dict]) -> Optional[str]:
+    names = []
+    for raw in (coffee_raw, fx_raw):
+        src = (raw or {}).get("source")
+        if src and src not in names:
+            names.append(src)
+    return " · ".join(names) if names else None
 
 
 def _fetch_both() -> tuple[Optional[dict], Optional[dict]]:
@@ -427,8 +648,9 @@ def quiet_quotes(fetch: Optional[Callable[[], tuple]] = None, clock: Optional[da
         "fx": _view(fx_raw, symbol="USDCNY=X", decimals=4, clock=when),
         "yuan": _yuan(coffee_raw, fx_raw),
         "landed": _landed(coffee_raw, fx_raw),
+        "source": _source_line(coffee_raw, fx_raw),
     }
-    if fetch is None:
+    if fetch is None and (value["coffee"] or value["fx"]):
         _cache["at"] = now
         _cache["value"] = value
     return value

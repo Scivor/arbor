@@ -1,6 +1,28 @@
 /* Kami Design System — Web Edition */
 /* Tokens from https://kami.tw93.fun/ */
 
+@font-face {
+  font-family: "Comfortaa";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/static/fonts/comfortaa-latin-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Comfortaa";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/static/fonts/comfortaa-latin-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Comfortaa";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/static/fonts/comfortaa-latin-700.woff2") format("woff2");
+}
+
 :root {
   --parchment:    #f5f4ed;
   --ivory:        #faf9f5;
@@ -14,6 +36,8 @@
   --border:       #e8e6dc;
   --border-soft:  #e5e3d8;
 
+  /* 标题/品牌：与 Arbor 字标同系的圆润几何无衬线 */
+  --display: "Comfortaa", "Nunito", "Varela Round", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
   --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --mono:  "JetBrains Mono", "Fira Code", "SF Mono", Consolas, Monaco, monospace;
@@ -52,14 +76,17 @@ body {
   height: 56px;
 }
 .site-brand {
-  font-family: var(--serif);
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--near-black);
+  display: inline-flex;
+  align-items: center;
   text-decoration: none;
-  letter-spacing: 0.6px;
+  line-height: 0;
 }
-.site-brand:hover { color: var(--brand); }
+.site-brand-logo {
+  height: 22px;
+  width: auto;
+  display: block;
+}
+.site-brand:hover { opacity: 0.85; }
 .site-links {
   display: flex;
   gap: 28px;
@@ -104,12 +131,13 @@ body {
 }
 
 .hero-title {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 28px;
-  font-weight: 500;
+  font-weight: 600;
   line-height: 1.25;
   color: var(--near-black);
   margin-bottom: 8px;
+  letter-spacing: 0.02em;
 }
 
 .hero-sub {
@@ -198,12 +226,12 @@ body {
 
 /* ── Section Title ── */
 .section-title {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 20px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--near-black);
   margin-bottom: 16px;
-  letter-spacing: 0.3px;
+  letter-spacing: 0.02em;
 }
 .section-title span {
   font-size: 12px;
@@ -304,10 +332,11 @@ body {
   background: var(--ivory);
 }
 .report-viewer-title {
-  font-family: var(--serif);
+  font-family: var(--display);
   font-size: 15px;
   font-weight: 600;
   color: var(--near-black);
+  letter-spacing: 0.02em;
 }
 .report-viewer-body {
   padding: 0;

@@ -96,6 +96,24 @@ def test_range_room_uses_the_printed_decimals():
     assert _range_room(1.0, 3.0, 2.0, 2) is None
 
 
+def test_versus_settlement_uses_the_printed_cents():
+    from web.quiet_market import versus_settlement
+
+    assert versus_settlement("376.55", "315.70") == {
+        "side": "above", "gap": "60.85", "settlement": "315.70",
+    }
+    assert versus_settlement("312.75", "315.70") == {
+        "side": "below", "gap": "2.95", "settlement": "315.70",
+    }
+    assert versus_settlement("315.70", "315.70") == {
+        "side": "same", "gap": None, "settlement": "315.70",
+    }
+    assert versus_settlement("315.704", "315.70")["side"] == "same"
+    assert versus_settlement("3,484", "3414", 0)["gap"] == "70"
+    assert versus_settlement("", "315.70") is None
+    assert versus_settlement("376.55", "nope") is None
+
+
 def test_month_place_can_differ_from_the_session_place():
     payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
@@ -448,6 +466,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "美分/磅" in html
     assert "上一交易日 372.00 – 378.20 · 靠近高点" in html
     assert "距高点 1.65，距低点 4.55" in html
+    assert 'href="/daily/2026-10-20/"' in html
+    assert "较 2026-10-20 早报结算 315.70 高 60.85" in html.replace('<a href="/daily/2026-10-20/">', "").replace("</a>", "")
     assert "今日 7.1000 – 7.1600 · 区间中部" in html
     assert "距高点 0.0366，距低点 0.0234" in html
     assert "近30日 360.10 – 389.40 · 区间中部" in html
@@ -487,6 +507,10 @@ def test_empty_page_english(client, monkeypatch):
     assert "¢/lb" in html
     assert "Last session 372.00 – 378.20 · Near the high" in html
     assert "1.65 below the high, 4.55 above the low" in html
+    assert 'href="/daily/2026-10-20/?lang=en"' in html
+    assert "60.85 above the 2026-10-20 morning settlement 315.70" in html.replace(
+        '<a href="/daily/2026-10-20/?lang=en">', "",
+    ).replace("</a>", "")
     assert "Today 7.1000 – 7.1600 · Mid-range" in html
     assert "0.0366 below the high, 0.0234 above the low" in html
     assert "30-day 360.10 – 389.40 · Mid-range" in html
@@ -566,6 +590,7 @@ def test_empty_page_survives_quote_failure(client, monkeypatch):
     html = client.get("/").text
     assert "周报还在海上" in html
     assert "行情暂未到港" in html
+    assert "早报结算" not in html
     assert "empty-at-sea.svg" in html
 
 
@@ -574,6 +599,7 @@ def test_empty_page_english_when_quotes_missing(client, monkeypatch):
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: {"coffee": None, "fx": None})
     html = client.get("/?lang=en").text
     assert "The quotes have not come in." in html
+    assert "morning settlement" not in html
     assert "The report is still at sea." in html
 
 

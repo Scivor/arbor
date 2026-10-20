@@ -41,7 +41,7 @@ from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
 from web.daily_brief import bias_label, get_issue, latest_issue
-from web.quiet_market import quiet_quotes
+from web.quiet_market import quiet_quotes, versus_settlement
 from web.track_record import build_track_record_html
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -331,6 +331,21 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+def _morning_gap(coffee: Optional[dict]) -> Optional[dict]:
+    """空页现价相对最新早报里阿拉比卡结算价。没有现价就不写。"""
+    if not coffee or not coffee.get("price"):
+        return None
+    issue = latest_issue() or {}
+    contracts = issue.get("contracts") or []
+    if not contracts or not contracts[0].get("price") or not issue.get("date"):
+        return None
+    gap = versus_settlement(coffee["price"], contracts[0]["price"], 2)
+    if not gap:
+        return None
+    gap["date"] = issue["date"]
+    return gap
+
+
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
     """Root path shows the latest report directly — no nav bar."""
@@ -341,13 +356,15 @@ async def latest_report(request: Request):
             quotes = await asyncio.to_thread(quiet_quotes)
         except Exception:
             quotes = {"coffee": None, "fx": None}
+        coffee = (quotes or {}).get("coffee")
         return templates.TemplateResponse(request, "empty.html", {
             "lang": lang,
-            "coffee": (quotes or {}).get("coffee"),
+            "coffee": coffee,
             "fx": (quotes or {}).get("fx"),
             "yuan": (quotes or {}).get("yuan"),
             "landed": (quotes or {}).get("landed"),
             "source": (quotes or {}).get("source"),
+            "note": _morning_gap(coffee),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 

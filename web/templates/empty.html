@@ -40,6 +40,9 @@
       {% if coffee.change_pts or coffee.change_text %}
       <span class="quiet-chg {{ coffee.tone }}">{% if coffee.change_pts %}{{ coffee.change_pts }}{% endif %}{% if coffee.change_text %} {{ coffee.change_text }}{% endif %}</span>
       {% endif %}
+      {% if note %}
+      <span class="quiet-meta">{% if note.side == 'same' %}{% if lang == 'en' %}Same as the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}与 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 相同{% endif %}{% elif note.side == 'above' %}{% if lang == 'en' %}{{ note.gap }} above the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}较 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 高 {{ note.gap }}{% endif %}{% else %}{% if lang == 'en' %}{{ note.gap }} below the <a href="/daily/{{ note.date }}/?lang=en">{{ note.date }}</a> morning settlement {{ note.settlement }}{% else %}较 <a href="/daily/{{ note.date }}/">{{ note.date }}</a> 早报结算 {{ note.settlement }} 低 {{ note.gap }}{% endif %}{% endif %}</span>
+      {% endif %}
       {% if coffee.session_low and coffee.session_high %}
       <span class="quiet-meta">{% if coffee.session == 'last' %}{% if lang == 'en' %}Last session{% else %}上一交易日{% endif %}{% elif coffee.session == 'live' %}{% if lang == 'en' %}Today{% else %}今日{% endif %}{% else %}{% if lang == 'en' %}Session{% else %}当日{% endif %}{% endif %} {{ coffee.session_low }} – {{ coffee.session_high }}{% if coffee.range_place %} · {{ range_place(coffee.range_place) }}{% endif %}</span>
       {% endif %}

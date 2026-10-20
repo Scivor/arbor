@@ -22,6 +22,13 @@
   font-display: swap;
   src: url("/static/fonts/comfortaa-latin-700.woff2") format("woff2");
 }
+@font-face {
+  font-family: "ChillRoundM";
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url("/static/fonts/ChillRoundM.woff2") format("woff2");
+}
 
 :root {
   --parchment:    #f5f4ed;
@@ -36,8 +43,8 @@
   --border:       #e8e6dc;
   --border-soft:  #e5e3d8;
 
-  /* 标题/品牌：与 Arbor 字标同系的圆润几何无衬线 */
-  --display: "Comfortaa", "Nunito", "Varela Round", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  /* 标题/品牌：Comfortaa(拉丁) + ChillRoundM(汉字圆体) */
+  --display: "Comfortaa", "ChillRoundM", "Nunito", "Varela Round", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
   --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --mono:  "JetBrains Mono", "Fira Code", "SF Mono", Consolas, Monaco, monospace;

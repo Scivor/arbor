@@ -261,6 +261,30 @@ def _range_room(price: float, low: Optional[float], high: Optional[float], decim
     }
 
 
+def versus_settlement(price: str, settlement: str, decimals: int = 2) -> Optional[dict]:
+    """现价相对早报结算，两边都按页面上的小数。相同、更高、更低。"""
+    scale = 10 ** decimals
+
+    def ticks(text: str) -> int:
+        return int(round(float(str(text).replace(",", "")) * scale))
+
+    try:
+        printed = ticks(price)
+        settled = ticks(settlement)
+    except (TypeError, ValueError):
+        return None
+    fmt = f"{{:.{decimals}f}}"
+    settled_text = fmt.format(settled / scale)
+    diff = printed - settled
+    if diff == 0:
+        return {"side": "same", "gap": None, "settlement": settled_text}
+    return {
+        "side": "above" if diff > 0 else "below",
+        "gap": fmt.format(abs(diff) / scale),
+        "settlement": settled_text,
+    }
+
+
 def _volume(value: Optional[float]) -> Optional[str]:
     if value is None or value <= 0:
         return None

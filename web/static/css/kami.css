@@ -467,6 +467,10 @@ body {
   color: var(--stone);
   letter-spacing: 0.02em;
 }
+.quiet-meta a {
+  color: inherit;
+  text-underline-offset: 2px;
+}
 .quiet-miss {
   margin-top: 8px;
   font-family: var(--serif);

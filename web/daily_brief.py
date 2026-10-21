@@ -26,6 +26,7 @@ _ISSUE = {
                 "zh": "6 周新高 · 盘中最高 317.75 · 上周五 305.60",
                 "en": "Six-week high · session high 317.75 · Friday 305.60",
             },
+            "per_kg": "46.77",
             "yuan": {
                 "zh": "按今天中间价约 46.77 元/公斤（推算），昨天 45.28",
                 "en": "About 46.77 yuan/kg at today's fixing (estimated). Yesterday 45.28.",

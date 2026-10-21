@@ -7,6 +7,18 @@ import web.app as web_app
 client = TestClient(web_app.app)
 
 
+def test_arabica_per_kilo_is_the_settlement_at_the_fixing():
+    from arbor.domain.cost.landed_cost import LandedCostCalculator
+    from web.daily_brief import latest_issue
+
+    issue = latest_issue()
+    cents = float(issue["contracts"][0]["price"])
+    rate = float(issue["fix"]["price"])
+    per_kg = (cents / 100.0) * LandedCostCalculator.MT_PER_LB * rate / 1000.0
+    assert f"{per_kg:.2f}" == "46.77"
+    assert issue["contracts"][0]["per_kg"] == "46.77"
+
+
 def test_morning_note_keeps_the_settlement_and_the_fixing():
     html = client.get("/daily/").text
     assert "咖啡生豆期货早报" in html

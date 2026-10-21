@@ -246,6 +246,7 @@ def test_yuan_converts_cents_with_the_landed_cost_ton():
     per_jin = per_ton / 2000.0
     prev_jin = (190.0 / 100.0) * LandedCostCalculator.MT_PER_LB * 7.0 / 2000.0
     assert yuan["per_jin"] == f"{per_jin:.2f}"
+    assert yuan["per_kg"] == f"{per_ton / 1000:.2f}"
     assert yuan["per_ton"] == f"{per_ton:,.0f}"
     assert yuan["tone"] == "up"
     assert yuan["change_pts"] == f"+{per_jin - prev_jin:.2f}"
@@ -437,6 +438,7 @@ def _sample_quotes():
         },
         "yuan": {
             "per_jin": "22.49",
+            "per_kg": "44.98",
             "per_ton": "44,975",
             "change_text": "+3.40%",
             "change_pts": "+0.74",
@@ -477,6 +479,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     plain = html.replace('<a href="/daily/2026-10-20/">', "").replace("</a>", "")
     assert "较 2026-10-20 早报结算 315.70 高 60.85" in plain
     assert "较 2026-10-20 早报中间价 6.7200 高 0.4034" in plain
+    assert "44.98 元/公斤" in html
+    assert "较 2026-10-20 早报推算 46.77 元/公斤 低 1.79" in plain
     assert "今日 7.1000 – 7.1600 · 区间中部" in html
     assert "距高点 0.0366，距低点 0.0234" in html
     assert "近30日 360.10 – 389.40 · 区间中部" in html
@@ -520,6 +524,8 @@ def test_empty_page_english(client, monkeypatch):
     plain = html.replace('<a href="/daily/2026-10-20/?lang=en">', "").replace("</a>", "")
     assert "60.85 above the 2026-10-20 morning settlement 315.70" in plain
     assert "0.4034 above the 2026-10-20 morning fixing 6.7200" in plain
+    assert "44.98 CNY/kg" in html
+    assert "1.79 below the 2026-10-20 morning estimate 46.77 CNY/kg" in plain
     assert "Today 7.1000 – 7.1600 · Mid-range" in html
     assert "0.0366 below the high, 0.0234 above the low" in html
     assert "30-day 360.10 – 389.40 · Mid-range" in html
@@ -601,6 +607,7 @@ def test_empty_page_survives_quote_failure(client, monkeypatch):
     assert "行情暂未到港" in html
     assert "早报结算" not in html
     assert "早报中间价" not in html
+    assert "早报推算" not in html
     assert "empty-at-sea.svg" in html
 
 
@@ -611,6 +618,7 @@ def test_empty_page_english_when_quotes_missing(client, monkeypatch):
     assert "The quotes have not come in." in html
     assert "morning settlement" not in html
     assert "morning fixing" not in html
+    assert "morning estimate" not in html
     assert "The report is still at sea." in html
 
 

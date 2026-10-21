@@ -359,6 +359,13 @@ def _morning_fix(fx: Optional[dict]) -> Optional[dict]:
     return _morning_mark((fx or {}).get("price"), fixing, 4)
 
 
+def _morning_yuan(yuan: Optional[dict]) -> Optional[dict]:
+    """空页元/公斤相对早报里阿拉比卡的推算。"""
+    contracts = (latest_issue() or {}).get("contracts") or []
+    estimate = contracts[0].get("per_kg") if contracts else None
+    return _morning_mark((yuan or {}).get("per_kg"), estimate, 2)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
     """Root path shows the latest report directly — no nav bar."""
@@ -371,15 +378,17 @@ async def latest_report(request: Request):
             quotes = {"coffee": None, "fx": None}
         coffee = (quotes or {}).get("coffee")
         fx = (quotes or {}).get("fx")
+        yuan = (quotes or {}).get("yuan")
         return templates.TemplateResponse(request, "empty.html", {
             "lang": lang,
             "coffee": coffee,
             "fx": fx,
-            "yuan": (quotes or {}).get("yuan"),
+            "yuan": yuan,
             "landed": (quotes or {}).get("landed"),
             "source": (quotes or {}).get("source"),
             "note": _morning_gap(coffee),
             "fix": _morning_fix(fx),
+            "yuan_note": _morning_yuan(yuan),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 

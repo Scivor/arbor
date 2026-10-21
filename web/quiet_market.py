@@ -388,8 +388,10 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     price_leg, fx_leg, together = _split_move(
         lambda c, r: _cny_amounts(c, r)[0], cents, rate, coffee.get("prev"), fx.get("prev"),
     )
+    per_jin_text = f"{per_jin:.2f}"
     return {
-        "per_jin": f"{per_jin:.2f}",
+        "per_jin": per_jin_text,
+        "per_kg": f"{per_ton / 1000:.2f}",
         "per_ton": f"{per_ton:,.0f}",
         "change_text": _pct(change),
         "change_pts": _pts(per_jin, prev_jin, 2) if prev_jin is not None else None,

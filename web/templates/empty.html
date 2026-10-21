@@ -25,9 +25,9 @@
 {%- endif -%}
 {%- endif -%}
 {%- endmacro %}
-{% macro morning_mark(row, noun_zh, noun_en) -%}
+{% macro morning_mark(row, noun_zh, noun_en, unit_zh='', unit_en='') -%}
 {%- if row -%}
-<span class="quiet-meta">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
+<span class="quiet-meta">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ noun_en }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ noun_zh }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
 {%- endif -%}
 {%- endmacro %}
 <section class="quiet">
@@ -103,6 +103,10 @@
       <div class="quiet-quote">
         <span class="quiet-kicker">{% if lang == 'en' %}Futures in yuan{% else %}期货折人民币{% endif %}</span>
         <span class="quiet-px">{{ yuan.per_jin }} <small>{% if lang == 'en' %}CNY/jin{% else %}元/斤{% endif %}</small></span>
+        {% if yuan.per_kg %}
+        <span class="quiet-meta">{{ yuan.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
+        {{ morning_mark(yuan_note, '推算', 'estimate', '元/公斤', 'CNY/kg') }}
+        {% endif %}
         <span class="quiet-meta">{{ yuan.per_ton }} {% if lang == 'en' %}CNY/t{% else %}元/吨{% endif %}</span>
         {% if yuan.change_pts or yuan.change_text %}
         <span class="quiet-chg {{ yuan.tone }}">{% if yuan.change_pts %}{{ yuan.change_pts }}{% endif %}{% if yuan.change_text %} {{ yuan.change_text }}{% endif %}</span>

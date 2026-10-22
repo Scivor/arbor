@@ -347,7 +347,7 @@ body {
   margin: 0 !important;
 }
 
-/* ── No-report page: drawing, handwritten line, two live quotes ── */
+/* ── No-report page: handwritten line, two live quotes ── */
 @font-face {
   font-family: "Quiet Hand";
   src: url("/static/fonts/quiet-hand-zh.woff2") format("woff2");
@@ -376,15 +376,8 @@ body {
   text-align: center;
   padding: 4px 0 0;
 }
-.quiet img {
-  width: auto;
-  height: auto;
-  max-width: min(420px, 78vw);
-  max-height: 24vh;
-  display: block;
-}
 .quiet-line {
-  margin-top: 16px;
+  margin-top: 0;
   font-family: "Quiet Hand", cursive;
   font-size: 42px;
   font-weight: 400;
@@ -731,8 +724,7 @@ body {
   .report-item { flex-direction: column; align-items: flex-start; gap: 10px; }
   .report-item-actions { width: 100%; justify-content: flex-end; }
   .specimen-grid { grid-template-columns: 1fr; }
-  .quiet img { max-height: 34vh; }
-  .quiet-line { font-size: 34px; margin-top: 16px; }
+  .quiet-line { font-size: 34px; margin-top: 0; }
   .quiet-market { gap: 28px; margin-top: 22px; }
   .quiet-derived { gap: 28px; }
   .quiet-px { font-size: 24px; }

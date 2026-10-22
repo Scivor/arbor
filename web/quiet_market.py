@@ -461,6 +461,43 @@ def _rate_text(frac: float) -> str:
     return f"{pct:.1f}%"
 
 
+def _usd_kg_fen(usd_per_mt: float, rate: float) -> int:
+    """美元/吨 × 汇率，换成页面上的元/公斤，再记成分。"""
+    return _fen(f"{float(usd_per_mt) * float(rate) / 1000:.2f}")
+
+
+def _landing_parts(now, futures_kg: str, landed_kg: str) -> Optional[dict]:
+    """
+    到库多出来的元/公斤，拆成页面上点过名的三笔。
+
+    海运、关税、增值税各自先四舍五入。其余是保险、港口、境内、融资、损耗和凑分，
+    凑齐后才等于两个公斤价的差。差不是正的就不拆。
+    """
+    futures_fen = _fen(futures_kg)
+    landed_fen = _fen(landed_kg)
+    if futures_fen is None or landed_fen is None:
+        return None
+    gap = landed_fen - futures_fen
+    if gap <= 0:
+        return None
+    freight = _usd_kg_fen(now.ocean_freight_usd_mt, now.fx_rate_usd_cny)
+    duty = _usd_kg_fen(now.tariff_usd_mt, now.fx_rate_usd_cny)
+    vat = _usd_kg_fen(now.vat_usd_mt, now.fx_rate_usd_cny)
+
+    def money(fen: int) -> str:
+        if fen < 0:
+            return _from_fen(fen)
+        return f"{fen / 100:.2f}"
+
+    rest = gap - freight - duty - vat
+    return {
+        "freight": money(freight),
+        "duty": money(duty),
+        "vat": money(vat),
+        "rest": None if rest == 0 else money(rest),
+    }
+
+
 def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     if not coffee or not fx:
         return None
@@ -486,10 +523,12 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         lambda c, r: _landed_cost(c, r).total_cost_cny_jin,
         cents, rate, coffee.get("prev"), fx.get("prev"),
     )
+    landed_kg = f"{now.total_cost_cny_mt / 1000:.2f}"
     return {
         "per_jin": f"{now.total_cost_cny_jin:.2f}",
-        "per_kg": f"{now.total_cost_cny_mt / 1000:.2f}",
+        "per_kg": landed_kg,
         "per_ton": f"{now.total_cost_cny_mt:,.0f}",
+        "parts": _landing_parts(now, _per_kg_text(cents, rate), landed_kg),
         "change_text": _pct(change),
         "change_pts": _pts(now.total_cost_cny_jin, prev_jin, 2) if prev_jin is not None else None,
         "tone": _tone(change),

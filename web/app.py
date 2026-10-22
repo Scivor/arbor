@@ -41,7 +41,7 @@ from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
 from web.daily_brief import bias_label, get_issue, latest_issue
-from web.quiet_market import quiet_quotes, versus_settlement
+from web.quiet_market import kilo_gap_split, quiet_quotes, versus_settlement
 from web.track_record import build_track_record_html
 
 # ── Paths ────────────────────────────────────────────────────────────────────
@@ -360,10 +360,24 @@ def _morning_fix(fx: Optional[dict]) -> Optional[dict]:
 
 
 def _morning_yuan(yuan: Optional[dict]) -> Optional[dict]:
-    """空页元/公斤相对早报里阿拉比卡的推算。"""
-    contracts = (latest_issue() or {}).get("contracts") or []
+    """空页元/公斤相对早报推算，并拆成结算和中间价各走了多少。"""
+    issue = latest_issue() or {}
+    contracts = issue.get("contracts") or []
     estimate = contracts[0].get("per_kg") if contracts else None
-    return _morning_mark((yuan or {}).get("per_kg"), estimate, 2)
+    gap = _morning_mark((yuan or {}).get("per_kg"), estimate, 2)
+    if not gap or not yuan:
+        return gap
+    split = kilo_gap_split(
+        yuan.get("cents"),
+        yuan.get("rate"),
+        contracts[0].get("price") if contracts else None,
+        (issue.get("fix") or {}).get("price"),
+        estimate,
+        yuan.get("per_kg"),
+    )
+    if split:
+        gap.update(split)
+    return gap
 
 
 @app.get("/", response_class=HTMLResponse)

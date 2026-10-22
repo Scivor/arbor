@@ -372,6 +372,47 @@ def _split_move(value_at, cents: float, rate: float, prev_cents, prev_rate) -> t
     return price_leg, fx_leg, together
 
 
+def _per_kg_text(cents: float, rate: float) -> str:
+    """与页面上的元/公斤同一套：吨价除以 1000，再留两位。"""
+    _per_jin, per_ton = _cny_amounts(cents, rate)
+    return f"{per_ton / 1000:.2f}"
+
+
+def kilo_gap_split(cents, rate, settlement, fixing, estimate, printed_kg) -> Optional[dict]:
+    """
+    早报那一公斤怎么变成现在这一公斤。
+
+    结算一腿只换现价、中间价不动；中间价一腿只换汇率、结算不动。
+    三笔都按页面上已经四舍五入的元/公斤，加起来等于现价和推算的差。
+    """
+    try:
+        cents_f = float(cents)
+        rate_f = float(rate)
+        settle_f = float(str(settlement).replace(",", ""))
+        fix_f = float(str(fixing).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
+    if min(cents_f, rate_f, settle_f, fix_f) <= 0:
+        return None
+    live = _per_kg_text(cents_f, rate_f)
+    if live != str(printed_kg) or _per_kg_text(settle_f, fix_f) != str(estimate):
+        return None
+    estimate_fen = _fen(str(estimate))
+    live_fen = _fen(live)
+    settle_fen = _fen(_per_kg_text(cents_f, fix_f))
+    fix_fen = _fen(_per_kg_text(settle_f, rate_f))
+    if None in (estimate_fen, live_fen, settle_fen, fix_fen):
+        return None
+    settle_leg = settle_fen - estimate_fen
+    fix_leg = fix_fen - estimate_fen
+    leftover = (live_fen - estimate_fen) - settle_leg - fix_leg
+    return {
+        "settle_leg": _from_fen(settle_leg),
+        "fix_leg": _from_fen(fix_leg),
+        "kilo_together": None if leftover == 0 else _from_fen(leftover),
+    }
+
+
 def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     if not coffee or not fx:
         return None
@@ -399,6 +440,8 @@ def _yuan(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
         "price_leg": price_leg,
         "fx_leg": fx_leg,
         "together": together,
+        "cents": cents,
+        "rate": rate,
     }
 
 

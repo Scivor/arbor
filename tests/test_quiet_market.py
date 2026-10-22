@@ -121,6 +121,24 @@ def test_versus_settlement_uses_the_printed_cents():
     assert versus_settlement("376.55", "nope") is None
 
 
+def test_kilo_gap_split_adds_the_settlement_and_the_fixing():
+    from web.quiet_market import _fen, _per_kg_text, kilo_gap_split
+
+    cents, rate = 310.10, 6.6783
+    printed = _per_kg_text(cents, rate)
+    split = kilo_gap_split(cents, rate, "315.70", "6.7200", "46.77", printed)
+    assert split is not None
+    assert _per_kg_text(315.70, 6.7200) == "46.77"
+    settle = _fen(_per_kg_text(cents, 6.7200)) - _fen("46.77")
+    fixing = _fen(_per_kg_text(315.70, rate)) - _fen("46.77")
+    together = 0 if split["kilo_together"] is None else _fen(split["kilo_together"])
+    assert _fen(split["settle_leg"]) == settle
+    assert _fen(split["fix_leg"]) == fixing
+    assert _fen(split["settle_leg"]) + _fen(split["fix_leg"]) + together == _fen(printed) - _fen("46.77")
+    assert kilo_gap_split(cents, rate, "315.70", "6.7200", "46.77", "1.00") is None
+    assert kilo_gap_split(cents, rate, "315.70", "6.7200", "46.00", printed) is None
+
+
 def test_month_place_can_differ_from_the_session_place():
     payload = _chart("KC=F", 200.0, 190.0, closes=[180.0, 190.0, 200.0])
     quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
@@ -481,6 +499,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "较 2026-10-20 早报中间价 6.7200 高 0.4034" in plain
     assert "44.98 元/公斤" in html
     assert "较 2026-10-20 早报推算 46.77 元/公斤 低 1.79" in plain
+    assert "，中间价 " not in html
     assert "今日 7.1000 – 7.1600 · 区间中部" in html
     assert "距高点 0.0366，距低点 0.0234" in html
     assert "近30日 360.10 – 389.40 · 区间中部" in html
@@ -511,6 +530,29 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "Yahoo Finance" in html
 
 
+def test_empty_page_splits_the_morning_kilo(client, monkeypatch):
+    from web.quiet_market import kilo_gap_split
+
+    coffee = _parse_chart(_chart("KC=F", 310.10, 315.70, ts=1_729_400_000))
+    fx = _parse_chart(_chart("USDCNY=X", 6.6783, 6.7200, ts=1_729_400_000))
+    view = quiet_quotes(fetch=lambda: (coffee, fx), clock=datetime(2026, 10, 20, 18, tzinfo=timezone.utc))
+    yuan = view["yuan"]
+    split = kilo_gap_split(yuan["cents"], yuan["rate"], "315.70", "6.7200", "46.77", yuan["per_kg"])
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: view)
+    html = client.get("/").text
+    line = f"结算 {split['settle_leg']}，中间价 {split['fix_leg']}"
+    if split["kilo_together"]:
+        line += f"，一起 {split['kilo_together']}"
+    assert line in html
+    assert f"{yuan['per_kg']} 元/公斤" in html
+    en = client.get("/?lang=en").text
+    en_line = f"Settlement {split['settle_leg']}, fixing {split['fix_leg']}"
+    if split["kilo_together"]:
+        en_line += f", together {split['kilo_together']}"
+    assert en_line in en
+
+
 def test_empty_page_english(client, monkeypatch):
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
@@ -526,6 +568,7 @@ def test_empty_page_english(client, monkeypatch):
     assert "0.4034 above the 2026-10-20 morning fixing 6.7200" in plain
     assert "44.98 CNY/kg" in html
     assert "1.79 below the 2026-10-20 morning estimate 46.77 CNY/kg" in plain
+    assert ", fixing " not in html
     assert "Today 7.1000 – 7.1600 · Mid-range" in html
     assert "0.0366 below the high, 0.0234 above the low" in html
     assert "30-day 360.10 – 389.40 · Mid-range" in html

@@ -106,6 +106,9 @@
         {% if yuan.per_kg %}
         <span class="quiet-meta">{{ yuan.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
         {{ morning_mark(yuan_note, '推算', 'estimate', '元/公斤', 'CNY/kg') }}
+        {% if yuan_note and yuan_note.settle_leg and yuan_note.fix_leg %}
+        <span class="quiet-meta">{% if lang == 'en' %}Settlement {{ yuan_note.settle_leg }}, fixing {{ yuan_note.fix_leg }}{% if yuan_note.kilo_together %}, together {{ yuan_note.kilo_together }}{% endif %}{% else %}结算 {{ yuan_note.settle_leg }}，中间价 {{ yuan_note.fix_leg }}{% if yuan_note.kilo_together %}，一起 {{ yuan_note.kilo_together }}{% endif %}{% endif %}</span>
+        {% endif %}
         {% endif %}
         <span class="quiet-meta">{{ yuan.per_ton }} {% if lang == 'en' %}CNY/t{% else %}元/吨{% endif %}</span>
         {% if yuan.change_pts or yuan.change_text %}

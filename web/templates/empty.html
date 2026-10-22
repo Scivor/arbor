@@ -124,6 +124,12 @@
       <div class="quiet-quote">
         <span class="quiet-kicker">{% if lang == 'en' %}Landed cost{% else %}到库成本{% endif %}</span>
         <span class="quiet-px">{{ landed.per_jin }} <small>{% if lang == 'en' %}CNY/jin{% else %}元/斤{% endif %}</small></span>
+        {% if landed.per_kg %}
+        <span class="quiet-meta">{{ landed.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
+        {% if landing %}
+        <span class="quiet-meta">{% if landing.side == 'same' %}{% if lang == 'en' %}Same kilo as the futures{% else %}与期货的公斤相同{% endif %}{% elif landing.side == 'below' %}{% if lang == 'en' %}{{ landing.gap }} CNY/kg under the futures{% else %}到库少 {{ landing.gap }} 元/公斤{% endif %}{% else %}{% if lang == 'en' %}landing adds {{ landing.gap }} CNY/kg{% else %}到库多 {{ landing.gap }} 元/公斤{% endif %}{% endif %}</span>
+        {% endif %}
+        {% endif %}
         <span class="quiet-meta">{{ landed.per_ton }} {% if lang == 'en' %}CNY/t{% else %}元/吨{% endif %}</span>
         {% if landed.change_pts or landed.change_text %}
         <span class="quiet-chg {{ landed.tone }}">{% if landed.change_pts %}{{ landed.change_pts }}{% endif %}{% if landed.change_text %} {{ landed.change_text }}{% endif %}</span>

@@ -387,6 +387,7 @@ def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
     )
     landed = view["landed"]
     assert landed["per_jin"] == f"{booked.total_cost_cny_jin:.2f}"
+    assert landed["per_kg"] == f"{booked.total_cost_cny_mt / 1000:.2f}"
     assert landed["per_ton"] == f"{booked.total_cost_cny_mt:,.0f}"
     assert float(landed["per_jin"]) > float(view["yuan"]["per_jin"])
     assert landed["freight"] == f"{booked.ocean_freight_usd_mt:.0f}"
@@ -466,6 +467,7 @@ def _sample_quotes():
         },
         "landed": {
             "per_jin": "28.40",
+            "per_kg": "56.80",
             "per_ton": "56,800",
             "change_text": "+3.10%",
             "change_pts": "+0.85",
@@ -521,6 +523,8 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "增值税 13%" in html
     assert "期货占 78.2%" in html
     assert "到库多 6.29 元/斤" in html
+    assert "56.80 元/公斤" in html
+    assert "到库多 11.82 元/公斤" in html
     assert "上一交易日 +1.10，汇率 −0.20" in html
     assert "上一交易日 +0.90，汇率 −0.05，一起 +0.01" in html
     assert "期货 +1.10，汇率 −0.20" not in html
@@ -546,11 +550,16 @@ def test_empty_page_splits_the_morning_kilo(client, monkeypatch):
         line += f"，一起 {split['kilo_together']}"
     assert line in html
     assert f"{yuan['per_kg']} 元/公斤" in html
+    from web.quiet_market import versus_settlement
+    landing = versus_settlement(view["landed"]["per_kg"], yuan["per_kg"], 2)
+    assert landing["side"] == "above"
+    assert f"到库多 {landing['gap']} 元/公斤" in html
     en = client.get("/?lang=en").text
     en_line = f"Settlement {split['settle_leg']}, fixing {split['fix_leg']}"
     if split["kilo_together"]:
         en_line += f", together {split['kilo_together']}"
     assert en_line in en
+    assert f"landing adds {landing['gap']} CNY/kg" in en
 
 
 def test_empty_page_english(client, monkeypatch):
@@ -586,6 +595,8 @@ def test_empty_page_english(client, monkeypatch):
     assert "VAT 13%" in html
     assert "Futures 78.2%" in html
     assert "landing adds 6.29 CNY/jin" in html
+    assert "56.80 CNY/kg" in html
+    assert "landing adds 11.82 CNY/kg" in html
     assert "Last session +1.10, rate −0.20" in html
     assert "Last session +0.90, rate −0.05, together +0.01" in html
     assert "Price +1.10, rate −0.20" not in html

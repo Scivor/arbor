@@ -495,7 +495,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
     html = client.get("/").text
-    assert "周报还在海上" in html
+    assert "周报还在海上" not in html
     assert "咖啡期货" in html
     assert "KC=F" in html
     assert "376.55" in html
@@ -582,7 +582,7 @@ def test_empty_page_english(client, monkeypatch):
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
     html = client.get("/?lang=en").text
-    assert "The report is still at sea." in html
+    assert "The report is still at sea." not in html
     assert "Coffee futures" in html
     assert "¢/lb" in html
     assert "Last session 372.00 – 378.20 · Near the high" in html
@@ -673,7 +673,7 @@ def test_empty_page_survives_quote_failure(client, monkeypatch):
 
     monkeypatch.setattr(web_app, "quiet_quotes", boom)
     html = client.get("/").text
-    assert "周报还在海上" in html
+    assert "周报还在海上" not in html
     assert "行情暂未到港" in html
     assert "早报结算" not in html
     assert "早报中间价" not in html
@@ -685,11 +685,11 @@ def test_empty_page_english_when_quotes_missing(client, monkeypatch):
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: {"coffee": None, "fx": None})
     html = client.get("/?lang=en").text
+    assert "The report is still at sea." not in html
     assert "The quotes have not come in." in html
     assert "morning settlement" not in html
     assert "morning fixing" not in html
     assert "morning estimate" not in html
-    assert "The report is still at sea." in html
 
 
 def test_published_report_does_not_fetch_quotes(client, monkeypatch):

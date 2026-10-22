@@ -129,6 +129,9 @@
         {% if landing %}
         <span class="quiet-meta">{% if landing.side == 'same' %}{% if lang == 'en' %}Same kilo as the futures{% else %}与期货的公斤相同{% endif %}{% elif landing.side == 'below' %}{% if lang == 'en' %}{{ landing.gap }} CNY/kg under the futures{% else %}到库少 {{ landing.gap }} 元/公斤{% endif %}{% else %}{% if lang == 'en' %}landing adds {{ landing.gap }} CNY/kg{% else %}到库多 {{ landing.gap }} 元/公斤{% endif %}{% endif %}</span>
         {% endif %}
+        {% if landed.parts %}
+        <span class="quiet-meta">{% if lang == 'en' %}Freight {{ landed.parts.freight }}, duty {{ landed.parts.duty }}, VAT {{ landed.parts.vat }}{% if landed.parts.rest %}, the rest {{ landed.parts.rest }}{% endif %}{% else %}海运 {{ landed.parts.freight }}，关税 {{ landed.parts.duty }}，增值税 {{ landed.parts.vat }}{% if landed.parts.rest %}，其余 {{ landed.parts.rest }}{% endif %}{% endif %}</span>
+        {% endif %}
         {% endif %}
         <span class="quiet-meta">{{ landed.per_ton }} {% if lang == 'en' %}CNY/t{% else %}元/吨{% endif %}</span>
         {% if landed.change_pts or landed.change_text %}

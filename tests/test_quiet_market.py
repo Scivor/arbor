@@ -399,6 +399,13 @@ def test_landed_cost_uses_the_calculator_and_stays_above_the_futures():
     assert landed["addon_jin"] == f"{addon:.2f}"
     assert float(landed["addon_jin"]) > 0
     assert landed["tone"] == "up"
+    parts = landed["parts"]
+    assert parts["freight"] and parts["duty"] and parts["vat"]
+    from web.quiet_market import _fen
+    rest = 0 if parts["rest"] is None else _fen(parts["rest"])
+    assert _fen(parts["freight"]) + _fen(parts["duty"]) + _fen(parts["vat"]) + rest == (
+        _fen(landed["per_kg"]) - _fen(view["yuan"]["per_kg"])
+    )
 
 
 @pytest.fixture
@@ -554,12 +561,21 @@ def test_empty_page_splits_the_morning_kilo(client, monkeypatch):
     landing = versus_settlement(view["landed"]["per_kg"], yuan["per_kg"], 2)
     assert landing["side"] == "above"
     assert f"到库多 {landing['gap']} 元/公斤" in html
+    parts = view["landed"]["parts"]
+    parts_line = f"海运 {parts['freight']}，关税 {parts['duty']}，增值税 {parts['vat']}"
+    if parts["rest"]:
+        parts_line += f"，其余 {parts['rest']}"
+    assert parts_line in html
     en = client.get("/?lang=en").text
     en_line = f"Settlement {split['settle_leg']}, fixing {split['fix_leg']}"
     if split["kilo_together"]:
         en_line += f", together {split['kilo_together']}"
     assert en_line in en
     assert f"landing adds {landing['gap']} CNY/kg" in en
+    en_parts = f"Freight {parts['freight']}, duty {parts['duty']}, VAT {parts['vat']}"
+    if parts["rest"]:
+        en_parts += f", the rest {parts['rest']}"
+    assert en_parts in en
 
 
 def test_empty_page_english(client, monkeypatch):

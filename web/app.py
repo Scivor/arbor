@@ -359,6 +359,13 @@ def _morning_fix(fx: Optional[dict]) -> Optional[dict]:
     return _morning_mark((fx or {}).get("price"), fixing, 4)
 
 
+def _landing_kilo(yuan: Optional[dict], landed: Optional[dict]) -> Optional[dict]:
+    """到库元/公斤相对上面那一公斤期货。两边都用页面上的两位小数。"""
+    if not landed or not landed.get("per_kg") or not yuan or not yuan.get("per_kg"):
+        return None
+    return versus_settlement(landed["per_kg"], yuan["per_kg"], 2)
+
+
 def _morning_yuan(yuan: Optional[dict]) -> Optional[dict]:
     """空页元/公斤相对早报推算，并拆成结算和中间价各走了多少。"""
     issue = latest_issue() or {}
@@ -393,16 +400,18 @@ async def latest_report(request: Request):
         coffee = (quotes or {}).get("coffee")
         fx = (quotes or {}).get("fx")
         yuan = (quotes or {}).get("yuan")
+        landed = (quotes or {}).get("landed")
         return templates.TemplateResponse(request, "empty.html", {
             "lang": lang,
             "coffee": coffee,
             "fx": fx,
             "yuan": yuan,
-            "landed": (quotes or {}).get("landed"),
+            "landed": landed,
             "source": (quotes or {}).get("source"),
             "note": _morning_gap(coffee),
             "fix": _morning_fix(fx),
             "yuan_note": _morning_yuan(yuan),
+            "landing": _landing_kilo(yuan, landed),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
 

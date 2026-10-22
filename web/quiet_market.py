@@ -488,6 +488,7 @@ def _landed(coffee: Optional[dict], fx: Optional[dict]) -> Optional[dict]:
     )
     return {
         "per_jin": f"{now.total_cost_cny_jin:.2f}",
+        "per_kg": f"{now.total_cost_cny_mt / 1000:.2f}",
         "per_ton": f"{now.total_cost_cny_mt:,.0f}",
         "change_text": _pct(change),
         "change_pts": _pts(now.total_cost_cny_jin, prev_jin, 2) if prev_jin is not None else None,

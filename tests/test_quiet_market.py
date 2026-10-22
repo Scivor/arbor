@@ -535,7 +535,7 @@ def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
     assert "上一交易日 +1.10，汇率 −0.20" in html
     assert "上一交易日 +0.90，汇率 −0.05，一起 +0.01" in html
     assert "期货 +1.10，汇率 −0.20" not in html
-    assert "empty-at-sea.svg" in html
+    assert "empty-at-sea.svg" not in html
     assert html.count("<polyline") == 2
     assert "行情暂未到港" not in html
     assert "Yahoo Finance" in html
@@ -678,7 +678,7 @@ def test_empty_page_survives_quote_failure(client, monkeypatch):
     assert "早报结算" not in html
     assert "早报中间价" not in html
     assert "早报推算" not in html
-    assert "empty-at-sea.svg" in html
+    assert "empty-at-sea.svg" not in html
 
 
 def test_empty_page_english_when_quotes_missing(client, monkeypatch):

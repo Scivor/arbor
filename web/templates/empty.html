@@ -1,7 +1,5 @@
 {% extends "base.html" %}
 
-{% block title %}{% if lang == 'en' %}The report is still at sea · Arbor{% else %}周报还在海上 · Arbor{% endif %}{% endblock %}
-
 {% block content %}
 {% macro range_place(code) -%}
 {%- if code == 'near_high' -%}{% if lang == 'en' %}Near the high{% else %}靠近高点{% endif %}
@@ -31,8 +29,6 @@
 {%- endif -%}
 {%- endmacro %}
 <section class="quiet">
-  <p class="quiet-line">{% if lang == 'en' %}The report is still at sea.{% else %}周报还在海上。{% endif %}</p>
-
   <div class="quiet-market" aria-label="{% if lang == 'en' %}Coffee futures and the yuan–dollar rate{% else %}咖啡期货与人民币对美元汇率{% endif %}">
     {% if coffee %}
     <div class="quiet-quote">

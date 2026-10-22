@@ -95,6 +95,7 @@ def test_homepage_stays_the_weekly_empty_page_and_links_the_morning_note(monkeyp
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: {"coffee": None, "fx": None})
     html = client.get("/").text
-    assert "周报还在海上" in html
+    assert "周报还在海上" not in html
+    assert "行情暂未到港" in html
     assert 'href="/daily/"' in html
     assert "咖啡生豆期货早报" not in html

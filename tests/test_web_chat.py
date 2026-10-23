@@ -3,12 +3,16 @@ tests/test_web_chat.py
 web 聊天界面 — 无网络（mock CoffeeAnalyst 单例工厂）
 """
 
+from datetime import datetime
 from types import SimpleNamespace
+import json
 import time
+from zoneinfo import ZoneInfo
 
 import pytest
 
 import web.app as web_app
+import web.daily_brief as daily_brief
 from web.chat import build_chat_page
 
 
@@ -22,6 +26,12 @@ def _reset_chat_rate():
     web_app._CHAT_RATE.clear()
     web_app._CHAT_SESSIONS.clear()
     web_app._CHAT_SESSION_TS.clear()
+
+
+@pytest.fixture(autouse=True)
+def _isolate_daily_store(tmp_path, monkeypatch):
+    """顾问测试不读仓库里已经冻结的早报，也不把新的一期写进 output/。"""
+    monkeypatch.setattr(daily_brief, "_store_dir", tmp_path)
 
 
 @pytest.fixture
@@ -157,6 +167,56 @@ def test_api_chat_multi_turn_keeps_history(client, monkeypatch):
     assert calls[1]["q"] == "第二问"
 
 
+def test_first_turn_reads_todays_frozen_issue_and_does_not_write(client, monkeypatch, tmp_path):
+    issue = {
+        "date": "2026-10-23",
+        "dateline": {"zh": "2026-10-23 · 周五"},
+        "title": {"zh": "咖啡生豆期货早报"},
+        "contracts": [{
+            "heading": {"zh": "一、ICE 阿拉比卡 KC=F"},
+            "price": "311.40",
+            "unit": {"zh": "美分/磅"},
+            "prose": {"zh": "最近成交。"},
+        }],
+    }
+    (tmp_path / "2026-10-23.json").write_text(
+        json.dumps(issue, ensure_ascii=False), encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        daily_brief, "_clock",
+        lambda: datetime(2026, 10, 23, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    seen = {}
+
+    def _chat(q, chat_history=None):
+        seen["q"] = q
+        return "收到"
+
+    monkeypatch.setattr(web_app, "_get_analyst", lambda: SimpleNamespace(chat=_chat))
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    before = sorted(path.name for path in tmp_path.iterdir())
+    resp = client.post("/api/chat", json={"message": "早报怎么读", "session_id": "am"})
+    assert resp.status_code == 200
+    assert "【今日已冻结早报】" in seen["q"]
+    assert "311.40" in seen["q"]
+    assert "最近成交" in seen["q"]
+    client.post("/api/chat", json={"message": "再说", "session_id": "am"})
+    assert seen["q"] == "再说"
+    assert sorted(path.name for path in tmp_path.iterdir()) == before
+
+
+def test_chat_does_not_freeze_when_today_has_no_issue(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        daily_brief, "_clock",
+        lambda: datetime(2026, 10, 23, 9, 0, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+    monkeypatch.setattr(web_app, "_get_analyst", lambda: SimpleNamespace(chat=lambda q, chat_history=None: "ok"))
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    resp = client.post("/api/chat", json={"message": "现在多少"})
+    assert resp.status_code == 200
+    assert list(tmp_path.iterdir()) == []
+
+
 def test_api_chat_offline_fallback(client, monkeypatch, tmp_path):
     """无 LLM key 时不 503，而是基于本期简报点题回答。"""
     def _boom():
@@ -183,6 +243,12 @@ def test_api_chat_agent_internal_error(client, monkeypatch):
     resp = client.post("/api/chat", json={"message": "hello"})
     assert resp.status_code == 500
     assert "network down" in resp.json()["error"]
+
+
+def test_offline_clarify_uses_the_morning_issue_when_no_weekly_exists():
+    morning = "2026-10-23 · 周五\n最近成交 311.40"
+    assert "311.40" in web_app._offline_clarify("早报里的最近成交", None, morning=morning)
+    assert "没有已出版" in web_app._offline_clarify("随便问问", None)
 
 
 def test_offline_clarify_hedge():

@@ -710,23 +710,32 @@ def test_empty_page_english_when_quotes_missing(client, monkeypatch):
     assert "morning estimate" not in html
 
 
-def test_published_report_does_not_fetch_quotes(client, monkeypatch):
+def test_homepage_keeps_the_desk_when_a_weekly_report_exists(client, monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-23")
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: "2026-10-17")
-    monkeypatch.setattr(
-        web_app, "_serve_report_page",
-        lambda *args, **kwargs: HTMLResponse("report-body"),
-    )
-    called = {"n": 0}
+    served = {}
 
-    def _q():
-        called["n"] += 1
-        return {"coffee": None, "fx": None}
+    def _serve(report_date, is_latest=False, lang="zh"):
+        served["date"] = report_date
+        served["latest"] = is_latest
+        return HTMLResponse("report-body")
 
-    monkeypatch.setattr(web_app, "quiet_quotes", _q)
-    resp = client.get("/")
-    assert resp.status_code == 200
-    assert resp.text == "report-body"
-    assert called["n"] == 0
+    monkeypatch.setattr(web_app, "_serve_report_page", _serve)
+    monkeypatch.setattr(web_app, "_report_exists", lambda date: date == "2026-10-17")
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
+    html = client.get("/").text
+    assert "report-body" not in html
+    assert "咖啡期货" in html
+    assert "376.55" in html
+    assert 'href="/reports/2026-10-17/"' in html
+    assert ">周报</a>" in html
+    assert ">顾问</a>" in html
+    assert ">档案</a>" in html
+    assert 'class="active"' in html.split(">今日</a>")[0].rsplit("<a ", 1)[-1]
+    report = client.get("/reports/2026-10-17/")
+    assert report.text == "report-body"
+    assert served["date"] == "2026-10-17"
+    assert served["latest"] is True
 
 
 _SINA_KC = (

@@ -1,14 +1,20 @@
-# Arbor / 阿尔博 — 咖啡进口商套期保值智能体
+# Arbor / 阿尔博 — 咖啡生豆情报平台
 
 [![tests](https://github.com/Scivor/arbor/actions/workflows/tests.yml/badge.svg)](https://github.com/Scivor/arbor/actions/workflows/tests.yml)
 
-事件驱动的咖啡进口商套期保值决策系统，支持回测、LLM 智能体、实时数据源与自动化周报。
+给咖啡进口商按时报两份情报，并让人对着已出版的那一份追问。
+
+- **早报** `/` 与 `/daily/{日期}/`：每个上海日期冻结一次。价格、汇率、元/公斤、到库，以及当天真正取到的要点。写下来之后不随行情改。
+- **周报** `/reports/{日期}/`：周六出版。五段采购建议在前，情景、套保比率和因子在后。
+- **顾问** `/chat/`：只讲这两份已出版的情报，不编没有写进去的数字。
+
+现价条在首页下半，用来看早报写下之后又走了多少。采集、三域研判和套保评分留在出刊后面。
 
 **架构**: 事件驱动 (Event-Driven) + 三域并行 (Supply / Finance / Policy) + LLM Agent
 
 ---
 
-## 核心功能
+## 周报背后的引擎
 
 ```
 事件驱动套保决策

@@ -655,3 +655,28 @@ def latest_issue(quotes: dict | None = None) -> dict:
     if current is not None:
         return current
     return _newest_frozen() or _ISSUE
+
+
+def published_issues() -> list[dict]:
+    """已出版的早报，新的在前。只读，不补写，也不改 2026-10-20 那期。"""
+    found = {_ISSUE["date"]: _ISSUE}
+    root = Path(_store_dir)
+    if root.is_dir():
+        for path in root.glob("*.json"):
+            if not _DATE.fullmatch(path.stem) or path.stem == _ISSUE["date"]:
+                continue
+            issue = _read(path.stem)
+            if issue:
+                found[issue["date"]] = issue
+    return [found[date] for date in sorted(found, reverse=True)]
+
+
+def issue_card(issue: dict) -> dict:
+    """档案卡片用的几行。没有的价格留空，不另编。"""
+    contract = (issue.get("contracts") or [{}])[0]
+    return {
+        "date": issue.get("date") or "",
+        "price": contract.get("price") or "",
+        "unit": contract.get("unit") or {"zh": "", "en": ""},
+        "per_kg": contract.get("per_kg") or "",
+    }

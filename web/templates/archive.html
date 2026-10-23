@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 
-{% block title %}{% if lang == 'en' %}Archive ({{ count }}) · Arbor{% else %}历史归档 ({{ count }}) · Arbor{% endif %}{% endblock %}
+{% set L = 'en' if lang == 'en' else 'zh' %}
+{% block title %}{% if lang == 'en' %}Archive · Arbor{% else %}档案 · Arbor{% endif %}{% endblock %}
 
 {% block extra_head %}
 <style>
@@ -22,6 +23,15 @@
   .archive-hero p {
     font-size: 14px;
     color: var(--olive);
+  }
+  .archive-section { margin-bottom: 36px; }
+  .archive-section h2 {
+    font-family: var(--display);
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--stone);
+    letter-spacing: 0.08em;
+    margin-bottom: 12px;
   }
   .year-group {
     margin-bottom: 28px;
@@ -80,9 +90,11 @@
     gap: 10px;
     align-items: center;
   }
+  .arch-item-actions { flex-shrink: 0; }
   .arch-item-actions span {
     font-size: 12px;
     color: var(--olive);
+    white-space: nowrap;
   }
   .arch-item-actions a {
     font-size: 11px;
@@ -102,10 +114,34 @@
 {% block content %}
 
 <div class="archive-hero">
-  <h1>{% if lang == 'en' %}Historical Report Archive{% else %}历史报告归档{% endif %}</h1>
-  <p>{% if lang == 'en' %}{{ count }} reports · Auto-updated every Saturday · Click date to read{% else %}共 {{ count }} 期报告 · 每周六自动更新 · 点击日期阅读完整报告{% endif %}</p>
+  <h1>{% if lang == 'en' %}Archive{% else %}档案{% endif %}</h1>
+  <p>{% if lang == 'en' %}{{ mornings|length }} morning notes, frozen once written. {{ count }} weekly reports, published Saturday.{% else %}早报 {{ mornings|length }} 期，写下来就不改。周报 {{ count }} 期，周六出版。{% endif %}</p>
 </div>
 
+{% if mornings %}
+<section class="archive-section">
+  <h2>{% if lang == 'en' %}Morning notes{% else %}早报{% endif %}</h2>
+  <div class="year-items">
+    {% for m in mornings %}
+    <a href="/daily/{{ m.date }}/{% if lang == 'en' %}?lang=en{% endif %}" class="arch-item">
+      <div class="arch-item-left">
+        <div class="arch-item-date">{{ m.date }}</div>
+        <div class="arch-item-tags">
+          {% if m.price %}<span class="tag tag-brand">{{ m.price }} {{ m.unit[L] }}</span>{% endif %}
+          {% if m.per_kg %}<span class="tag tag-olive">{{ m.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>{% endif %}
+        </div>
+      </div>
+      <div class="arch-item-actions">
+        <span>{% if lang == 'en' %}Read →{% else %}阅读 →{% endif %}</span>
+      </div>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="archive-section">
+  <h2>{% if lang == 'en' %}Weekly{% else %}周报{% endif %}</h2>
 {% for group in year_groups %}
 <div class="year-group">
   <div class="year-label">{{ group.year }}</div>
@@ -135,9 +171,9 @@
 {% if not year_groups %}
 <p class="specimen-note">
   {% if lang == 'en' %}
-  The bindery is empty. These three cards are specimens: dashes, not prices. Saturday replaces them with dates you can open.
+  No weekly report yet. These three cards are specimens: dashes, not prices. Saturday replaces them with dates you can open.
   {% else %}
-  装订台是空的。下面三张是版式样张，价格是破折号，不是行情。周六生成后，这里会换成可点开的日期。
+  周报还没有一期。下面三张是版式样张，价格是破折号，不是行情。周六生成后，这里会换成可点开的日期。
   {% endif %}
 </p>
 <div class="specimen-grid" aria-label="{% if lang == 'en' %}Specimen report cards{% else %}报告版式样张{% endif %}">
@@ -164,5 +200,6 @@
   </article>
 </div>
 {% endif %}
+</section>
 
 {% endblock %}

@@ -97,11 +97,12 @@ def test_morning_note_keeps_the_settlement_and_the_fixing():
     assert "15,270" in html
     assert "3,766" in html
     assert "286.95" in html
-    assert "313.75" in html
+    assert "313.75" not in html
     assert "与 KC 背离" in html
     assert "不构成确定预测" in html
-    assert "https://www.chinamoney.com.cn/chinese/bkccpr/" in html
-    assert "https://finance.yahoo.com/quote/SB=F" in html
+    assert "https://www.chinamoney.com.cn/chinese/bkccpr/" not in html
+    assert "https://finance.yahoo.com/quote/SB=F" not in html
+    assert "daily-sources" not in html
     assert ">档案</a>" in html
     assert ">今日</a>" not in html
     assert "早报" in html
@@ -128,7 +129,7 @@ def test_english_morning_note_uses_the_same_numbers():
     assert "217,646" in html
     assert "67.60 million bags" in html
     assert "286.95" in html
-    assert "313.75" in html
+    assert "313.75" not in html
     assert "not a firm forecast" in html
     assert "Diverges from KC" in html
     assert ">Archive</a>" in html
@@ -199,8 +200,9 @@ def test_today_sheet_freezes_and_a_missing_day_is_not_backfilled(monkeypatch):
     assert "不写成调升基点" in html
     assert "海运 1.20，关税 3.40，增值税 6.10，其余 1.12" in html
     assert "海运 85 美元/吨" in html
-    assert "上海时间 09:15 冻结" in html
-    assert "https://finance.yahoo.com/quote/KC=F" in html
+    assert "上海时间 09:15 冻结" not in html
+    assert "https://finance.yahoo.com/quote/KC=F" not in html
+    assert "daily-sources" not in html
     assert "RMX26" not in html
     assert "315.70" not in html
     assert "6.7200" not in html
@@ -219,9 +221,9 @@ def test_today_sheet_freezes_and_a_missing_day_is_not_backfilled(monkeypatch):
     assert "Friday" in en
     assert "Last trade from the previous session, not the settlement" in en
     assert "Not the fixing" in en
-    assert "Frozen at 09:15 Shanghai" in en
+    assert "Frozen at 09:15 Shanghai" not in en
     assert "Unhedged landed cost is 56.80 yuan/kg." in en
-    assert "Robusta, stocks, weather, and positioning were not fetched" in en
+    assert "Robusta, stocks, weather, and positioning were not fetched" not in en
 
 
 def test_a_live_session_is_not_called_a_settlement(monkeypatch):

@@ -1,13 +1,28 @@
 """无报告页的咖啡期货与美元兑人民币行情。"""
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 from fastapi.responses import HTMLResponse
 from fastapi.testclient import TestClient
 
 import web.app as web_app
+import web.daily_brief as daily_brief
 from web.quiet_market import _parse_chart, quiet_quotes
+
+
+@pytest.fixture(autouse=True)
+def _isolate_daily_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(daily_brief, "_store_dir", tmp_path)
+
+
+def _pin_morning(monkeypatch, day: str):
+    year, month, dom = (int(part) for part in day.split("-"))
+    monkeypatch.setattr(
+        daily_brief, "_clock",
+        lambda: datetime(year, month, dom, 8, 30, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
 
 
 def _chart(symbol, price, prev, *, name="", high=None, low=None, volume=None, ts=None, closes=None):
@@ -492,6 +507,7 @@ def _sample_quotes():
 
 
 def test_empty_page_shows_coffee_and_yuan(client, monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-20")
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
     html = client.get("/").text
@@ -549,6 +565,7 @@ def test_empty_page_splits_the_morning_kilo(client, monkeypatch):
     view = quiet_quotes(fetch=lambda: (coffee, fx), clock=datetime(2026, 10, 20, 18, tzinfo=timezone.utc))
     yuan = view["yuan"]
     split = kilo_gap_split(yuan["cents"], yuan["rate"], "315.70", "6.7200", "46.77", yuan["per_kg"])
+    _pin_morning(monkeypatch, "2026-10-20")
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: view)
     html = client.get("/").text
@@ -579,6 +596,7 @@ def test_empty_page_splits_the_morning_kilo(client, monkeypatch):
 
 
 def test_empty_page_english(client, monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-20")
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sample_quotes())
     html = client.get("/?lang=en").text
@@ -890,3 +908,52 @@ def test_empty_page_names_sina_when_that_is_the_source(client, monkeypatch):
     html = client.get("/").text
     assert 'class="quiet-src">Sina Finance' in html
     assert "Yahoo Finance" not in html
+
+
+def test_later_morning_compares_with_the_frozen_sheet_not_the_old_issue(client, monkeypatch):
+    from web.quiet_market import versus_settlement
+
+    _pin_morning(monkeypatch, "2026-10-23")
+    first = quiet_quotes(
+        fetch=lambda: (
+            _parse_chart(_chart("KC=F", 376.55, 370.20, name="Coffee Dec 26", ts=1_761_200_000)),
+            _parse_chart(_chart("USDCNY=X", 7.1234, 7.1300, ts=1_761_200_000)),
+        ),
+        clock=datetime(2026, 10, 23, 1, 30, tzinfo=timezone.utc),
+    )
+    moved = quiet_quotes(
+        fetch=lambda: (
+            _parse_chart(_chart("KC=F", 380.10, 370.20, name="Coffee Dec 26", ts=1_761_200_000)),
+            _parse_chart(_chart("USDCNY=X", 7.1400, 7.1300, ts=1_761_200_000)),
+        ),
+        clock=datetime(2026, 10, 23, 1, 30, tzinfo=timezone.utc),
+    )
+    held = {"quotes": first}
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: held["quotes"])
+
+    opening = client.get("/").text
+    opening_plain = opening.replace('<a href="/daily/2026-10-23/">', "").replace("</a>", "")
+    assert "2026-10-20" not in opening
+    assert "315.70" not in opening
+    assert "与 2026-10-23 早报最近成交 376.55 相同" in opening_plain
+    assert "与 2026-10-23 早报在岸现价 7.1234 相同" in opening_plain
+    assert f"与 2026-10-23 早报折算 {first['yuan']['per_kg']} 元/公斤 相同" in opening_plain
+
+    held["quotes"] = moved
+    later = client.get("/").text
+    plain = later.replace('<a href="/daily/2026-10-23/">', "").replace("</a>", "")
+    gap = versus_settlement("380.10", "376.55", 2)
+    assert f"较 2026-10-23 早报最近成交 376.55 高 {gap['gap']}" in plain
+    rate = versus_settlement("7.1400", "7.1234", 4)
+    assert f"较 2026-10-23 早报在岸现价 7.1234 高 {rate['gap']}" in plain
+    kilo = versus_settlement(moved["yuan"]["per_kg"], first["yuan"]["per_kg"], 2)
+    assert f"较 2026-10-23 早报折算 {first['yuan']['per_kg']} 元/公斤 高 {kilo['gap']}" in plain
+    assert "最近成交 " in plain and "，在岸现价 " in plain
+    assert "2026-10-20" not in later
+    assert "315.70" not in later
+
+    en = client.get("/?lang=en").text
+    en_plain = en.replace('<a href="/daily/2026-10-23/?lang=en">', "").replace("</a>", "")
+    assert f"{gap['gap']} above the 2026-10-23 morning last trade 376.55" in en_plain
+    assert f"{rate['gap']} above the 2026-10-23 morning onshore print 7.1234" in en_plain

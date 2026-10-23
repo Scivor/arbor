@@ -1,17 +1,66 @@
-"""早报版面：2026-10-20 这一期的中英文，以及还没有的日期。"""
+"""早报版面：2026-10-20 写定的一期，以及之后按上海日期冻结的成本单。"""
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+import pytest
 from fastapi.testclient import TestClient
 
 import web.app as web_app
+import web.daily_brief as daily_brief
 
 client = TestClient(web_app.app)
 
 
+@pytest.fixture(autouse=True)
+def _isolate_daily_store(tmp_path, monkeypatch):
+    monkeypatch.setattr(daily_brief, "_store_dir", tmp_path)
+
+
+def _pin_morning(monkeypatch, day: str, hour: int = 8, minute: int = 30):
+    year, month, dom = (int(part) for part in day.split("-"))
+    monkeypatch.setattr(
+        daily_brief, "_clock",
+        lambda: datetime(year, month, dom, hour, minute, tzinfo=ZoneInfo("Asia/Shanghai")),
+    )
+
+
+def _sheet_quotes(price="376.55", rate="7.1234", session="last"):
+    return {
+        "coffee": {
+            "symbol": "KC=F",
+            "name": "Coffee Dec 26",
+            "price": price,
+            "change_pts": "+6.35",
+            "change_text": "+1.72%",
+            "session": session,
+            "session_low": "372.00",
+            "session_high": "378.20",
+            "as_of": "10-22 17:29 UTC",
+        },
+        "fx": {
+            "price": rate,
+            "change_pts": "−0.0058",
+            "change_text": "−0.08%",
+            "session": "live",
+        },
+        "yuan": {"per_kg": "44.98"},
+        "landed": {
+            "per_kg": "56.80",
+            "freight": "85",
+            "tariff": "8%",
+            "vat": "13%",
+            "parts": {"freight": "1.20", "duty": "3.40", "vat": "6.10", "rest": "1.12"},
+        },
+        "source": "Yahoo Finance",
+    }
+
+
 def test_arabica_per_kilo_is_the_settlement_at_the_fixing():
     from arbor.domain.cost.landed_cost import LandedCostCalculator
-    from web.daily_brief import latest_issue
+    from web.daily_brief import get_issue
 
-    issue = latest_issue()
+    issue = get_issue("2026-10-20")
     cents = float(issue["contracts"][0]["price"])
     rate = float(issue["fix"]["price"])
     per_kg = (cents / 100.0) * LandedCostCalculator.MT_PER_LB * rate / 1000.0
@@ -20,7 +69,7 @@ def test_arabica_per_kilo_is_the_settlement_at_the_fixing():
 
 
 def test_morning_note_keeps_the_settlement_and_the_fixing():
-    html = client.get("/daily/").text
+    html = client.get("/daily/2026-10-20/").text
     assert "咖啡生豆期货早报" in html
     assert "2026-10-20 · 周二" in html
     assert "KCZ26" in html
@@ -64,7 +113,7 @@ def test_dated_morning_note_matches_the_latest():
 
 
 def test_english_morning_note_uses_the_same_numbers():
-    html = client.get("/daily/?lang=en").text
+    html = client.get("/daily/2026-10-20/?lang=en").text
     assert "Green coffee futures, morning" in html
     assert "Tuesday" in html
     assert "315.70" in html
@@ -99,3 +148,87 @@ def test_homepage_stays_the_weekly_empty_page_and_links_the_morning_note(monkeyp
     assert "行情暂未到港" in html
     assert 'href="/daily/"' in html
     assert "咖啡生豆期货早报" not in html
+
+
+def test_archive_is_not_replaced_by_a_later_print():
+    issue = daily_brief.get_issue("2026-10-20", _sheet_quotes(price="1.00", rate="1.0000"))
+    assert issue["contracts"][0]["price"] == "315.70"
+    assert issue["fix"]["price"] == "6.7200"
+    assert issue["contracts"][1]["price"] == "3,484"
+
+
+def test_a_sheet_needs_the_coffee_the_rate_and_the_kilo():
+    quotes = _sheet_quotes()
+    assert daily_brief.build_sheet({"coffee": quotes["coffee"]}, datetime.now(ZoneInfo("Asia/Shanghai"))) is None
+    sheet = daily_brief.build_sheet(quotes, datetime(2026, 10, 23, 9, 15, tzinfo=ZoneInfo("Asia/Shanghai")))
+    assert sheet["date"] == "2026-10-23"
+    assert sheet["dateline"]["zh"] == "2026-10-23 · 周五"
+    assert sheet["contracts"][0]["price"] == "376.55"
+    assert sheet["contracts"][0]["per_kg"] == "44.98"
+    assert sheet["fix"]["price"] == "7.1234"
+    assert sheet["landed"]["price"] == "56.80"
+    assert "RMX26" not in str(sheet)
+    assert "signals" not in sheet
+    assert "outlook_lead" not in sheet
+
+
+def test_today_sheet_freezes_and_a_missing_day_is_not_backfilled(monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-23", hour=9, minute=15)
+    held = {"quotes": _sheet_quotes()}
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: held["quotes"])
+
+    missed = client.get("/daily/2026-10-22/")
+    assert missed.status_code == 404
+
+    html = client.get("/daily/").text
+    assert "2026-10-23 · 周五" in html
+    assert "376.55" in html
+    assert "44.98" in html
+    assert "7.1234" in html
+    assert "56.80" in html
+    assert "最近成交相对前收 +6.35（+1.72%）" in html
+    assert "上一交易日的最近成交，不是结算价" in html
+    assert "不是中间价" in html
+    assert "不写成调升基点" in html
+    assert "海运 1.20，关税 3.40，增值税 6.10，其余 1.12" in html
+    assert "海运 85 美元/吨" in html
+    assert "上海时间 09:15 冻结" in html
+    assert "https://finance.yahoo.com/quote/KC=F" in html
+    assert "RMX26" not in html
+    assert "315.70" not in html
+    assert "6.7200" not in html
+    assert "偏多" not in html
+
+    held["quotes"] = _sheet_quotes(price="400.00", rate="7.2000")
+    again = client.get("/daily/").text
+    assert "376.55" in again
+    assert "400.00" not in again
+    assert "7.1234" in again
+    dated = client.get("/daily/2026-10-23/").text
+    assert "376.55" in dated
+    assert "400.00" not in dated
+
+    en = client.get("/daily/2026-10-23/?lang=en").text
+    assert "Friday" in en
+    assert "Last trade from the previous session, not the settlement" in en
+    assert "Not the fixing" in en
+    assert "Frozen at 09:15 Shanghai" in en
+    assert "Unhedged landed cost is 56.80 yuan/kg." in en
+    assert "Robusta, stocks, weather, and positioning were not fetched" in en
+
+
+def test_a_live_session_is_not_called_a_settlement(monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-23")
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: _sheet_quotes(session="live"))
+    html = client.get("/daily/").text
+    assert "盘中最近成交，不是结算价" in html
+    assert "上一交易日的最近成交" not in html
+
+
+def test_daily_falls_back_to_the_archive_when_the_sheet_cannot_be_written(monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-23")
+    monkeypatch.setattr(web_app, "quiet_quotes", lambda: {"coffee": None, "fx": None})
+    html = client.get("/daily/").text
+    assert "2026-10-20 · 周二" in html
+    assert "315.70" in html
+    assert "6.7200" in html

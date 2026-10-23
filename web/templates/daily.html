@@ -31,6 +31,16 @@
     <p class="daily-prose">{{ issue.fix.prose[L] }}</p>
   </section>
 
+  {% if issue.landed %}
+  <section class="daily-fix">
+    <h2>{{ issue.landed.heading[L] }}</h2>
+    <p class="daily-px">{{ issue.landed.price }} <small>{{ issue.landed.unit[L] }}</small></p>
+    {% if issue.landed.meta[L] %}<p class="daily-meta">{{ issue.landed.meta[L] }}</p>{% endif %}
+    <p class="daily-prose">{{ issue.landed.prose[L] }}</p>
+  </section>
+  {% endif %}
+
+  {% if issue.signals %}
   <section class="daily-block">
     <h2>{{ issue.signals_heading[L] }}</h2>
     <p class="daily-lead">{{ issue.signals_lead[L] }}</p>
@@ -48,7 +58,9 @@
       {% endfor %}
     </ul>
   </section>
+  {% endif %}
 
+  {% if issue.outlook_lead %}
   <section class="daily-block">
     <h2>{{ issue.outlook_heading[L] }}</h2>
     <p class="daily-lead">{{ issue.outlook_deck[L] }}</p>
@@ -72,26 +84,35 @@
       <p>{{ issue.diverge[L] }}</p>
     </aside>
   </section>
+  {% endif %}
 
+  {% if issue.reason %}
   <section class="daily-block">
     <h2>{{ issue.reason_heading[L] }}</h2>
     <p class="daily-prose">{{ issue.reason[L] }}</p>
   </section>
+  {% endif %}
 
+  {% if issue.sources or issue.footnote %}
   <section class="daily-block daily-sources">
+    {% if issue.sources %}
     <h2>{{ issue.sources_heading[L] }}</h2>
     <ol>
       {% for src in issue.sources %}
       <li><a href="{{ src.url }}" rel="noopener noreferrer">{{ src[L] }}</a></li>
       {% endfor %}
     </ol>
+    {% endif %}
+    {% if issue.quotes %}
     <p class="daily-quotes-label">{{ issue.quotes_label[L] }}</p>
     <p class="daily-quotes">
       {% for q in issue.quotes %}
       <a href="{{ q.url }}" rel="noopener noreferrer">{{ q[L] }}</a>{% if not loop.last %} · {% endif %}
       {% endfor %}
     </p>
-    <p class="daily-foot">{{ issue.footnote[L] }}</p>
+    {% endif %}
+    {% if issue.footnote %}<p class="daily-foot">{{ issue.footnote[L] }}</p>{% endif %}
   </section>
+  {% endif %}
 </article>
 {% endblock %}

@@ -1,5 +1,6 @@
 """早报版面：2026-10-20 写定的一期，以及之后按上海日期冻结的成本单。"""
 
+import json
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -236,3 +237,61 @@ def test_daily_falls_back_to_the_archive_when_the_sheet_cannot_be_written(monkey
     assert "2026-10-20 · 周二" in html
     assert "315.70" in html
     assert "6.7200" in html
+
+
+def test_published_issues_keep_the_editorial_and_skip_junk(tmp_path):
+    (tmp_path / "2026-10-20.json").write_text(
+        json.dumps({"date": "2026-10-20", "contracts": [{"price": "1.00"}]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-10-23.json").write_text(
+        json.dumps({
+            "date": "2026-10-23",
+            "contracts": [{"price": "311.40", "unit": {"zh": "美分/磅", "en": "¢/lb"}, "per_kg": "45.81"}],
+        }),
+        encoding="utf-8",
+    )
+    (tmp_path / "2026-10-21.json").write_text("{", encoding="utf-8")
+    (tmp_path / "notes.json").write_text("{}", encoding="utf-8")
+    issues = daily_brief.published_issues()
+    assert [issue["date"] for issue in issues] == ["2026-10-23", "2026-10-20"]
+    assert issues[1]["contracts"][0]["price"] == "315.70"
+    card = daily_brief.issue_card(issues[0])
+    assert card["price"] == "311.40"
+    assert card["per_kg"] == "45.81"
+
+
+def test_archive_lists_written_mornings_and_does_not_backfill(monkeypatch, tmp_path):
+    _pin_morning(monkeypatch, "2026-10-23")
+    html = client.get("/reports/").text
+    assert "早报 1 期" in html
+    assert "周报 0 期" in html
+    assert 'href="/daily/2026-10-20/"' in html
+    assert "315.70" in html
+    assert "46.77" in html
+    assert 'href="/daily/2026-10-23/"' not in html
+    assert "周报还没有一期" in html
+    assert "样张" in html
+    assert 'href="/reports/" class="active">档案' in html
+    assert list(tmp_path.iterdir()) == []
+
+    daily_brief.get_issue("2026-10-23", _sheet_quotes())
+    monkeypatch.setattr(web_app, "_list_report_dates", lambda: ["2026-10-17"])
+    monkeypatch.setattr(
+        web_app, "_read_report_meta",
+        lambda date: {"date": date, "signal": "NEUTRAL", "price": "300.00", "change": "+0.1%", "has_pdf": False},
+    )
+    both = client.get("/reports/").text
+    assert both.index('href="/daily/2026-10-23/"') < both.index('href="/daily/2026-10-20/"')
+    assert "376.55" in both
+    assert "44.98" in both
+    assert 'href="/reports/2026-10-17/"' in both
+    assert "样张" not in both
+    assert "周报 1 期" in both
+
+    en = client.get("/reports/?lang=en").text
+    assert "Morning notes" in en
+    assert "2 morning notes" in en
+    assert 'href="/daily/2026-10-23/?lang=en"' in en
+    assert "CNY/kg" in en
+    assert "No weekly report yet" not in en

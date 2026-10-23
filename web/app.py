@@ -40,7 +40,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
-from web.daily_brief import bias_label, get_issue, issue_brief, latest_issue, today_text
+from web.daily_brief import (
+    bias_label, get_issue, issue_brief, issue_card, latest_issue, published_issues, today_text,
+)
 from web.quiet_market import kilo_gap_split, quiet_quotes, versus_settlement
 from web.track_record import build_track_record_html
 
@@ -762,6 +764,7 @@ async def archive(request: Request):
     return templates.TemplateResponse(request, "archive.html", {
         "year_groups": year_groups,
         "count": len(all_meta),
+        "mornings": [issue_card(issue) for issue in published_issues()],
         "lang": lang,
     })
 

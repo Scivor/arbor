@@ -151,8 +151,8 @@ def test_homepage_shows_the_latest_issue_when_quotes_fail(monkeypatch):
     assert "周报还在海上" not in html
     assert "行情暂未到港" in html
     assert "现在" in html
-    assert "2026-10-20 · 周二" in html
-    assert "咖啡生豆期货早报" in html
+    assert "咖啡生豆期货早报" not in html
+    assert 'class="daily"' not in html
     assert ">档案</a>" in html
     assert "早报结算" not in html
 

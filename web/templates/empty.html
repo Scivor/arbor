@@ -1,12 +1,9 @@
 {% extends "base.html" %}
 {% set L = 'en' if lang == 'en' else 'zh' %}
 
-{% block title %}{% if issue %}{{ issue.title[L] }} · {{ issue.dateline[L] }} · Arbor{% elif lang == 'en' %}Today · Arbor{% else %}今日 · Arbor{% endif %}{% endblock %}
+{% block title %}{% if lang == 'en' %}Now · Arbor{% else %}现在 · Arbor{% endif %}{% endblock %}
 
 {% block content %}
-{% if issue %}
-{% include "daily_body.html" %}
-{% endif %}
 {% if weekly %}
 <p class="home-weekly"><a href="/reports/{{ weekly }}/{% if lang == 'en' %}?lang=en{% endif %}#followup">{% if lang == 'en' %}Last week's report {{ weekly }}. The follow-up is at the end.{% else %}上周周报 {{ weekly }}，追问在页尾{% endif %}</a></p>
 {% endif %}

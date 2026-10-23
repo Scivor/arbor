@@ -446,7 +446,7 @@ def _redirect_report(report_date: str, lang: str) -> RedirectResponse:
 
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
-    """上海当天有周报就看周报。没有的日子才是早报和现价。"""
+    """上海当天有周报就看周报。没有的日子只留现价，早报不放在这一页。"""
     lang = request.query_params.get("lang", "zh")
     if _report_exists(today_text()):
         today = today_text()

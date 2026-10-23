@@ -34,7 +34,7 @@
 {%- if row -%}
 {%- set nz = row.noun_zh or noun_zh -%}
 {%- set ne = row.noun_en or noun_en -%}
-<span class="quiet-meta">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
+<span class="quiet-vs">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
 {%- endif -%}
 {%- endmacro %}
 <section class="quiet quiet-follow">
@@ -107,9 +107,9 @@
       <div class="quiet-quote">
         <span class="quiet-kicker">{% if lang == 'en' %}Futures in yuan{% else %}期货折人民币{% endif %}</span>
         <span class="quiet-px">{{ yuan.per_jin }} <small>{% if lang == 'en' %}CNY/jin{% else %}元/斤{% endif %}</small></span>
+        {{ morning_mark(yuan_note, '推算', 'estimate', '元/公斤', 'CNY/kg') }}
         {% if yuan.per_kg %}
         <span class="quiet-meta">{{ yuan.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
-        {{ morning_mark(yuan_note, '推算', 'estimate', '元/公斤', 'CNY/kg') }}
         {% if yuan_note and yuan_note.settle_leg and yuan_note.fix_leg and (yuan_note.settle_leg != '0.00' or yuan_note.fix_leg != '0.00' or yuan_note.kilo_together) %}
         <span class="quiet-meta">{% if lang == 'en' %}{{ yuan_note.coffee_leg_en or 'Settlement' }} {{ yuan_note.settle_leg }}, {{ yuan_note.fx_leg_en or 'fixing' }} {{ yuan_note.fix_leg }}{% if yuan_note.kilo_together %}, together {{ yuan_note.kilo_together }}{% endif %}{% else %}{{ yuan_note.coffee_noun_zh or '结算' }} {{ yuan_note.settle_leg }}，{{ yuan_note.fx_noun_zh or '中间价' }} {{ yuan_note.fix_leg }}{% if yuan_note.kilo_together %}，一起 {{ yuan_note.kilo_together }}{% endif %}{% endif %}</span>
         {% endif %}
@@ -129,10 +129,10 @@
         <span class="quiet-kicker">{% if lang == 'en' %}Landed cost{% else %}到库成本{% endif %}</span>
         <span class="quiet-px">{{ landed.per_jin }} <small>{% if lang == 'en' %}CNY/jin{% else %}元/斤{% endif %}</small></span>
         {% if landed.per_kg %}
-        <span class="quiet-meta">{{ landed.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
         {% if landing %}
-        <span class="quiet-meta">{% if landing.side == 'same' %}{% if lang == 'en' %}Same kilo as the futures{% else %}与期货的公斤相同{% endif %}{% elif landing.side == 'below' %}{% if lang == 'en' %}{{ landing.gap }} CNY/kg under the futures{% else %}到库少 {{ landing.gap }} 元/公斤{% endif %}{% else %}{% if lang == 'en' %}landing adds {{ landing.gap }} CNY/kg{% else %}到库多 {{ landing.gap }} 元/公斤{% endif %}{% endif %}</span>
+        <span class="quiet-vs">{% if landing.side == 'same' %}{% if lang == 'en' %}Same kilo as the futures{% else %}与期货的公斤相同{% endif %}{% elif landing.side == 'below' %}{% if lang == 'en' %}{{ landing.gap }} CNY/kg under the futures{% else %}到库少 {{ landing.gap }} 元/公斤{% endif %}{% else %}{% if lang == 'en' %}landing adds {{ landing.gap }} CNY/kg{% else %}到库多 {{ landing.gap }} 元/公斤{% endif %}{% endif %}</span>
         {% endif %}
+        <span class="quiet-meta">{{ landed.per_kg }} {% if lang == 'en' %}CNY/kg{% else %}元/公斤{% endif %}</span>
         {% if landed.parts %}
         <span class="quiet-meta">{% if lang == 'en' %}Freight {{ landed.parts.freight }}, duty {{ landed.parts.duty }}, VAT {{ landed.parts.vat }}{% if landed.parts.rest %}, the rest {{ landed.parts.rest }}{% endif %}{% else %}海运 {{ landed.parts.freight }}，关税 {{ landed.parts.duty }}，增值税 {{ landed.parts.vat }}{% if landed.parts.rest %}，其余 {{ landed.parts.rest }}{% endif %}{% endif %}</span>
         {% endif %}

@@ -727,15 +727,63 @@ def test_homepage_keeps_the_desk_when_a_weekly_report_exists(client, monkeypatch
     assert "report-body" not in html
     assert "咖啡期货" in html
     assert "376.55" in html
-    assert 'href="/reports/2026-10-17/"' in html
-    assert ">周报</a>" in html
-    assert ">顾问</a>" in html
+    assert 'href="/reports/2026-10-17/#followup"' in html
+    assert "上周周报 2026-10-17，追问在页尾" in html
     assert ">档案</a>" in html
-    assert 'class="active"' in html.split(">今日</a>")[0].rsplit("<a ", 1)[-1]
+    assert ">今日</a>" not in html
+    assert ">周报</a>" not in html
+    assert ">顾问</a>" not in html
+    assert 'id="chatInput"' not in html
     report = client.get("/reports/2026-10-17/")
     assert report.text == "report-body"
     assert served["date"] == "2026-10-17"
     assert served["latest"] is True
+
+
+def test_homepage_is_the_weekly_on_its_publication_day(client, monkeypatch, tmp_path):
+    day = tmp_path / "2026-10-17"
+    day.mkdir()
+    (day / "report.html").write_text(
+        '<html><body><div class="hero-eyebrow">周报</div><p>report-body</p></body></html>',
+        encoding="utf-8",
+    )
+    older = tmp_path / "2026-10-10"
+    older.mkdir()
+    (older / "report.html").write_text(
+        "<html><body><p>older-body</p></body></html>",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(web_app, "REPORTS_DIR", tmp_path)
+    _pin_morning(monkeypatch, "2026-10-17")
+    called = {"n": 0}
+
+    def _quotes():
+        called["n"] += 1
+        return _sample_quotes()
+
+    monkeypatch.setattr(web_app, "quiet_quotes", _quotes)
+    html = client.get("/").text
+    assert "report-body" in html
+    assert 'id="followup"' in html
+    assert "就这一期追问" in html
+    assert "咖啡生豆期货早报" not in html
+    assert "采购下一步建议" not in html
+    assert "预测战绩" in html
+    assert ">档案</a>" in html
+    assert called["n"] == 0
+
+    old = client.get("/reports/2026-10-10/").text
+    assert "older-body" in old
+    assert "追问只挂在" in old
+    assert 'id="chatInput"' not in old
+    assert 'href="/reports/2026-10-17/#followup"' in old
+
+    jump = client.get("/daily/2026-10-17/", follow_redirects=False)
+    assert jump.status_code == 302
+    assert jump.headers["location"] == "/reports/2026-10-17/"
+    chat = client.get("/chat/", follow_redirects=False)
+    assert chat.status_code == 302
+    assert chat.headers["location"] == "/reports/2026-10-17/#followup"
 
 
 _SINA_KC = (

@@ -76,7 +76,9 @@ def test_build_chat_page_with_briefing():
 def test_chat_page_route(client):
     resp = client.get("/chat/")
     assert resp.status_code == 200
-    assert "采购顾问" in resp.text
+    assert "这周还没有周报" in resp.text
+    assert "返回首页" in resp.text
+    assert 'id="chatInput"' not in resp.text
 
 
 def test_agent_status_names_deepseek_and_hides_the_key(client, monkeypatch):
@@ -97,6 +99,7 @@ def test_agent_status_names_deepseek_and_hides_the_key(client, monkeypatch):
     assert "sk-secret-value" not in status.text
     page = client.get("/chat/")
     assert "DeepSeek · deepseek-chat" in page.text
+    assert "sk-secret-value" not in page.text
 
 
 def test_agent_status_when_deepseek_is_not_configured(client, monkeypatch, tmp_path):
@@ -107,7 +110,7 @@ def test_agent_status_when_deepseek_is_not_configured(client, monkeypatch, tmp_p
     assert status.json()["configured"] is False
     assert status.json()["provider"] is None
     page = client.get("/chat/")
-    assert "尚未接通 DeepSeek" in page.text
+    assert "尚未接通，按已出版的文字回答" in page.text
 
 
 # ── POST /api/chat ────────────────────────────────────────────────────────────
@@ -193,15 +196,21 @@ def test_first_turn_reads_todays_frozen_issue_and_does_not_write(client, monkeyp
         return "收到"
 
     monkeypatch.setattr(web_app, "_get_analyst", lambda: SimpleNamespace(chat=_chat))
-    monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
+    monkeypatch.setattr(web_app, "_latest_report_date", lambda: "2026-10-17")
     before = sorted(path.name for path in tmp_path.iterdir())
-    resp = client.post("/api/chat", json={"message": "早报怎么读", "session_id": "am"})
+    resp = client.post("/api/chat", json={
+        "message": "早报怎么读", "session_id": "am", "report_date": "2026-10-23",
+    })
     assert resp.status_code == 200
     assert "【今日已冻结早报】" in seen["q"]
     assert "311.40" in seen["q"]
     assert "最近成交" in seen["q"]
-    client.post("/api/chat", json={"message": "再说", "session_id": "am"})
+    client.post("/api/chat", json={"message": "再说", "session_id": "am", "report_date": "2026-10-23"})
     assert seen["q"] == "再说"
+    client.post("/api/chat", json={
+        "message": "早报怎么读", "session_id": "other-week", "report_date": "2026-10-17",
+    })
+    assert "【今日已冻结早报】" not in seen["q"]
     assert sorted(path.name for path in tmp_path.iterdir()) == before
 
 
@@ -243,6 +252,57 @@ def test_api_chat_agent_internal_error(client, monkeypatch):
     resp = client.post("/api/chat", json={"message": "hello"})
     assert resp.status_code == 500
     assert "network down" in resp.json()["error"]
+
+
+def test_offline_unwritten_point_is_not_the_whole_briefing(client, monkeypatch):
+    def _boom():
+        raise RuntimeError("未找到 LLM API key")
+    monkeypatch.setattr(web_app, "_get_analyst", _boom)
+    monkeypatch.setattr(
+        web_app, "_extract_procurement_briefing",
+        lambda date: "【现在怎么做】分批小幅补库。\n【时机好不好】到库偏高。",
+    )
+    resp = client.post("/api/chat", json={"message": "今天天气怎么样", "report_date": "2026-10-17"})
+    assert resp.status_code == 200
+    assert resp.json()["output"] == "这期简报没写这一点。"
+    assert "分批" not in resp.json()["output"]
+
+
+def test_english_followup_asks_for_a_short_english_answer(client, monkeypatch):
+    seen = {}
+
+    def _chat(q, chat_history=None):
+        seen["q"] = q
+        return "ok"
+
+    monkeypatch.setattr(web_app, "_get_analyst", lambda: SimpleNamespace(chat=_chat))
+    monkeypatch.setattr(
+        web_app, "_extract_procurement_briefing",
+        lambda date: "【现在怎么做】观望。",
+    )
+    resp = client.post("/api/chat", json={
+        "message": "Should we buy this week?",
+        "report_date": "2026-10-17",
+        "lang": "en",
+        "session_id": "en1",
+    })
+    assert resp.status_code == 200
+    assert "用英文短答" in seen["q"]
+    assert "本期已发布采购简报" in seen["q"]
+    assert "2026-10-17" in seen["q"]
+
+
+def test_followup_panel_does_not_repeat_the_briefing():
+    from web.chat import build_followup_panel
+    html = build_followup_panel("2026-10-17")
+    assert 'id="followup"' in html
+    assert "就这一期追问" in html
+    assert "这周该不该买" in html
+    assert "追问上面没写清的一点" in html
+    assert "report_date" in html
+    assert "arbor_followup_sid_" in html
+    assert "【现在怎么做】" not in html
+    assert "seedBriefing" not in html
 
 
 def test_offline_clarify_uses_the_morning_issue_when_no_weekly_exists():

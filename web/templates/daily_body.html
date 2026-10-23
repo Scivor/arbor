@@ -87,26 +87,4 @@
     <p class="daily-prose">{{ issue.reason[L] }}</p>
   </section>
   {% endif %}
-
-  {% if issue.sources or issue.footnote %}
-  <section class="daily-block daily-sources">
-    {% if issue.sources %}
-    <h2>{{ issue.sources_heading[L] }}</h2>
-    <ol>
-      {% for src in issue.sources %}
-      <li><a href="{{ src.url }}" rel="noopener noreferrer">{{ src[L] }}</a></li>
-      {% endfor %}
-    </ol>
-    {% endif %}
-    {% if issue.quotes %}
-    <p class="daily-quotes-label">{{ issue.quotes_label[L] }}</p>
-    <p class="daily-quotes">
-      {% for q in issue.quotes %}
-      <a href="{{ q.url }}" rel="noopener noreferrer">{{ q[L] }}</a>{% if not loop.last %} · {% endif %}
-      {% endfor %}
-    </p>
-    {% endif %}
-    {% if issue.footnote %}<p class="daily-foot">{{ issue.footnote[L] }}</p>{% endif %}
-  </section>
-  {% endif %}
 </article>

@@ -422,3 +422,310 @@ input.focus();
 </script>
 </body>
 </html>"""
+
+
+def _provider_line(agent: Optional[dict], lang: str = "zh") -> str:
+    provider = (agent or {}).get("provider")
+    model = (agent or {}).get("model") or ""
+    if (agent or {}).get("configured") and provider == "deepseek":
+        return f"DeepSeek · {model}"
+    if (agent or {}).get("configured") and provider:
+        return f"{provider} · {model}"
+    if lang == "en":
+        return "Not connected. Answers stay inside the published text."
+    return "尚未接通，按已出版的文字回答"
+
+
+def build_followup_panel(
+    report_date: str,
+    lang: str = "zh",
+    agent: Optional[dict] = None,
+) -> str:
+    """周报页尾的追问区。不重复贴五段简报，也不自动发问。"""
+    from reports.procurement_briefing import DEFAULT_SUGGESTIONS_EN, DEFAULT_SUGGESTIONS_ZH
+
+    en = lang == "en"
+    chips = list(DEFAULT_SUGGESTIONS_EN if en else DEFAULT_SUGGESTIONS_ZH)
+    title = "Follow up on this issue" if en else "就这一期追问"
+    reset = "Clear" if en else "清空追问"
+    lead = (
+        "Only the points already printed above. Numbers that were not written are not invented."
+        if en else
+        "只澄清上面已经写过的建议，没写进这期的数字不编。"
+    )
+    placeholder = "Ask about one point above" if en else "追问上面没写清的一点"
+    send = "Send" if en else "发送"
+    thinking = "Thinking…" if en else "顾问思考中…"
+    date = html_lib.escape(report_date)
+    return f"""<section id="followup" class="followup">
+  <div class="followup-hdr">
+    <h2>{title}</h2>
+    <button type="button" class="followup-reset" id="chatReset">{reset}</button>
+  </div>
+  <p class="followup-lead">{lead}</p>
+  <p class="followup-provider">{html_lib.escape(_provider_line(agent, lang))}</p>
+  <div class="followup-chips" id="chatChips"></div>
+  <div class="followup-list" id="chatList"></div>
+  <div class="followup-input">
+    <textarea id="chatInput" rows="2" placeholder="{placeholder}"></textarea>
+    <button id="chatSend" type="button">{send}</button>
+  </div>
+</section>
+<style>
+#followup {{
+  max-width: 210mm;
+  margin: 0 auto;
+  padding: 8px 14mm 48px;
+  background: #f5f4ed;
+  color: #141413;
+  font-family: {css_sans_stack()};
+}}
+#followup .followup-hdr {{
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid #e5e3d8;
+  padding-top: 28px;
+}}
+#followup h2 {{
+  font-family: {css_serif_stack()};
+  font-size: 22px;
+  font-weight: 600;
+  margin: 0;
+}}
+#followup .followup-reset {{
+  border: 0;
+  background: transparent;
+  color: #504e49;
+  font-size: 12px;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+}}
+#followup .followup-lead,
+#followup .followup-provider {{
+  margin: 8px 0 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #504e49;
+}}
+#followup .followup-provider {{
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  color: #6b6a64;
+}}
+#followup .followup-chips {{
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 12px;
+}}
+#followup .chat-chip {{
+  border: 1px solid #e8e6dc;
+  background: #faf9f5;
+  color: #1B365D;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  cursor: pointer;
+  font-family: inherit;
+}}
+#followup .chat-chip:disabled {{ opacity: 0.45; cursor: default; }}
+#followup .followup-list {{
+  max-height: 420px;
+  overflow-y: auto;
+  margin-bottom: 12px;
+}}
+#followup .chat-msg {{
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}}
+#followup .chat-msg.user {{
+  margin-left: auto;
+  background: #1B365D;
+  color: #f5f4ed;
+}}
+#followup .chat-msg.assistant {{
+  margin-right: auto;
+  background: #faf9f5;
+  border: 1px solid #e8e6dc;
+}}
+#followup .chat-msg.pending {{ color: #6b6a64; font-style: italic; }}
+#followup .chat-msg.error {{ color: #8a3b2e; }}
+#followup .followup-input {{
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+}}
+#followup textarea {{
+  flex: 1;
+  resize: none;
+  border: 1px solid #e8e6dc;
+  border-radius: 6px;
+  background: #faf9f5;
+  color: #141413;
+  font-family: inherit;
+  font-size: 13.5px;
+  line-height: 1.5;
+  padding: 10px 12px;
+  outline: none;
+}}
+#followup #chatSend {{
+  background: #1B365D;
+  color: #f5f4ed;
+  border: 0;
+  border-radius: 6px;
+  padding: 10px 22px;
+  font-size: 13px;
+  cursor: pointer;
+}}
+#followup #chatSend:disabled {{ background: #6b6a64; cursor: default; }}
+</style>
+<script>
+const REPORT_DATE = {json.dumps(date)};
+const LANG = {json.dumps("en" if en else "zh")};
+const SUGGESTIONS = {json.dumps(chips, ensure_ascii=False)};
+const THINKING = {json.dumps(thinking)};
+const list = document.getElementById('chatList');
+const input = document.getElementById('chatInput');
+const sendBtn = document.getElementById('chatSend');
+const chipsRow = document.getElementById('chatChips');
+let pending = false;
+
+function storageKey() {{ return 'arbor_followup_sid_' + REPORT_DATE; }}
+function newSessionId() {{
+  try {{
+    const sid = (crypto.randomUUID && crypto.randomUUID()) ||
+      ('s' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10));
+    sessionStorage.setItem(storageKey(), sid);
+    return sid;
+  }} catch (e) {{
+    return 'anon-' + Date.now();
+  }}
+}}
+function getSessionId() {{
+  try {{
+    let sid = sessionStorage.getItem(storageKey());
+    if (!sid) sid = newSessionId();
+    return sid;
+  }} catch (e) {{
+    return 'anon';
+  }}
+}}
+function resetChat() {{
+  if (pending) return;
+  newSessionId();
+  list.querySelectorAll('.chat-msg').forEach((el) => el.remove());
+  input.value = '';
+}}
+function addBubble(text, cls) {{
+  const div = document.createElement('div');
+  div.className = 'chat-msg ' + cls;
+  div.textContent = text;
+  list.appendChild(div);
+  list.scrollTop = list.scrollHeight;
+  return div;
+}}
+function setChipsEnabled(on) {{
+  chipsRow.querySelectorAll('.chat-chip').forEach((btn) => {{ btn.disabled = !on; }});
+}}
+function renderChips() {{
+  chipsRow.innerHTML = '';
+  SUGGESTIONS.forEach((label) => {{
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chat-chip';
+    btn.textContent = label;
+    btn.addEventListener('click', () => {{ input.value = label; send(); }});
+    chipsRow.appendChild(btn);
+  }});
+}}
+async function send() {{
+  const msg = input.value.trim();
+  if (!msg || pending) return;
+  pending = true;
+  sendBtn.disabled = true;
+  setChipsEnabled(false);
+  addBubble(msg, 'user');
+  input.value = '';
+  const thinking = addBubble(THINKING, 'assistant pending');
+  try {{
+    const resp = await fetch('/api/chat', {{
+      method: 'POST',
+      headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{
+        message: msg,
+        session_id: getSessionId(),
+        report_date: REPORT_DATE,
+        lang: LANG,
+      }}),
+    }});
+    const data = await resp.json();
+    thinking.remove();
+    if (resp.ok) addBubble(data.output || '', 'assistant');
+    else addBubble(data.error || ('请求失败 (' + resp.status + ')'), 'assistant error');
+  }} catch (e) {{
+    thinking.remove();
+    addBubble(e.message, 'assistant error');
+  }} finally {{
+    pending = false;
+    sendBtn.disabled = false;
+    setChipsEnabled(true);
+  }}
+}}
+sendBtn.addEventListener('click', send);
+document.getElementById('chatReset').addEventListener('click', resetChat);
+input.addEventListener('keydown', (e) => {{
+  if (e.key === 'Enter' && !e.shiftKey) {{ e.preventDefault(); send(); }}
+}});
+renderChips();
+</script>"""
+
+
+def build_followup_note(latest: str, lang: str = "zh") -> str:
+    """过刊不放输入框，只指向最新一期的页尾。"""
+    date = html_lib.escape(latest)
+    href = f"/reports/{date}/?lang=en#followup" if lang == "en" else f"/reports/{date}/#followup"
+    if lang == "en":
+        text = f'Follow-up stays on the <a href="{href}">latest issue</a>.'
+    else:
+        text = f'追问只挂在<a href="{href}">最新一期</a>。'
+    return f'<p class="followup-note" style="max-width:210mm;margin:0 auto;padding:12px 14mm 36px;font-size:13px;color:#504e49;">{text}</p>'
+
+
+def build_followup_waiting(agent: Optional[dict] = None, lang: str = "zh") -> str:
+    """还没有周报时，/chat/ 不装一间顾问室。"""
+    if lang == "en":
+        title = "Follow-up"
+        body = "The follow-up waits for the weekly report. This week has none yet."
+        back = "Back home"
+        home = "/?lang=en"
+    else:
+        title = "追问"
+        body = "追问在周报页尾。这周还没有周报。"
+        back = "返回首页"
+        home = "/"
+    provider = html_lib.escape(_provider_line(agent, lang))
+    return f"""<!DOCTYPE html>
+<html lang="{'en' if lang == 'en' else 'zh-CN'}">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{title} · Arbor</title>
+</head>
+<body style="background:#f5f4ed;color:#141413;font-family:{css_sans_stack()};margin:0;">
+<main style="max-width:640px;margin:0 auto;padding:72px 24px;">
+  <h1 style="font-family:{css_serif_stack()};font-size:28px;font-weight:500;">{title}</h1>
+  <p style="line-height:1.7;">{body}</p>
+  <p style="font-size:12px;color:#6b6a64;">{provider}</p>
+  <p><a href="{home}" style="color:#1B365D;">{back}</a></p>
+</main>
+</body>
+</html>"""

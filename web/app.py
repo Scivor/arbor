@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.exceptions import RequestValidationError
@@ -39,7 +39,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
-from web.chat import build_chat_page
+from web.chat import build_followup_note, build_followup_panel, build_followup_waiting
 from web.daily_brief import (
     bias_label, get_issue, issue_brief, issue_card, latest_issue, published_issues, today_text,
 )
@@ -238,8 +238,29 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
 </style>"""
 
 
+def _report_nav(report_date: str, lang: str) -> str:
+    """周报页顶的细导航：品牌回首页，旁边只留档案。"""
+    if lang == "en":
+        home, archive, switch, switch_href, label = (
+            "/?lang=en", "/reports/?lang=en", "中文", f"/reports/{report_date}/", "Archive",
+        )
+    else:
+        home, archive, switch, switch_href, label = (
+            "/", "/reports/", "EN", f"/reports/{report_date}/?lang=en", "档案",
+        )
+    return f"""<nav style="background:#faf9f5;border-bottom:1px solid #e5e3d8;position:sticky;top:0;z-index:100;">
+  <div style="max-width:1120px;margin:0 auto;padding:0 28px;height:56px;display:flex;align-items:center;justify-content:space-between;">
+    <a href="{home}" aria-label="Arbor"><img src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" /></a>
+    <div style="display:flex;gap:18px;font-size:13px;">
+      <a href="{archive}" style="color:#504e49;text-decoration:none;">{label}</a>
+      <a href="{switch_href}" style="color:#504e49;text-decoration:none;">{switch}</a>
+    </div>
+  </div>
+</nav>"""
+
+
 def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "zh") -> HTMLResponse:
-    """Serve a report page: original HTML + injected past-index. No nav bar."""
+    """周报正文，页顶一条细导航。最新一期页尾才有追问。"""
     html_path = REPORTS_DIR / report_date / f"report_{lang}.html"
     # Fallback to zh if en not available
     if not html_path.exists():
@@ -254,32 +275,34 @@ def _serve_report_page(report_date: str, is_latest: bool = False, lang: str = "z
             f'<div style="float:right;font-size:11px;font-weight:500;color:#1B365D;background:#E4ECF5;padding:2px 8px;border-radius:4px;letter-spacing:0.3px;">{badge_text}</div><div class="hero-eyebrow">'
         )
 
-    # Build and inject past-index before </body>
+    opened = re.search(r"<body[^>]*>", html_content, re.I)
+    nav = _report_nav(report_date, lang)
+    if opened:
+        html_content = html_content[:opened.end()] + nav + html_content[opened.end():]
+    else:
+        html_content = nav + html_content
+
     recent = _list_report_dates()[:10]
     recent_meta = [_read_report_meta(d) for d in recent]
     past_index_html = _build_past_index_html(report_date, recent_meta, lang=lang)
-
-    # 首页入口: 指向预测战绩页 / 采购顾问追问页
     if is_latest:
-        chat_text = "Next procurement steps →" if lang == "en" else "采购下一步建议 →"
-        past_index_html = past_index_html.replace(
-            '<a class="past-index-all"',
-            f'<a class="past-index-all" style="margin-right:14px;" href="/chat/">{chat_text}</a><a class="past-index-all"',
-            1,
-        )
         tr_text = "Track Record →" if lang == "en" else "预测战绩 →"
         past_index_html = past_index_html.replace(
             '<a class="past-index-all"',
             f'<a class="past-index-all" style="margin-right:14px;" href="/track-record/">{tr_text}</a><a class="past-index-all"',
             1,
         )
+        tail = build_followup_panel(report_date, lang=lang, agent=agent_status())
+    else:
+        latest = _latest_report_date()
+        tail = build_followup_note(latest, lang) if latest else ""
 
-    # Find </body> and insert before it
+    extra = past_index_html + "\n" + tail
     body_end = html_content.rfind("</body>")
     if body_end != -1:
-        html_content = html_content[:body_end] + past_index_html + "\n" + html_content[body_end:]
+        html_content = html_content[:body_end] + extra + "\n" + html_content[body_end:]
     else:
-        html_content += past_index_html
+        html_content += extra
 
     return HTMLResponse(content=html_content)
 
@@ -414,10 +437,20 @@ def _morning_yuan(yuan: Optional[dict], issue: Optional[dict]) -> Optional[dict]
     return gap
 
 
+def _redirect_report(report_date: str, lang: str) -> RedirectResponse:
+    url = f"/reports/{report_date}/"
+    if lang == "en":
+        url += "?lang=en"
+    return RedirectResponse(url, status_code=302)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
-    """首页是今日早报，下面是现价。周报在 /reports/，不占这一页。"""
+    """上海当天有周报就看周报。没有的日子只留现价，早报不放在这一页。"""
     lang = request.query_params.get("lang", "zh")
+    if _report_exists(today_text()):
+        today = today_text()
+        return _serve_report_page(today, is_latest=(today == _latest_report_date()), lang=lang)
     try:
         quotes = await asyncio.to_thread(quiet_quotes)
     except Exception:
@@ -552,10 +585,12 @@ def _offline_clarify(
     briefing: Optional[str],
     history: Optional[list] = None,
     morning: str = "",
+    lang: str = "zh",
 ) -> str:
-    """无 LLM 时的简短澄清：从已出版的早报或周报里点题回答，不编造数字。"""
+    """无 LLM 时只点已出版的那一截。对不上就说没写，不倒回整份简报。"""
     msg = message.strip()
     morning = (morning or "").strip()
+    missing = "This issue does not say that." if lang == "en" else "这期简报没写这一点。"
     if not briefing and not morning:
         return "当前没有已出版的早报或周报。我只接问题，不编数字。"
 
@@ -567,7 +602,10 @@ def _offline_clarify(
                 return line.strip()
         return None
 
-    # 短指代追问（「那呢」「为什么」）结合上一轮用户问题扩写意图
+    def _or_miss(*parts: Optional[str]) -> str:
+        kept = [part for part in parts if part]
+        return "\n".join(kept) if kept else missing
+
     prior_user = ""
     if history:
         for role, text in reversed(history):
@@ -577,25 +615,26 @@ def _offline_clarify(
     lookup = msg
     if len(msg) <= 8 and prior_user and any(k in msg for k in ("那", "呢", "呢？", "呢?", "还有", "呢啊")):
         lookup = f"{prior_user} {msg}"
+    low = lookup.lower()
 
     if morning and any(k in lookup for k in ("早报", "现价", "最近成交", "在岸", "公斤")):
         return morning
-    if any(k in lookup for k in ("该不该买", "买不买", "采购", "补库", "怎么买")):
-        return _section("现在怎么做") or _section("时机好不好") or briefing or morning
-    if any(k in lookup for k in ("套保", "对冲", "要紧", "偏松", "偏紧")):
-        return _section("现在怎么做") or briefing or morning
-    if any(k in lookup for k in ("到库", "成本", "CIF", "落地")):
+    if any(k in lookup for k in ("该不该买", "买不买", "采购", "补库", "怎么买")) or "should we buy" in low:
+        return _or_miss(_section("现在怎么做"), _section("时机好不好"))
+    if any(k in lookup for k in ("套保", "对冲", "要紧", "偏松", "偏紧")) or "hedge" in low or "tighten" in low or "loosen" in low:
+        return _or_miss(_section("现在怎么做"))
+    if any(k in lookup for k in ("到库", "成本", "CIF", "落地")) or "landed" in low:
         line = _section("时机好不好") or _section("为什么")
-        return line or "本期简报未单独拆出到库数字，请打开周报「进口成本与政策」板块。"
-    if any(k in lookup for k in ("为什么", "依据", "理由", "原因")):
-        return _section("为什么") or briefing or morning
+        if line:
+            return line
+        return "本期简报未单独拆出到库数字，请打开周报「进口成本与政策」板块。"
+    if any(k in lookup for k in ("为什么", "依据", "理由", "原因")) or low.strip() in ("why", "why?"):
+        return _or_miss(_section("为什么"))
     if any(k in lookup for k in ("盯什么", "下周", "触发", "看什么")):
-        return _section("下周盯什么") or briefing or morning
-    if any(k in lookup for k in ("跌破", "支撑", "怎么办", "风险", "坑")):
-        return "\n".join(
-            x for x in (_section("别踩的坑"), _section("下周盯什么")) if x
-        ) or briefing or morning
-    return briefing or morning
+        return _or_miss(_section("下周盯什么"))
+    if any(k in lookup for k in ("跌破", "支撑", "怎么办", "风险", "坑")) or "support" in low:
+        return _or_miss(_section("别踩的坑"), _section("下周盯什么"))
+    return missing
 
 
 @app.get("/api/briefing")
@@ -634,21 +673,16 @@ def _today_morning_text() -> str:
 
 
 @app.get("/chat/", response_class=HTMLResponse)
-async def chat_page():
-    """采购顾问：开场是今日早报和最近一份周报简报。"""
+async def chat_page(request: Request):
+    """追问不单独占一页。有周报就转到最新一期的页尾。"""
     latest = _latest_report_date()
-    briefing = _extract_procurement_briefing(latest) if latest else None
-    morning = _today_morning_text()
-    opening = briefing
-    if morning and briefing:
-        opening = f"{morning}\n\n{briefing}"
-    elif morning:
-        opening = morning
-    return HTMLResponse(
-        content=build_chat_page(
-            briefing=opening, report_date=latest, agent=agent_status(),
-        )
-    )
+    lang = request.query_params.get("lang", "zh")
+    if latest:
+        url = f"/reports/{latest}/#followup"
+        if lang == "en":
+            url = f"/reports/{latest}/?lang=en#followup"
+        return RedirectResponse(url, status_code=302)
+    return HTMLResponse(content=build_followup_waiting(agent_status(), lang))
 
 
 @app.post("/api/chat")
@@ -673,23 +707,27 @@ async def chat_api(request: Request):
         return JSONResponse({"error": "消息不能为空"}, status_code=400)
 
     latest = _latest_report_date()
-    briefing = _extract_procurement_briefing(latest) if latest else None
-    morning = _today_morning_text()
+    report_date = (body.get("report_date") or "").strip()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", report_date):
+        report_date = latest or ""
+    lang = body.get("lang") if body.get("lang") in ("zh", "en") else "zh"
+    briefing = _extract_procurement_briefing(report_date) if report_date else None
+    morning = _today_morning_text() if report_date and report_date == today_text() else ""
     history = _session_history(session_id)
 
     try:
         analyst = _get_analyst()
     except RuntimeError:
-        output = _offline_clarify(message, briefing, history=history, morning=morning)
+        output = _offline_clarify(message, briefing, history=history, morning=morning, lang=lang)
         _append_session(session_id, message, output)
         return {"output": output, "session_id": session_id, "provider": "offline"}
 
-    # 首轮注入已出版的早报和周报；后续轮次靠 chat_history
+    # 首轮才带这期简报。早报只在周报日期就是今天、且已经冻结时附上。
     agent_input = message
     if not history and (briefing or morning):
         from reports.procurement_briefing import format_followup_context
         agent_input = format_followup_context(
-            briefing or "", message, report_date=latest or "", morning=morning,
+            briefing or "", message, report_date=report_date, morning=morning, lang=lang,
         )
 
     try:
@@ -733,7 +771,10 @@ def _quotes_for_today() -> Optional[dict]:
 
 @app.get("/daily/", response_class=HTMLResponse)
 async def daily_latest(request: Request):
-    """最新一期早报。当天还没冻结时，用这一笔行情写一张成本单。"""
+    """最新一期早报。当天已有周报时，这一页让给周报。"""
+    lang = request.query_params.get("lang", "zh")
+    if _report_exists(today_text()):
+        return _redirect_report(today_text(), lang)
     quotes = await asyncio.to_thread(_quotes_for_today)
     return _daily_response(request, latest_issue(quotes))
 
@@ -742,6 +783,8 @@ async def daily_latest(request: Request):
 async def daily_issue(issue_date: str, request: Request):
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", issue_date):
         raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD。")
+    if _report_exists(issue_date):
+        return _redirect_report(issue_date, request.query_params.get("lang", "zh"))
     quotes = None
     if issue_date == today_text() and get_issue(issue_date) is None:
         quotes = await asyncio.to_thread(_quotes_for_today)

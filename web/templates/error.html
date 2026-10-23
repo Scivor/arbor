@@ -60,15 +60,9 @@
     </a>
     <div class="site-links">
       {% if lang == 'en' %}
-      <a href="/?lang=en">Today</a>
-      <a href="{% if weekly %}/reports/{{ weekly }}/?lang=en{% else %}/reports/?lang=en{% endif %}">Weekly</a>
-      <a href="/chat/">Advisor</a>
       <a href="/reports/?lang=en">Archive</a>
       <a href="/">中文</a>
       {% else %}
-      <a href="/">今日</a>
-      <a href="{% if weekly %}/reports/{{ weekly }}/{% else %}/reports/{% endif %}">周报</a>
-      <a href="/chat/">顾问</a>
       <a href="/reports/">档案</a>
       <a href="/?lang=en">EN</a>
       {% endif %}
@@ -105,7 +99,7 @@
     </p>
     <div class="error-desc">{{ description }}</div>
     <div class="error-actions">
-      <a href="{% if lang == 'en' %}/?lang=en{% else %}/{% endif %}" class="btn btn-primary">{% if lang == 'en' %}Back to today{% else %}返回今日{% endif %}</a>
+      <a href="{% if lang == 'en' %}/?lang=en{% else %}/{% endif %}" class="btn btn-primary">{% if lang == 'en' %}Back home{% else %}返回首页{% endif %}</a>
       <a href="{% if lang == 'en' %}/reports/?lang=en{% else %}/reports/{% endif %}" class="btn btn-secondary">{% if lang == 'en' %}Archive{% else %}档案{% endif %}</a>
     </div>
   </div>

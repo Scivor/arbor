@@ -1,6 +1,17 @@
-"""一期咖啡生豆早报。正文以中文为准，英文是同一期的对照。"""
+"""咖啡生豆早报。
+
+2026-10-20 是写定的一期。之后每个上海日期只冻结一张成本单：
+最近成交、在岸现价、元/公斤和到库。没有取到的来源不写。
+"""
 
 from __future__ import annotations
+
+import json
+import os
+import re
+from datetime import datetime
+from pathlib import Path
+from zoneinfo import ZoneInfo
 
 _ISSUE = {
     "date": "2026-10-20",
@@ -320,11 +331,292 @@ def bias_label(code: str | None, lang: str) -> str:
     return _BIAS[code]["en" if lang == "en" else "zh"]
 
 
-def get_issue(date: str) -> dict | None:
-    if date == _ISSUE["date"]:
-        return _ISSUE
+_SHANGHAI = ZoneInfo("Asia/Shanghai")
+_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_WEEK_ZH = "一二三四五六日"
+_WEEK_EN = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+_store_dir = Path(__file__).resolve().parent.parent / "output" / "daily"
+
+
+def _clock() -> datetime:
+    return datetime.now(_SHANGHAI)
+_SOURCE_URL = {
+    "Yahoo Finance": "https://finance.yahoo.com/quote/KC=F",
+    "Sina Finance": "https://finance.sina.com.cn/futures/quotes/KC.shtml",
+}
+
+
+def today_text() -> str:
+    return _now().date().isoformat()
+
+
+def _now() -> datetime:
+    moment = _clock()
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_SHANGHAI)
+    return moment.astimezone(_SHANGHAI)
+
+
+def _both(zh: str, en: str) -> dict:
+    return {"zh": zh, "en": en}
+
+
+def _move(row: dict) -> tuple[str, str]:
+    pts = row.get("change_pts")
+    pct = row.get("change_text")
+    if pts and pct:
+        return str(pts), str(pct)
+    if pct:
+        return "", str(pct)
+    if pts:
+        return str(pts), ""
+    return "", ""
+
+
+def _band(row: dict) -> str:
+    low, high = row.get("session_low"), row.get("session_high")
+    if low and high:
+        return f"{low} – {high}"
+    return ""
+
+
+def _sheet_sources(source: str | None) -> list[dict]:
+    if not source:
+        return []
+    found = []
+    for name, url in _SOURCE_URL.items():
+        if name in source:
+            found.append({**_both(name, name), "url": url})
+    return found
+
+
+def build_sheet(quotes: dict, when: datetime) -> dict | None:
+    """用这一笔行情写一张成本单。缺咖啡、汇率或元/公斤时不写。"""
+    if not isinstance(quotes, dict):
+        return None
+    coffee = quotes.get("coffee") or {}
+    fx = quotes.get("fx") or {}
+    yuan = quotes.get("yuan") or {}
+    landed = quotes.get("landed") or {}
+    if not coffee.get("price") or not fx.get("price") or not yuan.get("per_kg"):
+        return None
+
+    moment = when if when.tzinfo else when.replace(tzinfo=_SHANGHAI)
+    moment = moment.astimezone(_SHANGHAI)
+    day = moment.date()
+    weekday = day.weekday()
+    price = str(coffee["price"])
+    rate = str(fx["price"])
+    per_kg = str(yuan["per_kg"])
+    symbol = coffee.get("symbol") or "KC=F"
+    pts, pct = _move(coffee)
+    fx_pts, fx_pct = _move(fx)
+    last_session = coffee.get("session") == "last"
+    band = _band(coffee)
+    source = quotes.get("source") or ""
+    source_zh = source or "行情源"
+    source_en = source or "the quote feed"
+
+    if pts and pct:
+        change = _both(
+            f"最近成交相对前收 {pts}（{pct}）",
+            f"Last trade versus the previous close {pts} ({pct})",
+        )
+        move_zh = f"，相对前收 {pts}（{pct}）"
+        move_en = f", {pts} ({pct}) versus the previous close"
+    elif pct or pts:
+        shown = pct or pts
+        change = _both(
+            f"最近成交相对前收 {shown}",
+            f"Last trade versus the previous close {shown}",
+        )
+        move_zh = f"，相对前收 {shown}"
+        move_en = f", {shown} versus the previous close"
+    else:
+        change = _both("最近成交，没有前收", "Last trade, no previous close")
+        move_zh = ""
+        move_en = ""
+
+    if last_session:
+        meta_zh = "上一交易日的最近成交，不是结算价"
+        meta_en = "Last trade from the previous session, not the settlement"
+        lead_zh = f"上一交易日没有新的结算。这一行是最近成交 {price} 美分/磅"
+        lead_en = f"The previous session has no new settlement. This line is the last trade, {price} ¢/lb"
+    else:
+        meta_zh = "盘中最近成交，不是结算价"
+        meta_en = "Last trade during the session, not the settlement"
+        lead_zh = f"这一行是盘中最近成交 {price} 美分/磅，还不是结算价"
+        lead_en = f"This line is the last trade during the session, {price} ¢/lb, not the settlement yet"
+    if band:
+        meta_zh += f" · {band}"
+        meta_en += f" · {band}"
+    if coffee.get("as_of"):
+        meta_zh += f" · {coffee['as_of']}"
+        meta_en += f" · {coffee['as_of']}"
+    if coffee.get("name"):
+        meta_zh += f" · {coffee['name']}"
+        meta_en += f" · {coffee['name']}"
+
+    if fx_pts and fx_pct:
+        fx_meta = _both(
+            f"相对前值 {fx_pts}（{fx_pct}）。不是中间价",
+            f"{fx_pts} ({fx_pct}) versus the previous print. Not the fixing",
+        )
+    elif fx_pct or fx_pts:
+        shown = fx_pct or fx_pts
+        fx_meta = _both(
+            f"相对前值 {shown}。不是中间价",
+            f"{shown} versus the previous print. Not the fixing",
+        )
+    else:
+        fx_meta = _both("不是中间价", "Not the fixing")
+
+    parts = landed.get("parts") or {}
+    landed_block = None
+    if landed.get("per_kg"):
+        part_zh = ""
+        part_en = ""
+        if parts.get("freight") and parts.get("duty") and parts.get("vat"):
+            part_zh = f"海运 {parts['freight']}，关税 {parts['duty']}，增值税 {parts['vat']}"
+            part_en = f"Freight {parts['freight']}, duty {parts['duty']}, VAT {parts['vat']}"
+            if parts.get("rest"):
+                part_zh += f"，其余 {parts['rest']}"
+                part_en += f", the rest {parts['rest']}"
+        cost_zh = f"未套保到库 {landed['per_kg']} 元/公斤。"
+        cost_en = f"Unhedged landed cost is {landed['per_kg']} yuan/kg."
+        if landed.get("freight") and landed.get("tariff") and landed.get("vat"):
+            cost_zh += f"海运 {landed['freight']} 美元/吨，关税 {landed['tariff']}，增值税 {landed['vat']}。"
+            cost_en += f" Freight ${landed['freight']}/t, duty {landed['tariff']}, VAT {landed['vat']}."
+        landed_block = {
+            "heading": _both("三、未套保到库", "III. Unhedged landed cost"),
+            "price": str(landed["per_kg"]),
+            "unit": _both("元/公斤", "CNY/kg"),
+            "meta": _both(part_zh, part_en) if part_zh else _both("未套保", "Unhedged"),
+            "prose": _both(cost_zh, cost_en),
+        }
+
+    frozen = moment.strftime("%H:%M")
+    footnote = _both(
+        f"这一期在上海时间 {frozen} 冻结，之后的成交记在首页，不改这一页。阿拉比卡来自{source_zh}的最近成交，不是交易所结算价。汇率是在岸现价，不是中间价。元/公斤按每吨除以 1000。罗布斯塔、库存、天气和持仓今天没有取到，所以不写。",
+        f"Frozen at {frozen} Shanghai. Later prints stay on the homepage and do not change this page. Arabica is the last trade from {source_en}, not the exchange settlement. The rate is the onshore print, not the fixing. Yuan per kilo divides the tonne price by 1,000. Robusta, stocks, weather, and positioning were not fetched today, so they are left out.",
+    )
+    sheet = {
+        "date": day.isoformat(),
+        "kind": "sheet",
+        "kicker": _both("早报", "Morning note"),
+        "title": _both("咖啡生豆期货早报", "Green coffee futures, morning"),
+        "dateline": _both(
+            f"{day.isoformat()} · 周{_WEEK_ZH[weekday]}",
+            f"{day.isoformat()} · {_WEEK_EN[weekday]}",
+        ),
+        "marks": {
+            "coffee": {"zh": "最近成交", "en": "last trade", "leg_en": "Last trade"},
+            "fx": {"zh": "在岸现价", "en": "onshore print", "leg_en": "Onshore print"},
+            "yuan": {"zh": "折算", "en": "conversion", "leg_en": "Conversion"},
+        },
+        "contracts": [{
+            "heading": _both(f"一、ICE 阿拉比卡 {symbol}", f"I. ICE arabica {symbol}"),
+            "price": price,
+            "unit": _both("美分/磅", "¢/lb"),
+            "change": change,
+            "meta": _both(meta_zh, meta_en),
+            "per_kg": per_kg,
+            "yuan": _both(
+                f"按这一笔在岸现价折算 {per_kg} 元/公斤。不是中间价。",
+                f"{per_kg} yuan/kg at this onshore print. Not the fixing.",
+            ),
+            "prose": _both(
+                f"{lead_zh}{move_zh}。按这一笔在岸现价折算 {per_kg} 元/公斤。",
+                f"{lead_en}{move_en}. At this onshore print that is {per_kg} yuan per kilo.",
+            ),
+        }],
+        "fix": {
+            "heading": _both("二、美元兑人民币在岸现价", "II. Onshore dollar–yuan"),
+            "price": rate,
+            "unit": _both("在岸现价", "onshore print"),
+            "meta": fx_meta,
+            "prose": _both(
+                f"这一笔是 {rate}，在岸现价。中国外汇交易中心的中间价今天没有取到，所以不写成调升基点。",
+                f"This print is {rate}, the onshore rate. Today's CFETS fixing was not fetched, so this is not written as a pip move in the fixing.",
+            ),
+        },
+        "sources_heading": _both("来源", "Source"),
+        "sources": _sheet_sources(source),
+        "quotes_label": _both("", ""),
+        "quotes": [],
+        "footnote": footnote,
+    }
+    if landed_block:
+        sheet["landed"] = landed_block
+    return sheet
+
+
+def _path(date: str) -> Path:
+    return Path(_store_dir) / f"{date}.json"
+
+
+def _read(date: str) -> dict | None:
+    path = _path(date)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(data, dict) or data.get("date") != date:
+        return None
+    return data
+
+
+def _write(issue: dict) -> dict:
+    root = Path(_store_dir)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / f"{issue['date']}.json"
+    payload = json.dumps(issue, ensure_ascii=False, indent=2) + "\n"
+    try:
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        return _read(issue["date"]) or issue
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(payload)
+    return issue
+
+
+def _newest_frozen() -> dict | None:
+    root = Path(_store_dir)
+    if not root.is_dir():
+        return None
+    dates = sorted(
+        path.stem for path in root.glob("*.json")
+        if _DATE.fullmatch(path.stem)
+    )
+    for date in reversed(dates):
+        found = _read(date)
+        if found:
+            return found
     return None
 
 
-def latest_issue() -> dict:
-    return _ISSUE
+def get_issue(date: str, quotes: dict | None = None) -> dict | None:
+    """指定日期的早报。写定的那一期不被行情盖掉。过去没有冻结的日期不补写。"""
+    if not isinstance(date, str) or not _DATE.fullmatch(date):
+        return None
+    if date == _ISSUE["date"]:
+        return _ISSUE
+    frozen = _read(date)
+    if frozen:
+        return frozen
+    if date != today_text() or not quotes:
+        return None
+    sheet = build_sheet(quotes, _now())
+    if sheet is None or sheet.get("date") != date:
+        return None
+    return _write(sheet)
+
+
+def latest_issue(quotes: dict | None = None) -> dict:
+    """上海当天的成本单。还没冻结就用这一笔行情写一次。写不出时回到已有的最近一期。"""
+    current = get_issue(today_text(), quotes)
+    if current is not None:
+        return current
+    return _newest_frozen() or _ISSUE

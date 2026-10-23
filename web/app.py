@@ -40,7 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
-from web.daily_brief import bias_label, get_issue, latest_issue
+from web.daily_brief import bias_label, get_issue, latest_issue, today_text
 from web.quiet_market import kilo_gap_split, quiet_quotes, versus_settlement
 from web.track_record import build_track_record_html
 
@@ -331,32 +331,46 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
-def _morning_mark(price: Optional[str], reference: Optional[str], decimals: int) -> Optional[dict]:
-    """现价相对早报里的一个公布价。没有现价或公布价就不写。"""
-    if not price or not reference:
+def _mark_names(issue: dict, key: str, zh: str, en: str, leg_en: str) -> tuple[str, str, str]:
+    noun = ((issue or {}).get("marks") or {}).get(key) or {}
+    return noun.get("zh") or zh, noun.get("en") or en, noun.get("leg_en") or leg_en
+
+
+def _morning_mark(
+    price: Optional[str],
+    reference: Optional[str],
+    decimals: int,
+    issue: Optional[dict],
+    noun_zh: str,
+    noun_en: str,
+) -> Optional[dict]:
+    """现价相对当天早报里的一个价。早报不是今天的，或两边缺一，就不写。"""
+    if not price or not reference or not issue or not issue.get("date"):
         return None
-    issue = latest_issue() or {}
-    if not issue.get("date"):
+    if issue["date"] != today_text():
         return None
     gap = versus_settlement(price, reference, decimals)
     if not gap:
         return None
     gap["date"] = issue["date"]
+    gap["noun_zh"] = noun_zh
+    gap["noun_en"] = noun_en
     return gap
 
 
-def _morning_gap(coffee: Optional[dict]) -> Optional[dict]:
-    """空页现价相对最新早报里阿拉比卡结算价。"""
-    issue = latest_issue() or {}
-    contracts = issue.get("contracts") or []
+def _morning_gap(coffee: Optional[dict], issue: Optional[dict]) -> Optional[dict]:
+    """空页现价相对当天早报里的阿拉比卡价。"""
+    contracts = (issue or {}).get("contracts") or []
     settlement = contracts[0].get("price") if contracts else None
-    return _morning_mark((coffee or {}).get("price"), settlement, 2)
+    noun_zh, noun_en, _leg = _mark_names(issue or {}, "coffee", "结算", "settlement", "Settlement")
+    return _morning_mark((coffee or {}).get("price"), settlement, 2, issue, noun_zh, noun_en)
 
 
-def _morning_fix(fx: Optional[dict]) -> Optional[dict]:
-    """空页汇率相对最新早报里的中间价。"""
-    fixing = ((latest_issue() or {}).get("fix") or {}).get("price")
-    return _morning_mark((fx or {}).get("price"), fixing, 4)
+def _morning_fix(fx: Optional[dict], issue: Optional[dict]) -> Optional[dict]:
+    """空页汇率相对当天早报里的汇率。"""
+    fixing = ((issue or {}).get("fix") or {}).get("price")
+    noun_zh, noun_en, _leg = _mark_names(issue or {}, "fx", "中间价", "fixing", "fixing")
+    return _morning_mark((fx or {}).get("price"), fixing, 4, issue, noun_zh, noun_en)
 
 
 def _landing_kilo(yuan: Optional[dict], landed: Optional[dict]) -> Optional[dict]:
@@ -366,24 +380,30 @@ def _landing_kilo(yuan: Optional[dict], landed: Optional[dict]) -> Optional[dict
     return versus_settlement(landed["per_kg"], yuan["per_kg"], 2)
 
 
-def _morning_yuan(yuan: Optional[dict]) -> Optional[dict]:
-    """空页元/公斤相对早报推算，并拆成结算和中间价各走了多少。"""
-    issue = latest_issue() or {}
-    contracts = issue.get("contracts") or []
+def _morning_yuan(yuan: Optional[dict], issue: Optional[dict]) -> Optional[dict]:
+    """空页元/公斤相对当天早报的折算，并拆成两腿各走了多少。"""
+    contracts = (issue or {}).get("contracts") or []
     estimate = contracts[0].get("per_kg") if contracts else None
-    gap = _morning_mark((yuan or {}).get("per_kg"), estimate, 2)
-    if not gap or not yuan:
+    noun_zh, noun_en, _leg = _mark_names(issue or {}, "yuan", "推算", "estimate", "Conversion")
+    gap = _morning_mark((yuan or {}).get("per_kg"), estimate, 2, issue, noun_zh, noun_en)
+    if not gap or not yuan or not contracts:
         return gap
+    coffee_zh, _coffee_en, coffee_leg = _mark_names(issue or {}, "coffee", "结算", "settlement", "Settlement")
+    fx_zh, _fx_en, fx_leg = _mark_names(issue or {}, "fx", "中间价", "fixing", "fixing")
     split = kilo_gap_split(
         yuan.get("cents"),
         yuan.get("rate"),
-        contracts[0].get("price") if contracts else None,
+        contracts[0].get("price"),
         (issue.get("fix") or {}).get("price"),
         estimate,
         yuan.get("per_kg"),
     )
     if split:
         gap.update(split)
+        gap["coffee_noun_zh"] = coffee_zh
+        gap["fx_noun_zh"] = fx_zh
+        gap["coffee_leg_en"] = coffee_leg
+        gap["fx_leg_en"] = fx_leg
     return gap
 
 
@@ -401,6 +421,7 @@ async def latest_report(request: Request):
         fx = (quotes or {}).get("fx")
         yuan = (quotes or {}).get("yuan")
         landed = (quotes or {}).get("landed")
+        sheet = get_issue(today_text(), quotes)
         return templates.TemplateResponse(request, "empty.html", {
             "lang": lang,
             "coffee": coffee,
@@ -408,9 +429,9 @@ async def latest_report(request: Request):
             "yuan": yuan,
             "landed": landed,
             "source": (quotes or {}).get("source"),
-            "note": _morning_gap(coffee),
-            "fix": _morning_fix(fx),
-            "yuan_note": _morning_yuan(yuan),
+            "note": _morning_gap(coffee, sheet),
+            "fix": _morning_fix(fx, sheet),
+            "yuan_note": _morning_yuan(yuan, sheet),
             "landing": _landing_kilo(yuan, landed),
         })
     return _serve_report_page(latest, is_latest=True, lang=lang)
@@ -673,17 +694,31 @@ def _daily_response(request: Request, issue: dict) -> HTMLResponse:
     })
 
 
+def _quotes_for_today() -> Optional[dict]:
+    """当天还没有早报时才读行情。读失败就留空，调用方回到已有的一期。"""
+    if get_issue(today_text()) is not None:
+        return None
+    try:
+        return quiet_quotes()
+    except Exception:
+        return None
+
+
 @app.get("/daily/", response_class=HTMLResponse)
 async def daily_latest(request: Request):
-    """最新一期早报。周报仍走首页。"""
-    return _daily_response(request, latest_issue())
+    """最新一期早报。当天还没冻结时，用这一笔行情写一张成本单。"""
+    quotes = await asyncio.to_thread(_quotes_for_today)
+    return _daily_response(request, latest_issue(quotes))
 
 
 @app.get("/daily/{issue_date}/", response_class=HTMLResponse)
 async def daily_issue(issue_date: str, request: Request):
     if not re.match(r"^\d{4}-\d{2}-\d{2}$", issue_date):
         raise HTTPException(status_code=400, detail="日期格式应为 YYYY-MM-DD。")
-    issue = get_issue(issue_date)
+    quotes = None
+    if issue_date == today_text() and get_issue(issue_date) is None:
+        quotes = await asyncio.to_thread(_quotes_for_today)
+    issue = get_issue(issue_date, quotes)
     if issue is None:
         raise HTTPException(status_code=404, detail="没有这一期早报。")
     return _daily_response(request, issue)

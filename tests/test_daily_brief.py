@@ -102,7 +102,8 @@ def test_morning_note_keeps_the_settlement_and_the_fixing():
     assert "不构成确定预测" in html
     assert "https://www.chinamoney.com.cn/chinese/bkccpr/" in html
     assert "https://finance.yahoo.com/quote/SB=F" in html
-    assert ">今日</a>" in html
+    assert ">档案</a>" in html
+    assert ">今日</a>" not in html
     assert "早报" in html
 
 
@@ -130,7 +131,8 @@ def test_english_morning_note_uses_the_same_numbers():
     assert "313.75" in html
     assert "not a firm forecast" in html
     assert "Diverges from KC" in html
-    assert ">Today</a>" in html
+    assert ">Archive</a>" in html
+    assert ">Today</a>" not in html
 
 
 def test_missing_morning_note_is_a_404():
@@ -151,7 +153,7 @@ def test_homepage_shows_the_latest_issue_when_quotes_fail(monkeypatch):
     assert "现在" in html
     assert "2026-10-20 · 周二" in html
     assert "咖啡生豆期货早报" in html
-    assert ">今日</a>" in html
+    assert ">档案</a>" in html
     assert "早报结算" not in html
 
 

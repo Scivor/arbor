@@ -16,16 +16,16 @@
     </a>
     <div class="site-links">
       {% if lang == 'en' %}
-      <a href="/?lang=en" {% if request.url.path == '/' %}class="active"{% endif %}>Latest Report</a>
-      <a href="/daily/?lang=en" {% if request.url.path.startswith('/daily') %}class="active"{% endif %}>Morning</a>
+      <a href="/?lang=en" {% if request.url.path == '/' or request.url.path.startswith('/daily') %}class="active"{% endif %}>Today</a>
+      <a href="{% if weekly %}/reports/{{ weekly }}/?lang=en{% else %}/reports/?lang=en{% endif %}" {% if request.url.path.startswith('/reports/') and request.url.path != '/reports/' %}class="active"{% endif %}>Weekly</a>
       <a href="/chat/" {% if request.url.path.startswith('/chat') %}class="active"{% endif %}>Advisor</a>
-      <a href="/reports/?lang=en" {% if request.url.path.startswith('/reports/') %}class="active"{% endif %}>Archive</a>
+      <a href="/reports/?lang=en" {% if request.url.path == '/reports/' or request.url.path == '/reports' %}class="active"{% endif %}>Archive</a>
       <a href="{{ request.url.path }}">中文</a>
       {% else %}
-      <a href="/" {% if request.url.path == '/' %}class="active"{% endif %}>最新报告</a>
-      <a href="/daily/" {% if request.url.path.startswith('/daily') %}class="active"{% endif %}>早报</a>
+      <a href="/" {% if request.url.path == '/' or request.url.path.startswith('/daily') %}class="active"{% endif %}>今日</a>
+      <a href="{% if weekly %}/reports/{{ weekly }}/{% else %}/reports/{% endif %}" {% if request.url.path.startswith('/reports/') and request.url.path != '/reports/' %}class="active"{% endif %}>周报</a>
       <a href="/chat/" {% if request.url.path.startswith('/chat') %}class="active"{% endif %}>顾问</a>
-      <a href="/reports/" {% if request.url.path.startswith('/reports/') %}class="active"{% endif %}>历史归档</a>
+      <a href="/reports/" {% if request.url.path == '/reports/' or request.url.path == '/reports' %}class="active"{% endif %}>档案</a>
       <a href="{{ request.url.path }}?lang=en">EN</a>
       {% endif %}
     </div>

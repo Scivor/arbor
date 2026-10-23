@@ -3,11 +3,11 @@ web/app.py
 Arbor Report, Minimal Static Site (FastAPI)
 
 Routes:
-  /                → Latest report (full HTML, no nav bar, past index at bottom)
+  /                → Today's morning note, then the live tape
   /daily/          → Morning note (latest)
   /daily/{date}/   → One morning note
-  /reports/        → Archive list (with nav bar)
-  /reports/{date}/ → Single report (full HTML, no nav bar, past index at bottom)
+  /reports/        → Weekly archive
+  /reports/{date}/ → One weekly report
   /reports/{date}.pdf → PDF download
   /api/health      → Health check
 
@@ -40,7 +40,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from reports.fonts import css_display_stack, css_serif_stack
 from arbor.infrastructure.llm import agent_status
 from web.chat import build_chat_page
-from web.daily_brief import bias_label, get_issue, latest_issue, today_text
+from web.daily_brief import bias_label, get_issue, issue_brief, latest_issue, today_text
 from web.quiet_market import kilo_gap_split, quiet_quotes, versus_settlement
 from web.track_record import build_track_record_html
 
@@ -52,7 +52,12 @@ TEMPLATES_DIR = WEB_DIR / "templates"
 app = FastAPI(title="Arbor", version="3.0")
 
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
-templates = Jinja2Templates(directory=TEMPLATES_DIR)
+def _template_context(request: Request) -> dict:
+    """导航里的周报指向最新一期。没有周报时落到档案。"""
+    return {"weekly": _latest_report_date()}
+
+
+templates = Jinja2Templates(directory=TEMPLATES_DIR, context_processors=[_template_context])
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -409,32 +414,31 @@ def _morning_yuan(yuan: Optional[dict], issue: Optional[dict]) -> Optional[dict]
 
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
-    """Root path shows the latest report directly — no nav bar."""
+    """首页是今日早报，下面是现价。周报在 /reports/，不占这一页。"""
     lang = request.query_params.get("lang", "zh")
-    latest = _latest_report_date()
-    if not latest:
-        try:
-            quotes = await asyncio.to_thread(quiet_quotes)
-        except Exception:
-            quotes = {"coffee": None, "fx": None}
-        coffee = (quotes or {}).get("coffee")
-        fx = (quotes or {}).get("fx")
-        yuan = (quotes or {}).get("yuan")
-        landed = (quotes or {}).get("landed")
-        sheet = get_issue(today_text(), quotes)
-        return templates.TemplateResponse(request, "empty.html", {
-            "lang": lang,
-            "coffee": coffee,
-            "fx": fx,
-            "yuan": yuan,
-            "landed": landed,
-            "source": (quotes or {}).get("source"),
-            "note": _morning_gap(coffee, sheet),
-            "fix": _morning_fix(fx, sheet),
-            "yuan_note": _morning_yuan(yuan, sheet),
-            "landing": _landing_kilo(yuan, landed),
-        })
-    return _serve_report_page(latest, is_latest=True, lang=lang)
+    try:
+        quotes = await asyncio.to_thread(quiet_quotes)
+    except Exception:
+        quotes = {"coffee": None, "fx": None}
+    coffee = (quotes or {}).get("coffee")
+    fx = (quotes or {}).get("fx")
+    yuan = (quotes or {}).get("yuan")
+    landed = (quotes or {}).get("landed")
+    sheet = get_issue(today_text(), quotes) or latest_issue()
+    return templates.TemplateResponse(request, "empty.html", {
+        "lang": lang,
+        "issue": sheet,
+        "bias": bias_label,
+        "coffee": coffee,
+        "fx": fx,
+        "yuan": yuan,
+        "landed": landed,
+        "source": (quotes or {}).get("source"),
+        "note": _morning_gap(coffee, sheet),
+        "fix": _morning_fix(fx, sheet),
+        "yuan_note": _morning_yuan(yuan, sheet),
+        "landing": _landing_kilo(yuan, landed),
+    })
 
 
 @app.get("/track-record/", response_class=HTMLResponse)
@@ -545,13 +549,17 @@ def _offline_clarify(
     message: str,
     briefing: Optional[str],
     history: Optional[list] = None,
+    morning: str = "",
 ) -> str:
-    """无 LLM 时的简短澄清：从本期简报里点题回答，不编造数字。"""
+    """无 LLM 时的简短澄清：从已出版的早报或周报里点题回答，不编造数字。"""
     msg = message.strip()
-    if not briefing:
-        return "当前没有可用的本期采购简报。请先生成周报后再追问。"
+    morning = (morning or "").strip()
+    if not briefing and not morning:
+        return "当前没有已出版的早报或周报。我只接问题，不编数字。"
 
     def _section(title: str) -> Optional[str]:
+        if not briefing:
+            return None
         for line in briefing.splitlines():
             if title in line:
                 return line.strip()
@@ -568,22 +576,24 @@ def _offline_clarify(
     if len(msg) <= 8 and prior_user and any(k in msg for k in ("那", "呢", "呢？", "呢?", "还有", "呢啊")):
         lookup = f"{prior_user} {msg}"
 
+    if morning and any(k in lookup for k in ("早报", "现价", "最近成交", "在岸", "公斤")):
+        return morning
     if any(k in lookup for k in ("该不该买", "买不买", "采购", "补库", "怎么买")):
-        return _section("现在怎么做") or _section("时机好不好") or briefing
+        return _section("现在怎么做") or _section("时机好不好") or briefing or morning
     if any(k in lookup for k in ("套保", "对冲", "要紧", "偏松", "偏紧")):
-        return _section("现在怎么做") or briefing
+        return _section("现在怎么做") or briefing or morning
     if any(k in lookup for k in ("到库", "成本", "CIF", "落地")):
         line = _section("时机好不好") or _section("为什么")
         return line or "本期简报未单独拆出到库数字，请打开周报「进口成本与政策」板块。"
     if any(k in lookup for k in ("为什么", "依据", "理由", "原因")):
-        return _section("为什么") or briefing
+        return _section("为什么") or briefing or morning
     if any(k in lookup for k in ("盯什么", "下周", "触发", "看什么")):
-        return _section("下周盯什么") or briefing
+        return _section("下周盯什么") or briefing or morning
     if any(k in lookup for k in ("跌破", "支撑", "怎么办", "风险", "坑")):
         return "\n".join(
             x for x in (_section("别踩的坑"), _section("下周盯什么")) if x
-        ) or briefing
-    return briefing
+        ) or briefing or morning
+    return briefing or morning
 
 
 @app.get("/api/briefing")
@@ -615,14 +625,26 @@ async def api_briefing():
     return payload
 
 
+def _today_morning_text() -> str:
+    """顾问只读当天已经冻结的早报，不在追问时新写一期。"""
+    issue = get_issue(today_text())
+    return issue_brief(issue) if issue else ""
+
+
 @app.get("/chat/", response_class=HTMLResponse)
 async def chat_page():
-    """采购顾问追问页：默认展示最新周报的采购简报 + 追问芯片。"""
+    """采购顾问：开场是今日早报和最近一份周报简报。"""
     latest = _latest_report_date()
     briefing = _extract_procurement_briefing(latest) if latest else None
+    morning = _today_morning_text()
+    opening = briefing
+    if morning and briefing:
+        opening = f"{morning}\n\n{briefing}"
+    elif morning:
+        opening = morning
     return HTMLResponse(
         content=build_chat_page(
-            briefing=briefing, report_date=latest, agent=agent_status(),
+            briefing=opening, report_date=latest, agent=agent_status(),
         )
     )
 
@@ -650,20 +672,23 @@ async def chat_api(request: Request):
 
     latest = _latest_report_date()
     briefing = _extract_procurement_briefing(latest) if latest else None
+    morning = _today_morning_text()
     history = _session_history(session_id)
 
     try:
         analyst = _get_analyst()
     except RuntimeError:
-        output = _offline_clarify(message, briefing, history=history)
+        output = _offline_clarify(message, briefing, history=history, morning=morning)
         _append_session(session_id, message, output)
         return {"output": output, "session_id": session_id, "provider": "offline"}
 
-    # 首轮注入本期简报；后续轮次靠 chat_history，避免重复灌简报
+    # 首轮注入已出版的早报和周报；后续轮次靠 chat_history
     agent_input = message
-    if briefing and not history:
+    if not history and (briefing or morning):
         from reports.procurement_briefing import format_followup_context
-        agent_input = format_followup_context(briefing, message, report_date=latest or "")
+        agent_input = format_followup_context(
+            briefing or "", message, report_date=latest or "", morning=morning,
+        )
 
     try:
         output = await asyncio.to_thread(analyst.chat, agent_input, history)
@@ -749,7 +774,11 @@ async def report_viewer(report_date: str, request: Request):
     if not _report_exists(report_date):
         raise HTTPException(status_code=404, detail="Report not found")
     lang = request.query_params.get("lang", "zh")
-    return _serve_report_page(report_date, is_latest=False, lang=lang)
+    return _serve_report_page(
+        report_date,
+        is_latest=(report_date == _latest_report_date()),
+        lang=lang,
+    )
 
 
 @app.get("/reports/{report_date}.pdf")

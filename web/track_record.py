@@ -430,7 +430,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
       <img class="tr-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
       <span class="tr-title">预测战绩</span>
     </div>
-    <a class="tr-back" href="/">← 返回最新周报</a>
+    <a class="tr-back" href="/">← 返回今日</a>
   </div>
   {body}
   <div class="tr-foot">数据来源: 本地历史周报复盘（相邻期配对） · 仅供内部研究，不构成投资建议</div>

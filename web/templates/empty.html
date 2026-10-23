@@ -1,6 +1,16 @@
 {% extends "base.html" %}
+{% set L = 'en' if lang == 'en' else 'zh' %}
+
+{% block title %}{% if issue %}{{ issue.title[L] }} · {{ issue.dateline[L] }} · Arbor{% elif lang == 'en' %}Today · Arbor{% else %}今日 · Arbor{% endif %}{% endblock %}
 
 {% block content %}
+{% if issue %}
+{% include "daily_body.html" %}
+{% endif %}
+{% if weekly %}
+<p class="home-weekly"><a href="/reports/{{ weekly }}/{% if lang == 'en' %}?lang=en{% endif %}">{% if lang == 'en' %}This week's report {{ weekly }}{% else %}本周周报 {{ weekly }}{% endif %}</a></p>
+{% endif %}
+<p class="home-now">{% if lang == 'en' %}Now{% else %}现在{% endif %}</p>
 {% macro range_place(code) -%}
 {%- if code == 'near_high' -%}{% if lang == 'en' %}Near the high{% else %}靠近高点{% endif %}
 {%- elif code == 'near_low' -%}{% if lang == 'en' %}Near the low{% else %}靠近低点{% endif %}
@@ -30,7 +40,7 @@
 <span class="quiet-meta">{%- if row.side == 'same' -%}{% if lang == 'en' %}Same as the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}与 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 相同{% endif %}{%- elif row.side == 'above' -%}{% if lang == 'en' %}{{ row.gap }} above the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 高 {{ row.gap }}{% endif %}{%- else -%}{% if lang == 'en' %}{{ row.gap }} below the <a href="/daily/{{ row.date }}/?lang=en">{{ row.date }}</a> morning {{ ne }} {{ row.settlement }}{% if unit_en %} {{ unit_en }}{% endif %}{% else %}较 <a href="/daily/{{ row.date }}/">{{ row.date }}</a> 早报{{ nz }} {{ row.settlement }}{% if unit_zh %} {{ unit_zh }}{% endif %} 低 {{ row.gap }}{% endif %}{%- endif -%}</span>
 {%- endif -%}
 {%- endmacro %}
-<section class="quiet">
+<section class="quiet quiet-follow">
   <div class="quiet-market" aria-label="{% if lang == 'en' %}Coffee futures and the yuan–dollar rate{% else %}咖啡期货与人民币对美元汇率{% endif %}">
     {% if coffee %}
     <div class="quiet-quote">

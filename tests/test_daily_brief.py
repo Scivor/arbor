@@ -101,7 +101,7 @@ def test_morning_note_keeps_the_settlement_and_the_fixing():
     assert "不构成确定预测" in html
     assert "https://www.chinamoney.com.cn/chinese/bkccpr/" in html
     assert "https://finance.yahoo.com/quote/SB=F" in html
-    assert 'href="/daily/"' in html
+    assert ">今日</a>" in html
     assert "早报" in html
 
 
@@ -129,7 +129,7 @@ def test_english_morning_note_uses_the_same_numbers():
     assert "313.75" in html
     assert "not a firm forecast" in html
     assert "Diverges from KC" in html
-    assert 'href="/daily/?lang=en"' in html
+    assert ">Today</a>" in html
 
 
 def test_missing_morning_note_is_a_404():
@@ -140,14 +140,18 @@ def test_missing_morning_note_is_a_404():
     assert bad.status_code == 400
 
 
-def test_homepage_stays_the_weekly_empty_page_and_links_the_morning_note(monkeypatch):
+def test_homepage_shows_the_latest_issue_when_quotes_fail(monkeypatch):
+    _pin_morning(monkeypatch, "2026-10-23")
     monkeypatch.setattr(web_app, "_latest_report_date", lambda: None)
     monkeypatch.setattr(web_app, "quiet_quotes", lambda: {"coffee": None, "fx": None})
     html = client.get("/").text
     assert "周报还在海上" not in html
     assert "行情暂未到港" in html
-    assert 'href="/daily/"' in html
-    assert "咖啡生豆期货早报" not in html
+    assert "现在" in html
+    assert "2026-10-20 · 周二" in html
+    assert "咖啡生豆期货早报" in html
+    assert ">今日</a>" in html
+    assert "早报结算" not in html
 
 
 def test_archive_is_not_replaced_by_a_later_print():

@@ -357,14 +357,26 @@ def load_latest_published_briefing(
     return None
 
 
-def format_followup_context(briefing: str, user_message: str, report_date: str = "") -> str:
-    """把本期简报与用户追问拼成 Agent 输入（简报为已发布立场，追问只澄清）。"""
-    date_line = f"（报告日 {report_date}）" if report_date else ""
-    return (
-        f"【本期已发布采购简报】{date_line}\n"
-        f"{briefing.strip()}\n\n"
-        f"【用户追问】\n"
-        f"{user_message.strip()}\n\n"
-        "请以本期简报为默认立场作答；若用户在追问某一点，只澄清该点，"
-        "必要时用工具核对最新数字；不要推翻简报除非工具显示数据已显著变化。"
-    )
+def format_followup_context(
+    briefing: str,
+    user_message: str,
+    report_date: str = "",
+    morning: str = "",
+) -> str:
+    """把已出版的早报、周报与用户追问拼成 Agent 输入。"""
+    blocks = []
+    if morning and morning.strip():
+        blocks.append(f"【今日已冻结早报】\n{morning.strip()}")
+    if briefing and briefing.strip():
+        date_line = f"（报告日 {report_date}）" if report_date else ""
+        blocks.append(f"【本期已发布采购简报】{date_line}\n{briefing.strip()}")
+    blocks.append(f"【用户追问】\n{user_message.strip()}")
+    if briefing and briefing.strip():
+        stance = (
+            "请以已出版的早报和周报为默认立场作答；若用户在追问某一点，只澄清该点，"
+            "必要时用工具核对最新数字；不要推翻已出版的内容，除非工具显示数据已显著变化。"
+            "没有写进刊物的数字不要编。"
+        )
+    else:
+        stance = "请以今日已冻结早报为默认立场作答。没有写进早报的数字不要编。"
+    return "\n\n".join(blocks) + "\n\n" + stance

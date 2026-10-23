@@ -273,13 +273,13 @@ def build_chat_page(
     </div>
     <div class="chat-hdr-actions">
       <button type="button" class="chat-reset" id="chatReset">清空追问</button>
-      <a class="chat-back" href="/">← 返回最新周报</a>
+      <a class="chat-back" href="/">← 返回今日</a>
     </div>
   </div>
   <div class="chat-list" id="chatList">
     <div class="chat-empty" id="chatEmpty">
       <div class="chat-empty-kicker">顾问在岗，简报未到</div>
-      <p>没有本期采购简报时，我只接问题，不编数字，也不替你下单。周六周报靠岸之后，开场白会换成五段采购建议。</p>
+      <p>没有已出版的早报或周报时，我只接问题，不编数字，也不替你下单。早报在每个上海日期冻结，周报在周六出版。</p>
       <p class="chat-empty-ask">可以先点下面的句子。没有简报时，我会老实说还不能回答。</p>
     </div>
   </div>

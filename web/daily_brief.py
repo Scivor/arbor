@@ -346,6 +346,41 @@ _SOURCE_URL = {
 }
 
 
+def issue_brief(issue: dict | None) -> str:
+    """把一期早报收成顾问能读的几行。没有刊物时是空字符串。"""
+    if not issue:
+        return ""
+    lines = []
+    dateline = (issue.get("dateline") or {}).get("zh")
+    title = (issue.get("title") or {}).get("zh")
+    if dateline:
+        lines.append(str(dateline))
+    if title:
+        lines.append(str(title))
+    for contract in issue.get("contracts") or []:
+        heading = (contract.get("heading") or {}).get("zh") or ""
+        price = contract.get("price") or ""
+        unit = (contract.get("unit") or {}).get("zh") or ""
+        prose = (contract.get("prose") or {}).get("zh") or ""
+        lines.append(" ".join(part for part in (heading, price, unit, prose) if part))
+    fix = issue.get("fix") or {}
+    if fix:
+        lines.append(" ".join(part for part in (
+            (fix.get("heading") or {}).get("zh"),
+            fix.get("price"),
+            (fix.get("prose") or {}).get("zh"),
+        ) if part))
+    landed = issue.get("landed") or {}
+    if landed:
+        lines.append(" ".join(part for part in (
+            (landed.get("heading") or {}).get("zh"),
+            landed.get("price"),
+            (landed.get("unit") or {}).get("zh"),
+            (landed.get("prose") or {}).get("zh"),
+        ) if part))
+    return "\n".join(lines)
+
+
 def today_text() -> str:
     return _now().date().isoformat()
 

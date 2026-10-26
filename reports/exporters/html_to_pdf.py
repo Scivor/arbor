@@ -941,19 +941,17 @@ def build_report_html(report, lang: str = "zh") -> str:
     china_import_html = _build_china_import_html(report, lang)
 
     html_lang = "en" if lang == "en" else "zh-CN"
-    body_font = "var(--serif)" if lang == "en" else "var(--sans)"
+    body_font = "var(--serif)"
     from reports.fonts import (
         arbor_wordmark_data_uri,
         css_display_stack,
         css_sans_stack,
         css_serif_stack,
-        embedded_comfortaa_font_face_css,
     )
     serif_stack = css_serif_stack()
     sans_stack = css_sans_stack()
     display_stack = css_display_stack()
     logo_uri = arbor_wordmark_data_uri("brand")
-    comfortaa_faces = embedded_comfortaa_font_face_css()
 
     html = f"""<!DOCTYPE html>
 <html lang="{html_lang}">
@@ -962,7 +960,6 @@ def build_report_html(report, lang: str = "zh") -> str:
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{_t("page_title", lang, date=report.report_date)}</title>
 <style>
-{comfortaa_faces}
   @page {{
     size: A4;
     margin: 14mm 16mm;
@@ -978,6 +975,7 @@ def build_report_html(report, lang: str = "zh") -> str:
     --warm-sand: #e8e6dc;
     --brand:     #1B365D;
     --brand-light: #2D5A8A;
+    --error:       #B53333;
     --near-black:  #141413;
     --dark-warm:   #3d3d3a;
     --olive:       #504e49;
@@ -1044,7 +1042,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .hero-title {{
     font-family: var(--display);
     font-size: 18pt;
-    font-weight: 600;
+    font-weight: 500;
     line-height: 1.15;
     color: var(--near-black);
     margin: 0;
@@ -1072,7 +1070,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .hero-price-val {{
     font-family: var(--serif);
     font-size: 22pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     line-height: 1;
     margin: 0.8mm 0 0.6mm;
@@ -1096,7 +1094,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .section-title {{
     font-family: var(--display);
     font-size: 13pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     border-bottom: 1px solid var(--border-soft);
     padding-bottom: 1.4mm;
@@ -1173,7 +1171,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .metric-value {{
     font-family: var(--serif);
     font-size: 12.2pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--brand);
     line-height: 1.05;
   }}
@@ -1238,13 +1236,13 @@ def build_report_html(report, lang: str = "zh") -> str:
   .sc-prob {{
     font-family: var(--serif);
     font-size: 11pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
   }}
   .sc-range {{
     font-family: var(--serif);
     font-size: 10pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     margin: 1mm 0;
   }}
@@ -1290,7 +1288,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .hedge-ratio {{
     font-family: var(--serif);
     font-size: 19pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     line-height: 1;
   }}
@@ -1329,7 +1327,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   }}
   .lv-price {{
     font-family: var(--serif);
-    font-weight: 600;
+    font-weight: 500;
     font-size: 9pt;
     width: 22mm;
     color: var(--near-black);
@@ -1400,7 +1398,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .ml-sig-label {{
     font-family: var(--serif);
     font-size: 12pt;
-    font-weight: 600;
+    font-weight: 500;
   }}
   .ml-confidence {{
     font-family: var(--sans);
@@ -1513,7 +1511,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .attr-icon {{
     display: inline-block;
     width: 3.5mm;
-    font-weight: 600;
+    font-weight: 500;
   }}
   .attr-weight {{
     font-size: 6.2pt;
@@ -1614,7 +1612,7 @@ def build_report_html(report, lang: str = "zh") -> str:
   .ci-cost-main {{
     font-family: var(--serif);
     font-size: 19pt;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     line-height: 1;
   }}
@@ -1665,7 +1663,7 @@ def build_report_html(report, lang: str = "zh") -> str:
     display: inline-block;
     font-family: var(--sans);
     font-size: 6.2pt;
-    font-weight: 600;
+    font-weight: 500;
     border: 1px solid var(--stone);
     border-radius: 2px;
     padding: 0 1mm;

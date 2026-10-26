@@ -138,7 +138,9 @@ def test_build_report_html_handles_missing_market_snapshot():
     assert "咖啡期货下周预测" in html
     assert 'alt="Arbor"' in html
     assert "hero-logo" in html
-    assert "Comfortaa" in html
+    assert "Comfortaa" not in html
+    assert "Charter" in html
+    assert "font-weight: 500" in html
     assert "N/A" in html
 
 

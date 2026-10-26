@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from html import escape as _esc
 
-from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack, comfortaa_font_face_css
+from reports.fonts import css_display_stack, css_sans_stack, css_serif_stack
 
 
 def _build_learning_html(learning: dict | None) -> str:
@@ -201,12 +201,12 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>预测战绩 · Arbor</title>
 <style>
-{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
-    font-family: {sans};
+    font-family: {serif};
     font-size: 14px;
+    font-weight: 400;
     margin: 0;
   }}
   .tr-wrap {{
@@ -233,11 +233,12 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-title {{
     font-family: {display};
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 500;
     color: #141413;
     letter-spacing: 0.02em;
   }}
   .tr-back {{
+    font-family: {sans};
     font-size: 12px;
     color: #504e49;
     text-decoration: none;
@@ -251,24 +252,26 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   }}
   .tr-metric {{
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     padding: 16px 14px;
   }}
   .tr-metric-val {{
     font-family: {serif};
     font-size: 30px;
-    font-weight: 600;
+    font-weight: 500;
     color: #1B365D;
     line-height: 1.1;
   }}
   .tr-metric-label {{
+    font-family: {sans};
     font-size: 11px;
     color: #6b6a64;
     margin-top: 6px;
     letter-spacing: 0.3px;
   }}
   .tr-metric-sub {{
+    font-family: {sans};
     font-size: 11px;
     color: #6b6a64;
     margin-top: 4px;
@@ -277,12 +280,13 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     width: 100%;
     border-collapse: collapse;
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     overflow: hidden;
     font-size: 13px;
   }}
   .tr-table th {{
+    font-family: {sans};
     font-size: 11px;
     font-weight: 500;
     color: #6b6a64;
@@ -297,21 +301,25 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   }}
   .tr-date {{
     font-family: {serif};
-    font-weight: 600;
+    font-weight: 500;
   }}
   .tr-num {{ font-variant-numeric: tabular-nums; }}
   .tr-badge {{
     display: inline-block;
+    font-family: {sans};
     font-size: 11px;
     font-weight: 500;
     padding: 2px 8px;
     border-radius: 4px;
-    border: 1px solid #e8e6dc;
+    background: #E4ECF5;
+    color: #1B365D;
+    border: 0;
   }}
-  .tr-badge-hit {{ color: #1B365D; border-color: #1B365D; }}
-  .tr-badge-partial {{ color: #504e49; border-color: #504e49; }}
-  .tr-badge-miss {{ color: #6b6a64; }}
+  .tr-badge-hit {{ color: #1B365D; background: #E4ECF5; }}
+  .tr-badge-partial {{ color: #504e49; background: #EEF2F7; }}
+  .tr-badge-miss {{ color: #6b6a64; background: #e8e6dc; }}
   .tr-pending {{
+    font-family: {sans};
     font-size: 12px;
     color: #6b6a64;
     margin-top: 14px;
@@ -319,7 +327,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-drivers-title {{
     font-family: {display};
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 500;
     color: #141413;
     letter-spacing: 0.02em;
     margin: 28px 0 12px;
@@ -327,13 +335,14 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-drivers {{ margin-bottom: 4px; }}
   .tr-calib {{ margin-bottom: 4px; }}
   .tr-calib-note {{
+    font-family: {sans};
     font-size: 11px;
     color: #6b6a64;
     margin-top: 8px;
   }}
   .tr-learn {{
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     padding: 16px 14px;
   }}
@@ -344,12 +353,15 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-learn-coefs b {{
     font-family: {serif};
     font-size: 18px;
+    font-weight: 500;
     color: #1B365D;
   }}
   .tr-learn-base {{
+    font-family: {sans};
     font-size: 10px;
     color: #6b6a64;
-    border: 1px solid #e8e6dc;
+    background: #EEF2F7;
+    border: 0;
     border-radius: 4px;
     padding: 1px 5px;
     margin-left: 2px;
@@ -363,7 +375,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-learn-log {{ margin-top: 12px; }}
   .tr-empty {{
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     padding: 28px 24px 22px;
     text-align: left;
@@ -373,7 +385,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   .tr-empty-title {{
     font-family: {serif};
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 500;
     color: #141413;
     margin-bottom: 10px;
   }}
@@ -401,7 +413,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     display: block;
     font-family: {serif};
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 500;
     color: #1B365D;
     margin-bottom: 2px;
   }}
@@ -410,6 +422,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
     color: #6b6a64;
   }}
   .tr-foot {{
+    font-family: {sans};
     font-size: 11px;
     color: #6b6a64;
     margin-top: 28px;

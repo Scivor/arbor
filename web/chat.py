@@ -55,7 +55,6 @@ def build_chat_page(
     sans = css_sans_stack()
     serif = css_serif_stack()
     display = css_display_stack()
-    from reports.fonts import comfortaa_font_face_css
 
     return f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -64,12 +63,12 @@ def build_chat_page(
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>采购顾问 · Arbor</title>
 <style>
-{comfortaa_font_face_css()}
   body {{
     background: #f5f4ed;
     color: #141413;
-    font-family: {sans};
+    font-family: {serif};
     font-size: 14px;
+    font-weight: 400;
     margin: 0;
   }}
   .chat-wrap {{
@@ -100,7 +99,7 @@ def build_chat_page(
   .chat-title {{
     font-family: {display};
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 500;
     color: #141413;
     letter-spacing: 0.02em;
   }}
@@ -123,11 +122,12 @@ def build_chat_page(
     color: #504e49;
     font-size: 12px;
     cursor: pointer;
-    font-family: inherit;
+    font-family: {sans};
     padding: 0;
   }}
   .chat-reset:hover {{ color: #1B365D; }}
   .chat-back {{
+    font-family: {sans};
     font-size: 12px;
     color: #504e49;
     text-decoration: none;
@@ -140,7 +140,7 @@ def build_chat_page(
   }}
   .chat-empty {{
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     padding: 22px 20px 18px;
     text-align: left;
@@ -151,7 +151,7 @@ def build_chat_page(
   .chat-empty-kicker {{
     font-family: {serif};
     font-size: 18px;
-    font-weight: 600;
+    font-weight: 500;
     color: #141413;
     margin-bottom: 8px;
   }}
@@ -162,6 +162,7 @@ def build_chat_page(
     font-size: 12.5px;
   }}
   .chat-brief-meta {{
+    font-family: {sans};
     font-size: 11px;
     color: #6b6a64;
     margin: 0 0 8px 2px;
@@ -190,22 +191,20 @@ def build_chat_page(
   .chat-msg.assistant {{
     margin-right: auto;
     background: #faf9f5;
-    border: 1px solid #e8e6dc;
+    border: 0;
     color: #141413;
     border-bottom-left-radius: 2px;
   }}
   .chat-msg.briefing {{
     max-width: 92%;
-    border-color: #c5cfc0;
-    background: #f7f8f2;
+    background: #faf9f5;
   }}
   .chat-msg.pending {{
     color: #6b6a64;
     font-style: italic;
   }}
   .chat-msg.error {{
-    color: #8a3b2e;
-    border-color: #d8b4ac;
+    color: #B53333;
   }}
   .chat-chips {{
     display: flex;
@@ -214,16 +213,16 @@ def build_chat_page(
     margin: 4px 0 12px;
   }}
   .chat-chip {{
-    border: 1px solid #e8e6dc;
-    background: #faf9f5;
+    border: 0;
+    background: #E4ECF5;
     color: #1B365D;
     border-radius: 4px;
     padding: 6px 12px;
     font-size: 12.5px;
+    font-family: {sans};
     cursor: pointer;
-    font-family: inherit;
   }}
-  .chat-chip:hover {{ border-color: #1B365D; }}
+  .chat-chip:hover {{ background: #EEF2F7; }}
   .chat-chip:disabled {{
     opacity: 0.45;
     cursor: default;
@@ -238,7 +237,7 @@ def build_chat_page(
   .chat-input-row textarea {{
     flex: 1;
     resize: none;
-    border: 1px solid #e8e6dc;
+    border: 0;
     border-radius: 6px;
     background: #faf9f5;
     color: #141413;
@@ -246,16 +245,19 @@ def build_chat_page(
     font-size: 13.5px;
     line-height: 1.5;
     padding: 10px 12px;
-    outline: none;
+    outline: 1px solid #e8e6dc;
+    outline-offset: 0;
   }}
-  .chat-input-row textarea:focus {{ border-color: #1B365D; }}
+  .chat-input-row textarea:focus {{ outline-color: #1B365D; }}
   .chat-input-row button {{
     background: #1B365D;
     color: #f5f4ed;
     border: 0;
     border-radius: 6px;
     padding: 10px 22px;
+    font-family: {sans};
     font-size: 13px;
+    font-weight: 500;
     cursor: pointer;
   }}
   .chat-input-row button:disabled {{
@@ -478,7 +480,8 @@ def build_followup_panel(
   padding: 8px 14mm 48px;
   background: #f5f4ed;
   color: #141413;
-  font-family: {css_sans_stack()};
+  font-family: {css_serif_stack()};
+  font-weight: 400;
 }}
 #followup .followup-hdr {{
   display: flex;
@@ -491,7 +494,7 @@ def build_followup_panel(
 #followup h2 {{
   font-family: {css_serif_stack()};
   font-size: 22px;
-  font-weight: 600;
+  font-weight: 500;
   margin: 0;
 }}
 #followup .followup-reset {{
@@ -500,7 +503,7 @@ def build_followup_panel(
   color: #504e49;
   font-size: 12px;
   cursor: pointer;
-  font-family: inherit;
+  font-family: {css_sans_stack()};
   padding: 0;
 }}
 #followup .followup-lead,
@@ -511,6 +514,7 @@ def build_followup_panel(
   color: #504e49;
 }}
 #followup .followup-provider {{
+  font-family: {css_sans_stack()};
   font-size: 11px;
   letter-spacing: 0.06em;
   color: #6b6a64;
@@ -522,14 +526,14 @@ def build_followup_panel(
   margin: 16px 0 12px;
 }}
 #followup .chat-chip {{
-  border: 1px solid #e8e6dc;
-  background: #faf9f5;
+  border: 0;
+  background: #E4ECF5;
   color: #1B365D;
   border-radius: 4px;
   padding: 6px 12px;
   font-size: 12.5px;
   cursor: pointer;
-  font-family: inherit;
+  font-family: {css_sans_stack()};
 }}
 #followup .chat-chip:disabled {{ opacity: 0.45; cursor: default; }}
 #followup .followup-list {{
@@ -555,10 +559,10 @@ def build_followup_panel(
 #followup .chat-msg.assistant {{
   margin-right: auto;
   background: #faf9f5;
-  border: 1px solid #e8e6dc;
+  border: 0;
 }}
 #followup .chat-msg.pending {{ color: #6b6a64; font-style: italic; }}
-#followup .chat-msg.error {{ color: #8a3b2e; }}
+#followup .chat-msg.error {{ color: #B53333; }}
 #followup .followup-input {{
   display: flex;
   gap: 10px;
@@ -567,7 +571,7 @@ def build_followup_panel(
 #followup textarea {{
   flex: 1;
   resize: none;
-  border: 1px solid #e8e6dc;
+  border: 0;
   border-radius: 6px;
   background: #faf9f5;
   color: #141413;
@@ -575,15 +579,19 @@ def build_followup_panel(
   font-size: 13.5px;
   line-height: 1.5;
   padding: 10px 12px;
-  outline: none;
+  outline: 1px solid #e8e6dc;
+  outline-offset: 0;
 }}
+#followup textarea:focus {{ outline-color: #1B365D; }}
 #followup #chatSend {{
   background: #1B365D;
   color: #f5f4ed;
   border: 0;
   border-radius: 6px;
   padding: 10px 22px;
+  font-family: {css_sans_stack()};
   font-size: 13px;
+  font-weight: 500;
   cursor: pointer;
 }}
 #followup #chatSend:disabled {{ background: #6b6a64; cursor: default; }}

@@ -1,28 +1,6 @@
 /* Kami Design System — Web Edition */
 /* Tokens from https://kami.tw93.fun/ */
 
-@font-face {
-  font-family: "Comfortaa";
-  font-style: normal;
-  font-weight: 400;
-  font-display: swap;
-  src: url("/static/fonts/comfortaa-latin-400.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Comfortaa";
-  font-style: normal;
-  font-weight: 600;
-  font-display: swap;
-  src: url("/static/fonts/comfortaa-latin-600.woff2") format("woff2");
-}
-@font-face {
-  font-family: "Comfortaa";
-  font-style: normal;
-  font-weight: 700;
-  font-display: swap;
-  src: url("/static/fonts/comfortaa-latin-700.woff2") format("woff2");
-}
-
 :root {
   --parchment:    #f5f4ed;
   --ivory:        #faf9f5;
@@ -36,8 +14,11 @@
   --border:       #e8e6dc;
   --border-soft:  #e5e3d8;
 
-  /* 标题/品牌：与 Arbor 字标同系的圆润几何无衬线 */
-  --display: "Comfortaa", "Nunito", "Varela Round", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  /* Kami: serif carries titles and reading; sans only for UI chrome */
+  --error:        #B53333;
+  --tag-default:  #E4ECF5;
+  --tag-quiet:    #EEF2F7;
+  --display: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
   --serif: Charter, Georgia, "TsangerJinKai02", "Source Han Serif SC", "Noto Serif CJK SC", "Songti SC", "WenQuanYi Micro Hei", "Droid Sans Fallback", Palatino, serif;
   --sans:  ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "WenQuanYi Micro Hei", "Droid Sans Fallback", "Noto Sans CJK SC", "Source Han Sans SC", "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
   --mono:  "JetBrains Mono", "Fira Code", "SF Mono", Consolas, Monaco, monospace;
@@ -50,8 +31,9 @@ html { scroll-behavior: smooth; }
 body {
   background: var(--parchment);
   color: var(--near-black);
-  font-family: var(--sans);
+  font-family: var(--serif);
   font-size: 15px;
+  font-weight: 400;
   line-height: 1.55;
   letter-spacing: 0.35px;
   -webkit-font-smoothing: antialiased;
@@ -92,6 +74,7 @@ body {
   gap: 28px;
 }
 .site-links a {
+  font-family: var(--sans);
   font-size: 13px;
   font-weight: 500;
   color: var(--olive);
@@ -100,7 +83,7 @@ body {
   transition: color 0.15s;
 }
 .site-links a:hover { color: var(--brand); }
-.site-links a.active { color: var(--brand); font-weight: 600; }
+.site-links a.active { color: var(--brand); font-weight: 500; }
 
 /* ── Main Layout ── */
 .site-main {
@@ -113,13 +96,12 @@ body {
 /* ── Hero Card ── */
 .hero-card {
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 32px;
   margin-bottom: 28px;
-  transition: box-shadow 0.2s, border-color 0.2s;
 }
-.hero-card:hover { box-shadow: 0 0 0 1px var(--border-soft); border-color: var(--border-soft); }
+.hero-card:hover { background: var(--ivory); }
 
 .hero-eyebrow {
   font-size: 12px;
@@ -131,9 +113,9 @@ body {
 }
 
 .hero-title {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-size: 28px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.25;
   color: var(--near-black);
   margin-bottom: 8px;
@@ -176,12 +158,14 @@ body {
 .btn-secondary {
   background: var(--warm-sand);
   color: var(--dark-warm);
-  box-shadow: 0 0 0 1px var(--border);
+  outline: 1px solid var(--border);
+  outline-offset: 0;
 }
 .btn-ghost {
   background: transparent;
   color: var(--brand);
-  box-shadow: 0 0 0 1px var(--brand);
+  outline: 1px solid var(--brand);
+  outline-offset: 0;
 }
 
 /* ── Metrics ── */
@@ -193,13 +177,12 @@ body {
 }
 .metric-card {
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 20px;
   text-align: center;
-  transition: box-shadow 0.2s, border-color 0.2s;
 }
-.metric-card:hover { box-shadow: 0 0 0 1px var(--border-soft); border-color: var(--border-soft); }
+.metric-card:hover { background: var(--ivory); }
 .metric-label {
   font-size: 11px;
   font-weight: 500;
@@ -226,9 +209,9 @@ body {
 
 /* ── Section Title ── */
 .section-title {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--near-black);
   margin-bottom: 16px;
   letter-spacing: 0.02em;
@@ -253,16 +236,14 @@ body {
   align-items: center;
   justify-content: space-between;
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 16px 20px;
-  transition: box-shadow 0.2s, border-color 0.15s;
   text-decoration: none;
   color: inherit;
 }
 .report-item:hover {
-  box-shadow: 0 0 0 1px var(--border-soft);
-  border-color: var(--border-soft);
+  background: var(--warm-sand);
 }
 .report-item-main {
   display: flex;
@@ -272,7 +253,7 @@ body {
 .report-item-date {
   font-family: var(--serif);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--near-black);
   min-width: 110px;
 }
@@ -319,7 +300,7 @@ body {
 /* ── Report Viewer ── */
 .report-viewer {
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   overflow: hidden;
 }
@@ -332,9 +313,9 @@ body {
   background: var(--ivory);
 }
 .report-viewer-title {
-  font-family: var(--display);
+  font-family: var(--serif);
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--near-black);
   letter-spacing: 0.02em;
 }
@@ -397,9 +378,9 @@ body {
   align-items: flex-start;
   gap: 4px;
   font-family: var(--serif);
-  color: #3a322c;
+  color: var(--dark-warm);
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 18px 22px 16px;
 }
@@ -419,9 +400,11 @@ body {
 .quiet-px {
   margin-top: 2px;
   font-size: 34px;
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.01em;
   line-height: 1.15;
+  color: var(--brand);
 }
 .quiet-px small {
   font-size: 13px;
@@ -446,8 +429,8 @@ body {
   font-variant-numeric: tabular-nums;
   color: var(--olive);
 }
-.quiet-chg.up { color: #3d5c45; }
-.quiet-chg.down { color: #8a4b3a; }
+.quiet-chg.up { color: var(--brand); }
+.quiet-chg.down { color: var(--error); }
 .quiet-vs {
   font-family: var(--sans);
   font-size: 13px;
@@ -500,7 +483,7 @@ body {
 }
 .specimen {
   background: var(--ivory);
-  border: 1px dashed var(--border);
+  border: 0;
   border-radius: 8px;
   padding: 16px 16px 14px;
 }
@@ -518,12 +501,12 @@ body {
 .specimen-date {
   font-family: var(--serif);
   font-size: 16px;
-  font-weight: 600;
+  font-weight: 500;
   margin-bottom: 6px;
 }
 .specimen-sig {
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.4px;
   color: var(--brand);
   margin-bottom: 4px;
@@ -556,7 +539,7 @@ body {
   font-size: 36px;
   font-weight: 500;
   letter-spacing: 0.01em;
-  line-height: 1.25;
+  line-height: 1.20;
 }
 .daily-date {
   margin-top: 8px;
@@ -580,7 +563,7 @@ body {
 .daily-signals li,
 .daily-sides > div {
   background: var(--ivory);
-  border: 1px solid var(--border);
+  border: 0;
   border-radius: 8px;
 }
 .daily-contract,
@@ -603,7 +586,7 @@ body {
   margin-top: 4px;
   font-size: 14px;
   font-variant-numeric: tabular-nums;
-  color: #3d5c45;
+  color: var(--olive);
 }
 .daily-meta,
 .daily-yuan,
@@ -642,7 +625,7 @@ body {
   align-items: baseline;
   gap: 8px 14px;
 }
-.daily-name { font-weight: 600; }
+.daily-name { font-weight: 500; }
 .daily-print {
   font-family: var(--serif);
   font-variant-numeric: tabular-nums;
@@ -655,17 +638,20 @@ body {
 }
 .daily-bias {
   margin-left: auto;
+  font-family: var(--sans);
   font-size: 11px;
   letter-spacing: 0.08em;
-  color: var(--olive);
-  border: 1px solid var(--border);
-  border-radius: 99px;
-  padding: 1px 8px;
+  font-weight: 500;
+  color: var(--brand);
+  background: var(--tag-default);
+  border: 0;
+  border-radius: 4px;
+  padding: 2px 8px;
 }
 .daily-bias.bull,
-.daily-bias.slight-bull { color: #3d5c45; }
+.daily-bias.slight-bull { color: var(--brand); }
 .daily-bias.slight-bear,
-.daily-bias.diverge { color: #8a4b3a; }
+.daily-bias.diverge { color: var(--olive); }
 .daily-sides {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -676,7 +662,7 @@ body {
 .daily-sides h3 {
   font-family: var(--sans);
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   letter-spacing: 0.12em;
 }
 .daily-sides ol { margin: 8px 0 0 1.2em; }
@@ -685,10 +671,10 @@ body {
   margin-top: 16px;
   padding: 14px 16px;
   background: var(--ivory);
-  border-left: 3px solid #8a4b3a;
-  border-radius: 0 8px 8px 0;
+  border: 0;
+  border-radius: 8px;
 }
-.daily-diverge .daily-kicker { color: #8a4b3a; }
+.daily-diverge .daily-kicker { color: var(--brand); }
 .daily-sources ol { margin: 8px 0 0 1.2em; }
 .daily-sources li { margin-top: 8px; line-height: 1.5; }
 .daily-sources a { color: var(--brand); overflow-wrap: anywhere; }

@@ -167,7 +167,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
 .past-index-title {{
   font-family: {display};
   font-size: 15px;
-  font-weight: 600;
+  font-weight: 500;
   color: #141413;
   letter-spacing: 0.02em;
 }}
@@ -188,17 +188,16 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
   flex: 0 0 auto;
   min-width: 130px;
   background: #faf9f5;
-  border: 1px solid #e8e6dc;
+  border: 0;
   border-radius: 6px;
   padding: 12px 14px;
   text-decoration: none;
   color: inherit;
-  transition: box-shadow 0.15s, border-color 0.15s;
+  transition: background 0.15s;
   display: block;
 }}
 .past-item:hover {{
-  box-shadow: 0 2px 12px rgba(0,0,0,0.04);
-  border-color: #e5e3d8;
+  background: #e8e6dc;
 }}
 .past-item-current {{
   outline: 1.5px solid #1B365D;
@@ -207,7 +206,7 @@ def _build_past_index_html(report_date: str, recent_meta: List[dict], lang: str 
 .past-item-date {{
   font-family: {serif};
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 500;
   color: #141413;
   margin-bottom: 4px;
 }}

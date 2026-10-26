@@ -5,7 +5,7 @@ reports/fonts.py
 Linux 云环境通常没有 Songti SC / Hiragino；本机有文泉驿 / Droid Sans Fallback。
 优先选用已安装且含 CJK 字形的字体，避免图表「□□□」乱码。
 
-品牌展示字体：Comfortaa（与 Arbor 字标同系的圆润几何无衬线）。
+标题与正文共用衬线栈（Kami：一字成页；字标为 PNG，不再用 Comfortaa 作展示体）。
 """
 
 from __future__ import annotations
@@ -115,15 +115,10 @@ def css_serif_stack() -> str:
 
 def css_display_stack() -> str:
     """
-    标题 / 品牌展示栈：Comfortaa 对齐字标圆润几何气质；
-    CJK 回退到无衬线中文（Comfortaa 无汉字字形）。
+    标题 / 展示栈：与正文同一衬线族（Kami 原则 4–5）。
+    无衬线仅留给真正的 UI chrome。
     """
-    return (
-        '"Comfortaa", "Nunito", "Varela Round", '
-        '"PingFang SC", "Hiragino Sans GB", '
-        '"WenQuanYi Micro Hei", "Droid Sans Fallback", '
-        '"Noto Sans CJK SC", "Microsoft YaHei", sans-serif'
-    )
+    return css_serif_stack()
 
 
 def comfortaa_font_face_css(*, url_prefix: str = "/static/fonts/") -> str:

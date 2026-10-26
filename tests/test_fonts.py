@@ -59,7 +59,9 @@ def test_css_stack_includes_linux_fallbacks():
     assert "WenQuanYi Micro Hei" in serif
     assert "Droid Sans Fallback" in serif
     display = css_display_stack()
-    assert "Comfortaa" in display
+    assert display == serif
+    assert "Charter" in display
+    assert "Comfortaa" not in display
 
 
 def test_brand_assets_and_comfortaa_faces():

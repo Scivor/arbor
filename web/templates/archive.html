@@ -7,15 +7,15 @@
 <style>
   .archive-hero {
     background: var(--ivory);
-    border: 1px solid var(--border);
+    border: 0;
     border-radius: 8px;
     padding: 28px;
     margin-bottom: 28px;
   }
   .archive-hero h1 {
-    font-family: var(--display);
+    font-family: var(--serif);
     font-size: 22px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     margin-bottom: 6px;
     letter-spacing: 0.02em;
@@ -26,9 +26,9 @@
   }
   .archive-section { margin-bottom: 36px; }
   .archive-section h2 {
-    font-family: var(--display);
+    font-family: var(--serif);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--stone);
     letter-spacing: 0.08em;
     margin-bottom: 12px;
@@ -37,9 +37,9 @@
     margin-bottom: 28px;
   }
   .year-label {
-    font-family: var(--display);
+    font-family: var(--serif);
     font-size: 14px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--stone);
     letter-spacing: 0.08em;
     text-transform: uppercase;
@@ -57,16 +57,15 @@
     align-items: center;
     justify-content: space-between;
     background: var(--ivory);
-    border: 1px solid var(--border);
+    border: 0;
     border-radius: 8px;
     padding: 14px 18px;
     text-decoration: none;
     color: inherit;
-    transition: box-shadow 0.15s, border-color 0.15s;
+    transition: background 0.15s;
   }
   .arch-item:hover {
-    box-shadow: 0 4px 20px rgba(0,0,0,0.04);
-    border-color: var(--border-soft);
+    background: var(--warm-sand);
   }
   .arch-item-left {
     display: flex;
@@ -76,7 +75,7 @@
   .arch-item-date {
     font-family: var(--serif);
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 500;
     color: var(--near-black);
     min-width: 100px;
   }

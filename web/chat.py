@@ -728,12 +728,12 @@ def build_followup_waiting(agent: Optional[dict] = None, lang: str = "zh") -> st
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} · Arbor</title>
 </head>
-<body style="background:#f5f4ed;color:#141413;font-family:{css_sans_stack()};margin:0;">
+<body style="background:#f5f4ed;color:#141413;font-family:{css_serif_stack()};font-weight:400;margin:0;">
 <main style="max-width:640px;margin:0 auto;padding:72px 24px;">
-  <h1 style="font-family:{css_serif_stack()};font-size:28px;font-weight:500;">{title}</h1>
-  <p style="line-height:1.7;">{body}</p>
-  <p style="font-size:12px;color:#6b6a64;">{provider}</p>
-  <p><a href="{home}" style="color:#1B365D;">{back}</a></p>
+  <h1 style="font-family:{css_serif_stack()};font-size:28px;font-weight:500;letter-spacing:0.02em;">{title}</h1>
+  <p style="line-height:1.7;color:#504e49;">{body}</p>
+  <p style="font-family:{css_sans_stack()};font-size:12px;color:#6b6a64;">{provider}</p>
+  <p><a href="{home}" style="font-family:{css_sans_stack()};color:#1B365D;text-decoration:none;">{back}</a></p>
 </main>
 </body>
 </html>"""

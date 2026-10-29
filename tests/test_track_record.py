@@ -1,49 +1,13 @@
 """
 tests/test_track_record.py
-Phase 2: markdown 导出 + 战绩聚合 + web 路由测试 — 无网络
+预测战绩聚合 — 无网络
 """
 
 import json
 
 import pytest
 
-from reports.exporters import export_report, list_exporters
-from reports.exporters.markdown_exporter import export_markdown
 from reports.history import compute_track_record
-from reports.pipeline import generate_demo_report
-from tests.test_china_section import FAKE_EVENTS, _report_with_china
-
-
-# ── markdown 导出 ─────────────────────────────────────────────────────────────
-
-def test_markdown_structure():
-    md = export_markdown(generate_demo_report())
-    assert md.startswith("# ")
-    assert "## 市场快照" in md
-    assert "## 套保建议" in md
-    assert "本报告仅为研究信息，不构成投资建议" in md
-    # demo 报告 china_import 为 None → 板块跳过
-    assert "进口成本与政策" not in md
-
-
-def test_markdown_registry_path():
-    assert "markdown" in list_exporters()
-    out = export_report(generate_demo_report(), format="markdown")
-    assert out.startswith("# ")
-    assert "## 套保建议" in out
-
-
-def test_markdown_china_import_section():
-    md = export_markdown(_report_with_china(FAKE_EVENTS))
-    assert "## 进口成本与政策" in md
-    assert "到库成本" in md
-    assert "USD/CNY" in md
-    assert "中国调整咖啡生豆进口关税至 8%" in md
-
-
-def test_markdown_china_import_no_events():
-    md = export_markdown(_report_with_china([]))
-    assert "近 7 日无显著政策事件" in md
 
 
 # ── 战绩聚合 ──────────────────────────────────────────────────────────────────
@@ -117,41 +81,6 @@ def test_compute_track_record_empty(tmp_path, monkeypatch):
     assert rec["hit_rate"] == 0.0
     assert rec["weeks"] == []
     assert rec["pending"] is None
-
-
-# ── web 渲染（venv 无 jinja2，web.app 无法整体导入，直接测渲染函数）────────────
-
-def test_track_record_page_render(tmp_path, monkeypatch):
-    _seed_history(tmp_path)
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    from web.track_record import build_track_record_html
-
-    html = build_track_record_html(compute_track_record())
-    assert "区间命中率" in html
-    assert "50%" in html                     # hit/direction/hedge 均为 0.5
-    assert "已复盘期数" in html
-    assert "2026-07-03" in html              # 明细行
-    assert "偏离" in html                    # 期 2 badge
-    assert "2026-07-17 期预测待复盘" in html  # pending 提示
-
-
-def test_track_record_page_render_empty(tmp_path, monkeypatch):
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    from web.track_record import build_track_record_html
-
-    html = build_track_record_html(compute_track_record())
-    assert "暂无历史复盘数据" in html
-
-
-def test_reports_cli_markdown_format(tmp_path):
-    """reports CLI --format markdown 可用（registry 与 CLI choices 契约一致）"""
-    from reports.cli import main
-    dest = tmp_path / "report.md"
-    rc = main(["--demo", "--format", "markdown", "--output", str(dest)])
-    assert rc == 0
-    assert dest.read_text(encoding="utf-8").startswith("# ")
 
 
 def test_track_record_skips_cross_gap_pairs(tmp_path, monkeypatch):

@@ -7,6 +7,5 @@ Physical packages still live at repo root for backward-compatible imports:
   reports/  → reporting adapters
   models/   → ML adapters
   backtest/ → backtest adapters
-  agent/    → LLM agent adapters
-  cli/, web/→ interface adapters
+  cli/      → interface adapter
 """

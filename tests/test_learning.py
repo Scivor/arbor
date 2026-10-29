@@ -252,9 +252,9 @@ def test_band_scale_widens_scenarios_center_unchanged():
         assert center_a == pytest.approx(center_b, abs=1.0)  # 中心不变（容忍取整偏移）
 
 
-# ── learning_status + web 区块 ────────────────────────────────────────────────
+# ── learning_status / 系数存证 ────────────────────────────────────────────────
 
-def test_learning_status_and_track_record_block(learn_env):
+def test_learning_status_records_calibration(learn_env):
     _seed_pairs(learn_env / "history", 8, ml_mode="wrong", band_mode="neutral")
     recalibrate()
 
@@ -263,57 +263,10 @@ def test_learning_status_and_track_record_block(learn_env):
     assert status["ml_accuracy"] == 0.0
     assert status["current"]["ml_bias_scale"] == pytest.approx(0.9)
     assert len(status["changelog"]) == 1
-
-    from web.track_record import build_track_record_html
-    record = {"total": 1, "hit_rate": 1.0, "direction_rate": 1.0, "hedge_rate": 1.0,
-              "weeks": [{"report_date": "2026-07-01", "badge": "命中", "direction": "横盘",
-                         "predicted_min": 390.0, "predicted_max": 410.0,
-                         "actual_price": 400.0, "price_change_pct": 0.5}],
-              "pending": None}
-    html = build_track_record_html(record, [], status)
-    assert "系数自校准" in html
-    assert "ml_bias_scale" in html and "0.90" in html
-    assert "区间命中率 50%" in html
-    assert "1.00 → 0.90" in html          # changelog 行
-    assert "暂无校准记录" not in html
-
-    # learning=None → 区块不渲染
-    assert "系数自校准" not in build_track_record_html(record, [], None)
-
-
-def test_track_record_learning_insufficient_samples():
-    from web.track_record import build_track_record_html
-    record = {"total": 1, "hit_rate": 1.0, "direction_rate": 1.0, "hedge_rate": 1.0,
-              "weeks": [{"report_date": "2026-07-01", "badge": "命中", "direction": "横盘",
-                         "predicted_min": 390.0, "predicted_max": 410.0,
-                         "actual_price": 400.0, "price_change_pct": 0.5}],
-              "pending": None}
-    learning = {"current": {"ml_bias_scale": 1.0, "scenario_band_scale": 1.0},
-                "n_samples": 3, "min_samples": 8,
-                "ml_accuracy": None, "band_hit_rate": None, "changelog": []}
-    html = build_track_record_html(record, [], learning)
-    assert "样本不足 3/8" in html
-    assert "未校准" in html
-    assert "暂无校准记录" in html
-
-
-# ── M3: web 兜底隔离 / L1: scale 存证 ─────────────────────────────────────────
-
-def test_track_record_page_resilient_to_optional_data_failure(monkeypatch):
-    """可选数据（driver_stats / learning_status）失败时战绩页仍 200，主内容在位"""
-    from fastapi.testclient import TestClient
-    from web.app import app
-
-    def boom(*a, **k):
-        raise RuntimeError("optional data broken")
-
-    monkeypatch.setattr("reports.history.compute_driver_stats", boom)
-    monkeypatch.setattr("reports.learning.learning_status", boom)
-
-    c = TestClient(app, raise_server_exceptions=False)
-    r = c.get("/track-record/")
-    assert r.status_code == 200
-    assert "预测战绩" in r.text or "暂无历史复盘数据" in r.text
+    entry = status["changelog"][0]
+    assert entry["param"] == "ml_bias_scale"
+    assert entry["old"] == pytest.approx(1.0)
+    assert entry["new"] == pytest.approx(0.9)
 
 
 def test_save_summary_records_learned_scales(tmp_path, monkeypatch):

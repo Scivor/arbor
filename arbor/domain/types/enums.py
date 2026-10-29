@@ -38,7 +38,7 @@ class EventType(Enum):
     SEASONAL_WINDOW_OPEN = "seasonal_window_open"
     ML_MODEL_UPDATE = "ml_model_update"
     PRODUCTION_UPDATE = "production_update"  # USDA PSD 产量/供需数据修订
-    LLM_COMMENTARY = "llm_commentary"          # 采购建议方向（评分因子；展示名可不同）
+    LLM_COMMENTARY = "llm_commentary"          # 历史事件兼容；新事件不再产生
 
     # === REPORT-SIDE 报告侧因子 ===
     SCENARIO_DOMINANT = "scenario_dominant"    # 主导情景方向 x 概率

@@ -121,12 +121,12 @@ def test_gather_report_events_falls_back_when_db_unavailable(monkeypatch):
         market, scenarios, llm_direction="下跌", now=NOW, live_scan=False
     )
 
-    # 报告侧三个因子（情景 + RSI + LLM 方向）都应在，历史尾巴为空但不报错。
+    # 报告侧因子只剩情景和 RSI。采购文案方向不再进评分。
     event_types = {e.event_type for e in events}
     assert EventType.SCENARIO_DOMINANT in event_types
     assert EventType.RSI_EXTREME in event_types
-    assert EventType.LLM_COMMENTARY in event_types
-    assert len(events) == 3
+    assert EventType.LLM_COMMENTARY not in event_types
+    assert len(events) == 2
 
 
 # ── DB 行解析 —— 周报能否「看见关税」的那条路径 ──────────────────────────

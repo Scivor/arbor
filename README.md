@@ -1,41 +1,28 @@
-# Arbor / 阿尔博 — 咖啡进口商套期保值智能体
+# Arbor / 阿尔博 — 咖啡价格预测与套保
 
 [![tests](https://github.com/Scivor/arbor/actions/workflows/tests.yml/badge.svg)](https://github.com/Scivor/arbor/actions/workflows/tests.yml)
 
-事件驱动的咖啡进口商套期保值决策系统，支持回测、LLM 智能体、实时数据源与自动化周报。
+只做两件事：把下一交易周的价格方向和区间预测准，以及据此给出能对冲价格风险的套保比率。
 
-**架构**: 事件驱动 (Event-Driven) + 三域并行 (Supply / Finance / Policy) + LLM Agent
+**架构**: 事件驱动 (Event-Driven) + 三域信号 (Supply / Finance / Policy) + 同一套评分函数
 
 ---
 
 ## 核心功能
 
 ```
-事件驱动套保决策
-    供给域: 产区天气 / ONI / COT / ICE库存
-    金融域: KC=F价格 / USD/CNY / Polymarket概率
-    政策域: 关税 / 贸易战 / LDC地位 / 政策新闻
+预测
+    价格 / 气候 / 库存 / COT / 供需 / 政策事件
          ↓
-  评分引擎 (arbor/domain/scoring.py) → 动态套保比率 (20%~95%)
-    事件按类型半衰期衰减 → 14 个因子簇内递减求和 → tanh 软饱和
-    CLI / 周报 / 回测共用同一个纯函数
+    情景概率 + ML 方向 + Brier 校准 + 系数自学习
 
-周报流水线 (reports/)
-    市场快照 / 情景分析 / ML预测 / 套保建议
-    + 中国进口商视角 (汇率·到库成本·政策事件)
-    + 参考类基础概率 / 凯利仓位影子（只读）
-    + 采购下一步建议（规则五段简报；有 LLM key 时润色）
-    → HTML (双语) / PDF / Markdown / briefing.json
-    主出报: scripts/scheduler.py（周六 03:00 Asia/Shanghai → web/static/reports/）
+对冲
+    同一批事件 → arbor/domain/scoring.py → 套保比率 (20%~95%)
+    半衰期衰减，簇内递减，tanh 软饱和
+    CLI、预测输出、回测共用这一个纯函数
 
-战绩复盘 (reports/history + web/track_record)
-    Brier 概率校准 / 驱动因子应验率 / 系数自校准 / 凯利影子账本
-
-LLM 智能体 (agent/)
-    CoffeeAnalyst（采购顾问人设）+ 13 个查询工具；追问页 /chat/
-
-回测引擎 (backtest/)
-    事件驱动回测: 无套保 / 静态65% / 事件驱动 三策略对比
+回测
+    无套保 / 静态 65% / 事件驱动，比较价格风险有没有被对冲掉
 ```
 
 ---
@@ -45,23 +32,18 @@ LLM 智能体 (agent/)
 ```bash
 pip install -e .        # 安装（pyproject.toml 为依赖单一事实源）
 
-# 实时扫描 + 完整报告
+# 扫描信号并打印套保比率
 python coffee.py --demo
 
 # 交互模式 (scan / status / report / events / inventory / policy / start / stop)
 python coffee.py
 
-# Paper Trading 模拟盘
+# 模拟盘：按比率对冲，盯住盈亏
 python coffee.py --paper
 
-# LLM Agent 模式 (需要 API key)
-python coffee.py --agent "分析当前套保策略"
-
-# 手动生成一期周报 (HTML + PDF，写入 web/static/reports/<日期>/)
-python scripts/scheduler.py --now --format both
-
-# 启动周报站 (http://127.0.0.1:8000)
-python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
+# 下一交易周的预测 + 套保建议（文本或 JSON）
+python -m reports.cli --demo
+python -m reports.cli --format json --output forecast.json
 ```
 
 ---
@@ -74,14 +56,14 @@ Clean Architecture 分层（详见 `ARCHITECTURE.md`）：
 arbor/                     # 规范包（依赖只向内）
 ├── domain/                # 纯领域：types / scoring / cost / trading
 ├── application/           # 用例：DecisionEngine / ports / CoffeeSystem
-├── infrastructure/        # 驱动：EventBus / SQLite / YAML / notify / secrets
+├── infrastructure/        # 驱动：EventBus / SQLite / YAML / notify
 └── adapters/              # 适配器归属说明（实体仍在仓库根目录）
 
 # 根目录适配器 + 兼容 shim（旧 from core… 仍可用）
 coffee.py / coffee_system.py
-cli/  web/  agent/  reports/  domains/  sources/  models/  backtest/
+cli/  reports/  domains/  sources/  models/  backtest/
 core/                      # → re-export arbor.*
-config/  scripts/  deploy/  tests/
+config/  tests/
 ```
 
 ---
@@ -115,23 +97,11 @@ config/  scripts/  deploy/  tests/
 
 ---
 
-## Agent 工具 (13 个)
+## 准确率与对冲质量
 
-`agent/tools/system.py`: `query_system_status` / `get_recent_events` / `scan_all_domains`
-
-`agent/tools/market.py`: `fetch_market_price` / `get_ml_advice` / `get_landed_cost` / `get_procurement_briefing`
-
-`agent/tools/analysis.py`: `get_track_record` / `get_driver_stats` / `get_learning_status` / `get_kelly_shadow` / `get_reference_class` / `get_policy_events`
-
----
-
-## 周报与战绩页
-
-- **生产真相源**: `scripts/scheduler.py` 每周六 **03:00 Asia/Shanghai** 写入 `web/static/reports/<日期>/`（HTML 中英 + PDF + Markdown + `briefing.json`；预测即将到来的 Mon–Fri）。站内 `/`、公众号稿、采购顾问都以这里为准。
-- **邮件旁路**（非真相源）: `scripts/weekly_report_daemon.py` 每周一 09:00 Asia/Shanghai 仅用于 SMTP 订阅投递，**不覆盖**站内周报。详见 `docs/publishing.md`。
-- **周报站** (`web/`): FastAPI；`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩，`/chat/` 采购顾问追问。
-- **战绩页** (`/track-record/`): 区间命中/方向/套保三率、平均 Brier 与概率校准桶、驱动因子应验率、系数自校准状态、凯利影子账本。
-- **无人值守**: macOS launchd（`deploy/com.arbor.weekly-report.plist`）或 Linux systemd（`deploy/coffee-*.service`）拉起 **scheduler**；数据源降级/生成失败时 Telegram 告警（验证：`python scripts/scheduler.py --alert-test`）。详见 DEPLOY.md。
+- 预测：情景概率、ML 方向、参考类基础概率、Brier / 校准桶（`reports/history.py`）。
+- 对冲：评分比率、凯利影子仓位（只建议，不改比率）、纸交易盈亏、三策略回测。
+- 自校准：`reports/learning.py` 按历史应验调整 ML 偏差和情景带宽。
 
 ---
 
@@ -143,15 +113,14 @@ pip install -e .
 uv pip install -e . --python .venv/bin/python
 ```
 
-主要依赖: `yfinance`, `pandas`, `numpy`, `matplotlib` + `mplfinance`, `apscheduler`, `fastapi` + `uvicorn`, `langchain` + `langgraph`, `scikit-learn`。
-PDF 导出另需 `playwright`（`python -m playwright install chromium`）。
+主要依赖: `pandas`, `numpy`, `requests`, `yfinance`, `akshare`, `pyyaml`。
 
 ---
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -q    # 364 个测试（无网络依赖，合成数据）
+python -m pytest tests/ -q
 ```
 
 ---

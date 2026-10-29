@@ -9,7 +9,7 @@ QueryNotifyPrint                              CLIHandler
 QueryNotifyPrint (verbose=True)              VerboseCLIHandler
 --csv                                         CSVHandler
 --json                                        JSONHandler
---browse (open browser)                       (无等价，咖啡场景用 Telegram)
+--browse (open browser)                       （不提供浏览器或消息推送）
 QueryNotify.start()                           Handler.start()
 QueryNotify.update(SherlockResult)           Handler.on_event(CoffeeEvent)
 QueryNotify.finish()                          Handler.finish()
@@ -32,7 +32,6 @@ from arbor.infrastructure.notify.handlers import (
     VerboseCLIHandler,
     JSONHandler,
     CSVHandler,
-    TelegramHandler,
     DebugHandler,
     NullHandler,
 )
@@ -46,7 +45,6 @@ __all__ = [
     "VerboseCLIHandler",
     "JSONHandler",
     "CSVHandler",
-    "TelegramHandler",
     "DebugHandler",
     "NullHandler",
     "register_handlers",
@@ -64,8 +62,6 @@ _registered_handlers: list[HedgeHandler] = []
 def register_handlers(
     names: list[str],
     output_dir: str = "output",
-    telegram_token: str = "",
-    telegram_chat_id: str = "",
 ) -> list[HedgeHandler]:
     """
     注册一组 Handler，等价 Sherlock 启动时初始化所有 QueryNotify
@@ -75,7 +71,6 @@ def register_handlers(
       "verbose"   — 全量输出 CLI
       "json"      — JSONL 追加写入
       "csv"       — CSV 追加写入
-      "telegram"  — Telegram 推送 (需 token/chat_id)
       "debug"     — 调试输出
 
     Sherlock 等价逻辑:
@@ -96,12 +91,6 @@ def register_handlers(
             handlers.append(JSONHandler(output_path=f"{output_dir}/events.jsonl"))
         elif name == "csv":
             handlers.append(CSVHandler(output_path=f"{output_dir}/events.csv"))
-        elif name == "telegram":
-            handlers.append(TelegramHandler(
-                token=telegram_token,
-                chat_id=telegram_chat_id,
-                crisis_only=True,
-            ))
         elif name == "debug":
             handlers.append(DebugHandler(dump_all=False))
         elif name == "null":

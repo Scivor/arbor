@@ -5,14 +5,14 @@
 Dependencies point **inward** only:
 
 ```
-adapters (cli / web / agent / reports / domains / sources / backtest / models)
+adapters (cli / reports / domains / sources / backtest / models)
         ↓
 application (use cases, ports, composition root)
         ↓
 domain (types, scoring, cost, trading — pure)
 ```
 
-`infrastructure` implements ports used by `application` (EventBus, SQLite, YAML config, notify, secrets).
+`infrastructure` implements ports used by `application` (EventBus, SQLite, YAML config, notify).
 Adapters may call application + domain; they must not be imported by domain.
 
 ## New Folder Structure
@@ -36,8 +36,7 @@ arbor/
 │   ├── events/                  # EventBus
 │   ├── persistence/             # DecisionDB (SQLite)
 │   ├── config/regime.py         # regimes.yaml loader
-│   ├── notify/                  # CLI / JSON / Telegram handlers
-│   └── secrets.py               # LLM API key loading
+│   └── notify/                  # CLI / JSON / CSV / debug handlers
 │
 └── adapters/                    # Documented ownership of root packages:
     # domains/   → scanning adapters (threshold → publish)
@@ -45,8 +44,7 @@ arbor/
     # reports/   → reporting adapters
     # models/    → ML adapters
     # backtest/  → backtest adapters
-    # agent/     → LLM agent adapters
-    # cli/, web/ → interface adapters
+    # cli/       → interface adapter
 ```
 
 ### Compatibility shims
@@ -70,7 +68,7 @@ Legacy import paths remain valid and re-export the canonical modules:
 sources.fetch()
     → domains scanners (YAML thresholds) → EventBus.publish(CoffeeEvent)
         → DecisionEngine window → domain.scoring.compute_score → hedge ratio
-            → reports / CLI / Agent / backtest consumers
+            → reports / CLI / backtest consumers
 ```
 
 Composition root (`arbor.application.system.CoffeeSystem`):
@@ -83,14 +81,13 @@ Composition root (`arbor.application.system.CoffeeSystem`):
 
 1. **Domain is pure** — scoring and cost math have no network / DB / YAML I/O.
 2. **Ports over concrete sources** — DecisionEngine accepts `PricePort` / `FXPort`; composition root binds Yahoo adapters.
-3. **Secrets are infrastructure** — `reports.llm_commentary` and `agent` share `arbor.infrastructure.secrets`; reports no longer imports agent.
-4. **Trading records live in domain** — paper trading no longer depends on the backtest adapter package.
-5. **Shims preserve behavior** — existing `from core…` / `from coffee_system…` imports keep working during migration.
+3. **Trading records live in domain** — paper trading no longer depends on the backtest adapter package.
+4. **Shims preserve behavior** — existing `from core…` / `from coffee_system…` imports keep working during migration.
 
 ## Layer Checklist (for new code)
 
 - New pure types / scoring rules → `arbor/domain/`
 - New use-case orchestration → `arbor/application/`
-- New DB / HTTP / file / Telegram code → `arbor/infrastructure/` or `sources/`
+- New DB / HTTP / file code → `arbor/infrastructure/` or `sources/`
 - New scanners / exporters / CLI routes → root adapter packages (`domains/`, `reports/`, …)
-- Never import `sources`, `reports`, `agent`, or `backtest` from `arbor/domain/`
+- Never import `sources`, `reports`, or `backtest` from `arbor/domain/`

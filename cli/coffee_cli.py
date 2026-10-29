@@ -232,10 +232,6 @@ def main():
         elif cmd == "--paper":
             _do_paper_trading(sys.argv[2:])
 
-        elif cmd == "--agent":
-            from agent.runtime import main as agent_main
-            agent_main(sys.argv[2:])
-
         else:
             print(f"未知参数: {cmd}")
-            print("用法: python3 coffee.py [--demo|--paper|--agent]")
+            print("用法: python3 coffee.py [--demo|--paper]")

@@ -10,8 +10,6 @@ import pytest
 
 from core.cost.landed_cost import LandedCostCalculator
 from reports.demo_data import demo_report
-from reports.exporters.html_to_pdf import build_report_html
-from reports.exporters.markdown_exporter import export_markdown
 from reports.models import ChinaImportSnapshot
 from sources.coffee.gfex_coffee import GFEXCoffeeSource, compute_spread
 from sources.coffee.ico_spot import ICOSpotSource
@@ -147,23 +145,8 @@ def test_ico_gfex_rendered_everywhere():
     assert "ICO 现货" in text and "286.87" in text
     assert "广期所咖啡" in text and "48000" in text
 
-    html = build_report_html(report, lang="zh")
-    assert "ICO 综合现货 286.87 ¢/lb（月均 290.60，日变动 -2.3%）" in html
-    assert "广期所咖啡 48000 元/吨" in html
-    assert "内外盘价差" in html
-
-    md = export_markdown(report)
-    assert "ICO 综合现货 286.87 ¢/lb" in md
-    assert "广期所咖啡 48000 元/吨" in md
-
 
 def test_ico_gfex_none_hidden():
     report = _report_with_ico_gfex(ico=None, gfex=None)
     assert "ICO 现货" not in report.to_text()
     assert "广期所咖啡" not in report.to_text()
-    html = build_report_html(report, lang="zh")
-    assert "ICO 综合现货" not in html
-    assert "广期所咖啡" not in html
-    md = export_markdown(report)
-    assert "ICO 综合现货" not in md
-    assert "广期所咖啡" not in md

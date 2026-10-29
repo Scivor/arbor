@@ -13,7 +13,6 @@ from reports.history import (
     compute_track_record,
     save_report_summary,
 )
-from web.track_record import build_track_record_html
 
 
 def _scen(direction, probability):
@@ -147,38 +146,3 @@ def test_save_report_summary_writes_scenarios(tmp_path, monkeypatch):
     # demo 报告 4 个情景
     assert len(data["scenarios"]) == 4
     assert set(data["scenarios"][0].keys()) == {"direction", "probability", "price_min", "price_max"}
-
-
-# ── 渲染 ──────────────────────────────────────────────────────────────────────
-
-def test_track_record_render_brier_and_calibration(tmp_path, monkeypatch):
-    _seed_brier_history(tmp_path)
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    html = build_track_record_html(compute_track_record())
-
-    # 平均 Brier 卡 + BSS 副标
-    assert "平均 Brier" in html and "基准 0.667" in html
-    assert "0.320" in html
-    assert "BSS +0.52" in html
-
-    # 明细表 Brier 列
-    assert "<th>Brier</th>" in html
-    assert "0.260" in html and "0.380" in html
-
-    # 校准度表 + 空桶 —（L7 改名: 概率校准（Brier））
-    assert "概率校准（Brier）" in html
-    assert "[0.5, 0.7)" in html
-    assert "55%" in html and "100%" in html
-    assert "区分度: 0.144" in html
-
-
-def test_track_record_render_brier_none(tmp_path, monkeypatch):
-    _write(tmp_path, "2026-07-01", 300.0)
-    _write(tmp_path, "2026-07-05", 306.0)
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    html = build_track_record_html(compute_track_record())
-    assert "平均 Brier" in html
-    assert ">—</div>" in html or "—" in html  # None 显示 —
-    assert "区分度: —" in html

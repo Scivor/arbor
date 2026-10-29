@@ -24,28 +24,6 @@ logger = logging.getLogger(__name__)
 
 # ── 报告侧评分因子 —— 产出事件，由 compute_score 统一定价 ────────────────────
 
-_LLM_DIRECTION_BIAS = {"下跌": 0.08, "上涨": -0.08}
-
-
-def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
-    """
-    采购建议方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
-    看跌 → 正贡献（增套保）；看涨 → 负贡献。
-    """
-    bias = _LLM_DIRECTION_BIAS.get(direction)
-    if bias is None:
-        return None
-    return CoffeeEvent(
-        event_type=EventType.LLM_COMMENTARY,
-        domain=Domain.FINANCE,
-        timestamp=datetime.now(),
-        severity=3,
-        value=bias,
-        narrative=f"采购建议方向: {direction}",
-        source="llm_analyst",
-    )
-
-
 _SCENARIO_DIRECTION_SIGN = {"下跌": 1.0, "上涨": -1.0, "横盘": 0.0}
 
 
@@ -155,7 +133,7 @@ def _scan_live_events() -> list[CoffeeEvent]:
 def gather_report_events(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
-    llm_direction: Optional[str],
+    llm_direction: Optional[str] = None,
     now: Optional[datetime] = None,
     live_scan: bool = True,
 ) -> list[CoffeeEvent]:
@@ -178,10 +156,8 @@ def gather_report_events(
         ev = rsi_event(market.rsi_14)
         if ev:
             events.append(ev)
-    if llm_direction:
-        ev = llm_commentary_event(llm_direction)
-        if ev:
-            events.append(ev)
+    # llm_direction 保留在签名里，避免旧调用崩溃；采购文案不再进入评分。
+    del llm_direction
 
     # 出报时的新鲜事件 —— 三域全量扫描
     if live_scan:

@@ -2,7 +2,7 @@
 Application ports — protocols that infrastructure / adapters implement.
 
 DecisionEngine and other use cases depend on these abstractions,
-never on concrete Yahoo / SQLite / Telegram classes.
+never on concrete Yahoo / SQLite classes.
 """
 
 from __future__ import annotations

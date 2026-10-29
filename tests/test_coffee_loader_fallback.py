@@ -1,7 +1,5 @@
 """CoffeeLoader：过期 dated 合约回退到 KC=F — 无网络"""
 
-from unittest.mock import MagicMock
-
 import pandas as pd
 import pytest
 

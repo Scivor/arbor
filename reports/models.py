@@ -9,7 +9,7 @@ import json
 import logging
 import textwrap
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -232,15 +232,6 @@ class PredictionReport:
 
     # 事件倾斜影子情景（气候/供给/政策/Polymarket/期限结构 → 概率倾斜；不改 hedge_advice）
     scenario_event_tilt: Optional[dict] = None
-
-    # 采购下一步建议（LLM 单轮合成；无 key 或失败时为 None，报告不含此板块）
-    llm_commentary: Optional[str] = None
-
-    # AI 点评英文版（lang="en" 展示面优先使用；缺省回退中文版）
-    llm_commentary_en: Optional[str] = None
-
-    # AI 点评的方向判断（上涨/下跌/横盘；作为驱动因子入归因记分）
-    llm_direction: Optional[str] = None
 
     # 核心观点
     outlook: str = ""        # 一句话总结
@@ -466,13 +457,6 @@ class PredictionReport:
                 lines.append(f"      • {rw}")
         lines.append("")
 
-        # ─── 采购下一步建议 ──────────────────────────────────────────
-        if self.llm_commentary:
-            lines.append(f"  {'[ PROCUREMENT ADVICE ]':─^74}")
-            for w in textwrap.wrap(self.llm_commentary, width=68):
-                lines.append(f"  {w}")
-            lines.append("")
-
         lines.append(f"  {'─' * 74}")
         lines.append(f"  Generated: {self.generated_at.strftime('%Y-%m-%d %H:%M')}")
         lines.append(f"  {'═' * 74}")
@@ -524,7 +508,6 @@ class PredictionReport:
             } if self.china_import else None,
             "outlook": self.outlook,
             "risk_warnings": self.risk_warnings,
-            "llm_commentary": self.llm_commentary,
         }
 
 

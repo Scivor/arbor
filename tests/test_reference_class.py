@@ -7,8 +7,6 @@ import pandas as pd
 import pytest
 
 from reports.demo_data import demo_report
-from reports.exporters.html_to_pdf import build_report_html
-from reports.exporters.markdown_exporter import export_markdown
 from reports.indicators import compute_rsi
 from reports.models import Scenario
 from reports.pipeline import apply_shrink
@@ -148,18 +146,12 @@ def test_reference_class_rendered_everywhere():
     report.reference_class = _RC
 
     assert "基础概率" in report.to_text() and "样本稀薄" in report.to_text()
-    assert "基础概率" in build_report_html(report, lang="zh")
-    assert "样本稀薄" in build_report_html(report, lang="zh")
-    assert "Base rate" in build_report_html(report, lang="en")
-    assert "基础概率" in export_markdown(report) and "样本稀薄" in export_markdown(report)
 
 
 def test_reference_class_none_hidden_everywhere():
     report = demo_report()
     assert report.reference_class is None
     assert "基础概率" not in report.to_text()
-    assert "基础概率" not in build_report_html(report, lang="zh")
-    assert "基础概率" not in export_markdown(report)
 
 
 def test_reference_class_thin_note_only_when_small():

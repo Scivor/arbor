@@ -133,7 +133,6 @@ def _scan_live_events() -> list[CoffeeEvent]:
 def gather_report_events(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
-    llm_direction: Optional[str] = None,
     now: Optional[datetime] = None,
     live_scan: bool = True,
 ) -> list[CoffeeEvent]:
@@ -156,8 +155,6 @@ def gather_report_events(
         ev = rsi_event(market.rsi_14)
         if ev:
             events.append(ev)
-    # llm_direction 保留在签名里，避免旧调用崩溃；采购文案不再进入评分。
-    del llm_direction
 
     # 出报时的新鲜事件 —— 三域全量扫描
     if live_scan:

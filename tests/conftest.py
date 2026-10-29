@@ -9,8 +9,8 @@ tests/conftest.py
 "只挡外部地址"的白名单会被代理透明穿透，等于没挡。因此这里不做任何地址
 判别，无条件挡住全部 socket 连接。
 
-确实需要用到真实 socket（联网，或本机起 mock server 如
-test_agent_e2e.py）的测试用 @pytest.mark.integration 标记后放行
+确实需要用到真实 socket（联网，或本机起 mock server）的测试用
+@pytest.mark.integration 标记后放行
 （该标记已在 pyproject.toml 中注册，语义为 "may need network"）。
 """
 

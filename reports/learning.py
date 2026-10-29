@@ -5,7 +5,7 @@ reports/learning.py
 - ml_bias_scale:        ML 建议套保调整量的缩放（钳制 0.5 ~ 1.5）
 - scenario_band_scale:  情景价格区间宽度的缩放（钳制 0.7 ~ 1.5）
 
-每周出报后由 scripts/scheduler.py 调 recalibrate() 触发；
+recalibrate() 按历史应验更新系数；
 reports/pipeline.run() 在生成时读取 load_learned() 应用系数。
 所有文件读写均 try/except，损坏状态自我修复为默认值，绝不抛异常。
 """

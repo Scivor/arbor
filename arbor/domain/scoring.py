@@ -74,7 +74,7 @@ class ScoreBreakdown:
 
 # 这些簇的贡献大小随事件而变，由 event.value 承载而非规则里的固定值。
 # 规则中的 adjustment 对它们无意义（统一填 1.0）。
-_VALUE_CARRYING_CLUSTERS = frozenset({"ml", "llm", "scenario", "technical"})
+_VALUE_CARRYING_CLUSTERS = frozenset({"ml", "scenario", "technical"})
 
 
 def _age_days(event: CoffeeEvent, now: datetime) -> float:

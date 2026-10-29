@@ -118,7 +118,7 @@ def test_gather_report_events_falls_back_when_db_unavailable(monkeypatch):
     scenarios = [_Scenario("下跌", 0.6)]
 
     events = gather_report_events(
-        market, scenarios, llm_direction="下跌", now=NOW, live_scan=False
+        market, scenarios, now=NOW, live_scan=False
     )
 
     # 报告侧因子只剩情景和 RSI。采购文案方向不再进评分。
@@ -158,7 +158,7 @@ def _gather_with_db(monkeypatch, tmp_path, rows, **kwargs):
         "arbor.infrastructure.persistence.database.DecisionDB", _make_db(tmp_path, rows)
     )
     return gather_report_events(
-        None, [], llm_direction=None, now=NOW, live_scan=False, **kwargs
+        None, [], now=NOW, live_scan=False, **kwargs
     )
 
 
@@ -247,7 +247,7 @@ def test_live_scan_merges_with_db_and_dedupes(monkeypatch, tmp_path):
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "只在 db 里", "db"),
     ]))
 
-    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    events = gather_report_events(None, [], now=NOW)
     by_type = {e.event_type: e for e in events}
 
     assert set(by_type) == {
@@ -273,7 +273,7 @@ def test_live_scan_far_apart_same_type_not_deduped(monkeypatch, tmp_path):
         ("2026-06-01T08:00:00", "CHINA_TARIFF_CHANGE", 4, "上一轮关税", "db"),
     ]))
 
-    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    events = gather_report_events(None, [], now=NOW)
     assert len(events) == 2
 
 
@@ -291,7 +291,7 @@ def test_one_domain_failure_does_not_affect_others(monkeypatch, tmp_path):
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
     ]))
 
-    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    events = gather_report_events(None, [], now=NOW)
     assert {e.event_type for e in events} == {
         EventType.RSI_EXTREME, EventType.CHINA_TARIFF_CHANGE, EventType.FROST_CONFIRMED,
     }
@@ -311,7 +311,7 @@ def test_all_domains_failing_still_returns_db_tail(monkeypatch, tmp_path):
         ("2026-07-10T08:00:00", "FROST_CONFIRMED", 4, "db", "db"),
     ]))
 
-    events = gather_report_events(None, [], llm_direction=None, now=NOW)
+    events = gather_report_events(None, [], now=NOW)
     assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]
 
 
@@ -330,7 +330,7 @@ def test_live_scan_false_does_no_scanning(monkeypatch, tmp_path):
     ]))
 
     events = gather_report_events(
-        None, [], llm_direction=None, now=NOW, live_scan=False
+        None, [], now=NOW, live_scan=False
     )
     assert [e.event_type for e in events] == [EventType.FROST_CONFIRMED]
 

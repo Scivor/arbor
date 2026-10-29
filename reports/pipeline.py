@@ -613,7 +613,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
-    report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
+    report_events = gather_report_events(market, scenarios, live_scan=config.live_scan)
     hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 

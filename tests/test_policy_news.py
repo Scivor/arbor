@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from core.events import reset_event_bus
+from core.events import get_event_bus, reset_event_bus
 from core.types.enums import Domain, EventType
 from domains.policy.scanner import PolicyDomainScanner
 from sources.policy.google_news_rss import GoogleNewsRSSSource
@@ -135,3 +135,27 @@ def test_event_metadata_contains_link_and_keyword(mock_response):
     assert "link" in event.metadata
     assert "matched_keyword" in event.metadata
     assert event.source == "Google News RSS"
+
+
+@pytest.mark.unit
+def test_scan_does_not_republish_manual_event(monkeypatch):
+    reset_event_bus()
+    scanner = PolicyDomainScanner()
+    for monitor in (
+        scanner.tariff_monitor,
+        scanner.ldc_monitor,
+        scanner.pesticide_monitor,
+        scanner.trade_war_monitor,
+        scanner.news_monitor,
+    ):
+        monkeypatch.setattr(monitor, "check_and_publish", lambda bus=None: [])
+
+    scanner.publish_manual_event(
+        EventType.CHINA_TARIFF_CHANGE, 3, 0.08, "manual tariff",
+    )
+    bus = get_event_bus()
+    assert len(bus.get_recent(hours=1)) == 1
+
+    returned = scanner.scan_all()
+    assert len(bus.get_recent(hours=1)) == 1
+    assert any(event.narrative == "manual tariff" for event in returned)

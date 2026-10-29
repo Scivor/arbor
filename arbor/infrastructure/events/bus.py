@@ -220,6 +220,29 @@ class EventBus:
         """Get critical events (severity >= 4)."""
         return self.get_recent(hours=hours, min_severity=4)
 
+    def window_stats(
+        self,
+        hours: int = 24,
+        min_severity: int = 1,
+    ) -> tuple[int, int, dict[Domain, int]]:
+        """Single pass: (event count, critical count, per-domain counts).
+
+        The filter matches ``get_recent``: timestamp strictly after the cutoff,
+        severity at least ``min_severity``. Critical means severity >= 4.
+        """
+        cutoff = datetime.now() - timedelta(hours=hours)
+        counts = {d: 0 for d in Domain}
+        total = 0
+        critical = 0
+        with self._lock:
+            for event in self._event_log:
+                if event.timestamp > cutoff and event.severity >= min_severity:
+                    total += 1
+                    counts[event.domain] += 1
+                    if event.severity >= 4:
+                        critical += 1
+        return total, critical, counts
+
     def clear_history(self):
         """Clear event history (for testing)."""
         with self._lock:
@@ -276,3 +299,26 @@ def reset_event_bus():
     """Reset the global EventBus singleton (for testing)."""
     global _bus
     _bus = EventBus()
+
+
+def resolve_bus(bus: Optional[EventBus] = None) -> EventBus:
+    """Return ``bus``, or the process singleton when the caller omitted one.
+
+    Lookup happens at call time. A bus captured in ``__init__`` is not reused,
+    so ``reset_event_bus()`` between construction and publish still wins.
+    """
+    if bus is None:
+        return get_event_bus()
+    return bus
+
+
+def publish_to(bus: Optional[EventBus], events) -> None:
+    """Publish each event only when the caller supplied a bus.
+
+    ``None`` is a no-op. Sources that build events for a caller to publish
+    must not fall back to the singleton — that would change their contract.
+    """
+    if bus is None:
+        return
+    for event in events:
+        bus.publish(event)

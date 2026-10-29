@@ -18,6 +18,10 @@ import pandas as pd
 from datetime import datetime
 from typing import Optional
 
+from core.events import resolve_bus
+from core.types.enums import Domain, EventType
+from core.types.event import CoffeeEvent
+
 
 # NOAA ONI 列名对应 12 个 3 月滑动窗口
 # DJF=JAN-FEB-MAR, JFM=FEB-MAR-APR, ..., NDJ=DEC-JAN-FEB
@@ -287,12 +291,7 @@ class ONIScraper:
         Returns:
             List of published CoffeeEvents (0 or 1).
         """
-        from core.types.event import CoffeeEvent
-        from core.types.enums import EventType, Domain
-        from core.events import get_event_bus
-
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         try:
             oni, phase = self.get_current()

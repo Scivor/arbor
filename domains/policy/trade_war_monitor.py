@@ -4,6 +4,7 @@ domains/policy/trade_war_monitor.py
 """
 
 import requests
+import socket
 from datetime import datetime
 from typing import Optional, List
 
@@ -42,7 +43,6 @@ class TradeWarMonitor(BaseMonitor):
         Returns:
             List of CoffeeEvents (trade war escalation/de-escalation).
         """
-        import socket
         socket.setdefaulttimeout(10)
 
         events = []
@@ -139,10 +139,4 @@ class TradeWarMonitor(BaseMonitor):
 
     def check_and_publish(self, bus=None) -> List[CoffeeEvent]:
         """Main entry point for BaseMonitor protocol."""
-        events = self.check_us_china_news()
-        if bus is None:
-            from core.events import get_event_bus
-            bus = get_event_bus()
-        for evt in events:
-            bus.publish(evt)
-        return events
+        return self.publish_all(self.check_us_china_news(), bus)

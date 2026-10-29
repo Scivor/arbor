@@ -2,7 +2,9 @@
 from arbor.infrastructure.events import (
     EventBus,
     get_event_bus,
+    publish_to,
     reset_event_bus,
+    resolve_bus,
     _Subscription,
     subscribe_handler,
     unsubscribe_handler,
@@ -11,7 +13,9 @@ from arbor.infrastructure.events import (
 __all__ = [
     "EventBus",
     "get_event_bus",
+    "publish_to",
     "reset_event_bus",
+    "resolve_bus",
     "_Subscription",
     "subscribe_handler",
     "unsubscribe_handler",

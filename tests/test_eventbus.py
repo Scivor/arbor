@@ -114,6 +114,46 @@ def test_get_event_counts(bus):
 
 
 @pytest.mark.unit
+def test_window_stats_matches_get_recent(bus):
+    bus.publish(CoffeeEvent(
+        event_type=EventType.FROST_WARNING,
+        domain=Domain.SUPPLY,
+        timestamp=datetime.now(),
+        severity=5,
+        value=1.0,
+        narrative="critical",
+        source="test",
+    ))
+    bus.publish(CoffeeEvent(
+        event_type=EventType.PRICE_SHOCK_UP,
+        domain=Domain.FINANCE,
+        timestamp=datetime.now(),
+        severity=3,
+        value=1.0,
+        narrative="shock",
+        source="test",
+    ))
+    bus.publish(CoffeeEvent(
+        event_type=EventType.FX_USD_CNY_SHOCK,
+        domain=Domain.FINANCE,
+        timestamp=datetime.now(),
+        severity=4,
+        value=1.0,
+        narrative="fx",
+        source="test",
+    ))
+
+    recent = bus.get_recent(hours=1)
+    total, critical, counts = bus.window_stats(hours=1)
+    assert total == len(recent)
+    assert critical == sum(1 for event in recent if event.severity >= 4)
+    for domain in Domain:
+        assert counts[domain] == sum(1 for event in recent if event.domain == domain)
+    assert critical == 2
+    assert counts[Domain.FINANCE] == 2
+
+
+@pytest.mark.unit
 def test_clear_history(bus):
     bus.publish(CoffeeEvent(
         event_type=EventType.FROST_WARNING,

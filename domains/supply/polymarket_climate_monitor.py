@@ -27,13 +27,7 @@ class PolymarketClimateMonitor(BaseMonitor):
         super().__init__(bus)
 
     def check_and_publish(self, bus=None) -> List[CoffeeEvent]:
-        events = self._scan()
-        if bus is None:
-            from core.events import get_event_bus
-            bus = get_event_bus()
-        for evt in events:
-            bus.publish(evt)
-        return events
+        return self.publish_all(self._scan(), bus)
 
     def _scan(self) -> List[CoffeeEvent]:
         events: List[CoffeeEvent] = []

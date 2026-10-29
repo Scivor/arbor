@@ -9,6 +9,7 @@ import requests
 from datetime import datetime
 from typing import Optional
 
+from core.events import resolve_bus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import COTData
@@ -139,9 +140,7 @@ class COTSource:
 
     def check_and_publish(self, bus=None) -> list[CoffeeEvent]:
         """检查 COT 数据并发布事件；同一报告期只触发一次"""
-        from core.events import get_event_bus
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         events = []
         data = self.fetch()

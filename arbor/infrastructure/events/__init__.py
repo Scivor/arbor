@@ -1,12 +1,20 @@
 """In-process event bus."""
 
-from arbor.infrastructure.events.bus import EventBus, get_event_bus, reset_event_bus
+from arbor.infrastructure.events.bus import (
+    EventBus,
+    get_event_bus,
+    publish_to,
+    reset_event_bus,
+    resolve_bus,
+)
 from arbor.infrastructure.events.subscription import _Subscription
 
 __all__ = [
     "EventBus",
     "get_event_bus",
+    "publish_to",
     "reset_event_bus",
+    "resolve_bus",
     "_Subscription",
     "subscribe_handler",
     "unsubscribe_handler",

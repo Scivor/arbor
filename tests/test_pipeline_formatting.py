@@ -9,10 +9,6 @@ from reports.pipeline import (
     rsi_event,
     scenario_event,
 )
-from reports.exporters.html_to_pdf import build_report_html
-from reports.models import PredictionReport
-
-
 def _market_snapshot(
     *,
     rsi_14: float,
@@ -120,71 +116,3 @@ def test_compute_outlook_and_risks_formats_range_and_prices_consistently():
     assert "RSI=60.0" in outlook
     assert any("当前 250 接近 243" in risk for risk in risks)
     assert any("MA20(280)" in risk for risk in risks)
-
-
-@pytest.mark.unit
-def test_build_report_html_handles_missing_market_snapshot():
-    report = PredictionReport(
-        ticker="KC=F",
-        market=None,
-        scenarios=[],
-        bullish_params=[],
-        bearish_params=[],
-        risk_warnings=[],
-    )
-
-    html = build_report_html(report, lang="zh")
-
-    assert "咖啡期货下周预测" in html
-    assert 'alt="Arbor"' in html
-    assert "hero-logo" in html
-    assert "Comfortaa" in html
-    assert "N/A" in html
-
-
-@pytest.mark.unit
-def test_build_report_html_formats_export_values_consistently():
-    market = _market_snapshot(rsi_14=61.9, close_5d=[320.0, 324.0, 328.0, 332.0, 336.7])
-    climate = ClimateSnapshot(oni_value=0.61, oni_phase="EL_NINO", oni_period="2026 JJA", narrative="Warm phase")
-    ml = MLSnapshot(
-        signal="BEARISH",
-        confidence=0.7,
-        bias=0.10,
-        model_type="timesfm",
-        price_target_30d=267.7,
-        model_accuracy=0.6,
-        model_mae=0.0234,
-        top_features=[("basis_5d", 0.1234)],
-    )
-    report = PredictionReport(
-        ticker="KC=F",
-        market=market,
-        climate=climate,
-        ml_snapshot=ml,
-        scenarios=[Scenario(label="看跌", direction="down", price_min=321.0, price_max=349.0, probability=0.6, rationale=["30日区间 243–357"])],
-        bullish_params=[],
-        bearish_params=[],
-        risk_warnings=[],
-    )
-
-    html = build_report_html(report, lang="zh")
-
-    assert "ONI 2026 JJA</b> +0.61 (EL_NINO)" in html
-    assert "321 – 349" in html
-    assert "60%" in html
-    assert "2.34%" in html
-    assert "+10%" in html
-    assert "1.2x" in html
-    assert "0.1234" in html
-    assert "267.70¢/lb" in html
-
-
-@pytest.mark.unit
-def test_empty_drivers_render_translated_fallback():
-    """回归：驱动因子为空时渲染翻译后的空态文案，而非 {_t(...)} 字面量"""
-    html = build_report_html(PredictionReport(), lang="zh")
-    assert "暂无明确利多因素" in html
-    assert "暂无明确利空因素" in html
-    assert "{_t(" not in html
-    html_en = build_report_html(PredictionReport(), lang="en")
-    assert "No clear bullish factors" in html_en

@@ -18,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import quote_plus
 
+from core.events import resolve_bus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 
@@ -261,9 +262,7 @@ class GoogleNewsRSSSource:
 
     def check_and_publish(self, bus=None) -> list[CoffeeEvent]:
         """抓取新闻、匹配政策事件并发布到 EventBus"""
-        from core.events import get_event_bus
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         events: list[CoffeeEvent] = []
         articles = self.fetch()

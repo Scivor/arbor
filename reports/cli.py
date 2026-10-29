@@ -1,32 +1,25 @@
 """
 reports/cli.py
-Command-line interface for the reports package.
+预测与套保结果的命令行出口。只输出文本或 JSON。
 
 Usage:
     python -m reports.cli                  # text format (demo data)
     python -m reports.cli --format json    # JSON output
-    python -m reports.cli --format html    # HTML output
     python -m reports.cli --ticker KC=F    # live data for KC=F
     python -m reports.cli --demo           # demo mode
 """
 
 import argparse
 import sys
-from datetime import datetime
-from reports.pipeline import run, PipelineConfig
-from reports.exporters import export_text, export_json, export_report, list_exporters
 
-try:
-    from reports.exporters.html_to_pdf import build_report_html
-    _HAS_HTML = True
-except Exception:
-    _HAS_HTML = False
+from reports.exporters import export_json, export_text, list_exporters
+from reports.pipeline import PipelineConfig, run
 
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m reports",
-        description="Arbor Report Generator",
+        description="Arbor forecast and hedge output",
     )
     parser.add_argument(
         "--format", "-f",
@@ -48,12 +41,6 @@ def main(argv=None) -> int:
         "--output", "-o",
         default=None,
         help="Output file path.",
-    )
-    parser.add_argument(
-        "--lang", "-l",
-        default="zh",
-        choices=["zh", "en"],
-        help="Report language: zh=Chinese, en=English (default: zh)",
     )
     args = parser.parse_args(argv)
 
@@ -78,31 +65,6 @@ def main(argv=None) -> int:
         with open(dest, "w") as f:
             f.write(output)
         print(f"JSON written to {dest}")
-
-    elif args.format == "html":
-        dest = args.output or "coffee_outlook.html"
-        if not _HAS_HTML:
-            print("Error: HTML builder not available", file=sys.stderr)
-            return 1
-        html = build_report_html(report, lang=args.lang)
-        with open(dest, "w", encoding="utf-8") as f:
-            f.write(html)
-        print(f"HTML written to {dest}")
-
-    elif args.format == "pdf":
-        dest = args.output or f"coffee_outlook_{datetime.now().strftime('%Y-%m-%d')}.pdf"
-        if not _HAS_HTML:
-            print("Error: HTML builder not available", file=sys.stderr)
-            return 1
-        from reports.exporters.html_to_pdf import export_pdf
-        pdf_path = export_pdf(report, dest=dest, lang=args.lang)
-        print(f"PDF written to {pdf_path}")
-
-    else:
-        # markdown 及未来注册的导出器统一走 registry 分发
-        export_report(report, format=args.format, dest=args.output)
-        if args.output:
-            print(f"{args.format} written to {args.output}")
 
     return 0
 

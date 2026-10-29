@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Optional
 from datetime import datetime
 
+from core.events import resolve_bus
 from core.types.market import COTData
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
@@ -93,10 +94,7 @@ class ManualCOTSource:
 
     def check_and_publish(self, bus=None) -> list[CoffeeEvent]:
         """检查极端值并发布事件"""
-        from core.events import get_event_bus
-
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         events = []
         data = self._data

@@ -4,15 +4,21 @@ sources/yfinance_price.py
 无需 yfinance 包
 """
 
-import requests
 from datetime import datetime
 from typing import Optional
 
+from core.events import resolve_bus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import PriceData
 from core.types.constants import Thresholds
-from sources.http_util import retry_get as _retry_get
+from sources.yahoo_chart import (
+    YAHOO_CHART_BASE,
+    fetch_chart,
+    fetch_chart_or_none,
+    make_yahoo_session,
+    prior_close,
+)
 
 
 class PriceSource:
@@ -39,11 +45,10 @@ class PriceSource:
     markets = ["coffee_price"]
     TICKER = "KC=F"             # Coffee Sep 26（主力合约，报价 276.30）
     TICKER_FALLBACK = "KCN26.NYB"  # Coffee May 26（备用）
-    BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+    BASE_URL = YAHOO_CHART_BASE
 
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        self.session = make_yahoo_session()
         self._price_30d: list[float] = []
         self._last_price: Optional[float] = None
         self._used_fallback = False
@@ -54,15 +59,11 @@ class PriceSource:
         """获取前一日收盘价，用于首次事件检测"""
         ticker = self.TICKER_FALLBACK if self._used_fallback else self.TICKER
         try:
-            url = f"{self.BASE_URL}/{ticker}"
-            params = {'interval': '1d', 'range': '5d'}
-            resp = _retry_get(self.session, url, params=params, timeout=10)
-            data = resp.json()
-            result = data.get('chart', {}).get('result', [])
-            if result:
-                closes = [c for c in result[0]['indicators']['quote'][0].get('close', []) if c]
-                if len(closes) >= 2:
-                    self._last_price = float(closes[-2])  # 前日收盘
+            chart = fetch_chart(self.session, ticker, interval="1d", range_="5d")
+            if chart is not None:
+                prev = prior_close(chart)
+                if prev is not None:
+                    self._last_price = prev  # 前日收盘
         except Exception:
             pass
 
@@ -80,18 +81,13 @@ class PriceSource:
 
     def _fetch_chart(self, ticker: str, interval: str = "1d", range_: str = "1mo") -> Optional[dict]:
         """获取 Yahoo Finance chart 数据（带 3 次重试）"""
-        try:
-            url = f"{self.BASE_URL}/{ticker}"
-            params = {'interval': interval, 'range': range_}
-            resp = _retry_get(self.session, url, params=params, timeout=10)
-            data = resp.json()
-            result = data.get('chart', {}).get('result', [])
-            if not result:
-                return None
-            return result[0]
-        except Exception as e:
-            print(f"[PriceSource] Fetch error for {ticker}: {e}")
-            return None
+        return fetch_chart_or_none(
+            self.session,
+            ticker,
+            label="PriceSource",
+            interval=interval,
+            range_=range_,
+        )
 
     def fetch(self) -> Optional[PriceData]:
         """
@@ -170,9 +166,7 @@ class PriceSource:
 
     def check_and_publish(self, bus=None) -> list[CoffeeEvent]:
         """检查价格并发布事件"""
-        from core.events import get_event_bus
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         events = []
         data = self.fetch()

@@ -4,21 +4,24 @@ domains/finance/scanner.py
 """
 
 from datetime import datetime
-from typing import Optional, List, TYPE_CHECKING
+from typing import Optional, List
 from dataclasses import dataclass
 
 from core.events import EventBus
+from core.regime_config import get_regime_loader
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseDomainScanner
-
-if TYPE_CHECKING:
-    from core.types.market import FXData  # noqa: F401 — 仅注解用
-
-# Sherlock 风格: 配置优先，回退次之
-from core.regime_config import get_regime_loader
 from sources.coffee.yfinance_price import PriceSource
 from sources.fx.yfinance import FXSource
+
+
+@dataclass
+class _ScannerFX:
+    """汇率快照。FXSource 不提供 EUR/USD，eur_usd 保持历史默认。"""
+    usd_cny: float
+    usd_cny_change_pct: float
+    eur_usd: float
 
 
 class FinanceDomainScanner(BaseDomainScanner):
@@ -66,18 +69,12 @@ class FinanceDomainScanner(BaseDomainScanner):
         data = self._price_src.fetch()
         return data.current if data else None
 
-    def _fetch_fx(self) -> Optional["FXData"]:
+    def _fetch_fx(self) -> Optional[_ScannerFX]:
         """获取汇率数据 — 通过 FXSource"""
         data = self._fx_src.fetch()
         if data is None:
             return None
-        # 映射到本地 FXData 格式
-        @dataclass
-        class _FXData:
-            usd_cny: float
-            usd_cny_change_pct: float
-            eur_usd: float
-        return _FXData(
+        return _ScannerFX(
             usd_cny=data.rate,
             usd_cny_change_pct=data.change_pct,
             eur_usd=1.09,  # FXSource 不提供 EUR/USD，保持默认

@@ -5,8 +5,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 from reports.models import Scenario
 from reports.pipeline import compute_levels_and_scenarios
 from reports.scenario_scorecard import compute_scenario_scorecard, resolve_shrink_w
@@ -130,10 +128,8 @@ def test_term_structure_negative_basis_tilts_down():
     assert tilted_bear["probability"] > 0.25
 
 
-def test_tilt_and_scorecard_rendered_in_exporters():
+def test_tilt_and_scorecard_rendered_in_text():
     from reports.demo_data import demo_report
-    from reports.exporters.html_to_pdf import build_report_html
-    from reports.exporters.markdown_exporter import export_markdown
 
     report = demo_report()
     report.scenario_scorecard = {
@@ -149,15 +145,9 @@ def test_tilt_and_scorecard_rendered_in_exporters():
         ],
         "reasons": ["ICO–KC 基差 +8.0¢ → 现货偏紧，影子抬升上涨"],
     }
-    md = export_markdown(report, lang="zh")
-    assert "情景记分" in md
-    assert "事件影子" in md
-    assert "ICO–KC" in md
-    html = build_report_html(report, lang="zh")
-    assert "情景记分" in html
-    assert "事件影子" in html
-    assert "情景记分" in report.to_text()
-    assert "事件影子" in report.to_text()
+    text = report.to_text()
+    assert "情景记分" in text
+    assert "事件影子" in text
 
 
 def test_history_persists_tilt_and_scorecard(tmp_path, monkeypatch):

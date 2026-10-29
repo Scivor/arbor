@@ -4,6 +4,7 @@ LDC (最不发达国家) 产地认定监测器
 """
 
 import requests
+import socket
 from datetime import datetime
 from typing import Optional, List
 
@@ -53,7 +54,6 @@ class LDCStatusMonitor(BaseMonitor):
         Returns:
             List of CoffeeEvents if LDC change detected, else [].
         """
-        import socket
         socket.setdefaulttimeout(10)
 
         events = []
@@ -128,10 +128,4 @@ class LDCStatusMonitor(BaseMonitor):
 
     def check_and_publish(self, bus=None) -> List[CoffeeEvent]:
         """Main entry point for BaseMonitor protocol."""
-        events = self.check_ldc_updates()
-        if bus is None:
-            from core.events import get_event_bus
-            bus = get_event_bus()
-        for evt in events:
-            bus.publish(evt)
-        return events
+        return self.publish_all(self.check_ldc_updates(), bus)

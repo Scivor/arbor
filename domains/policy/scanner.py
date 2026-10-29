@@ -46,10 +46,8 @@ class PolicyDomainScanner(BaseDomainScanner):
         events.extend(self.trade_war_monitor.check_and_publish())
         events.extend(self.news_monitor.check_and_publish())
 
-        # 添加手动事件
+        # publish_manual_event 已经写入总线；这里只并入返回值，避免再发布一次。
         events.extend(self._manual_events)
-        for event in self._manual_events:
-            self.bus.publish(event)
         self._manual_events.clear()
 
         return events

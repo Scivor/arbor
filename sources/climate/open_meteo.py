@@ -19,6 +19,7 @@ from typing import Optional
 
 import requests
 
+from core.events import publish_to
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import WeatherData
@@ -148,8 +149,5 @@ class OpenMeteoSource:
                     source="Open-Meteo",
                 ))
 
-        if bus:
-            for e in events:
-                bus.publish(e)
-
+        publish_to(bus, events)
         return events

@@ -4,10 +4,12 @@ regimes.yaml 的 scoring 块与 cluster / half_life_days 字段解析。
 """
 
 import textwrap
+from datetime import datetime
 
 from core.regime_config import RegimeConfigLoader
-from core.state.scoring import ScoringConfig
-from core.types.enums import EventType
+from core.state.scoring import ScoringConfig, compute_score
+from core.types.enums import Domain, EventType
+from core.types.event import CoffeeEvent
 
 
 def _write(tmp_path, body: str):
@@ -144,9 +146,34 @@ def test_real_config_cluster_names_are_known():
     KNOWN = {
         "brazil_supply", "colombia_supply", "climate", "inventory",
         "positioning", "price", "fx", "macro", "supply_fundamental",
-        "policy", "ml", "llm", "scenario", "technical",
+        "policy", "ml", "scenario", "technical",
     }
     loader = get_regime_loader()
     loader.load()
     for name, rule in loader.adjustment_rules.items():
         assert rule.cluster in KNOWN, f"{name} 的簇名未知: {rule.cluster}"
+
+
+def test_historical_llm_commentary_does_not_move_the_ratio():
+    """旧的采购点评事件仍可解析，但不再改变套保比率。"""
+    from core.regime_config import get_regime_loader
+
+    loader = get_regime_loader()
+    loader.load()
+    now = datetime(2026, 7, 20, 12, 0, 0)
+    rules = loader.event_rules()
+    assert EventType.LLM_COMMENTARY not in rules
+
+    event = CoffeeEvent(
+        event_type=EventType.LLM_COMMENTARY,
+        domain=Domain.POLICY,
+        timestamp=now,
+        severity=3,
+        value=0.08,
+        narrative="下跌",
+        source="history",
+    )
+    base = compute_score([], rules, now, loader.scoring)
+    scored = compute_score([event], rules, now, loader.scoring)
+    assert scored.ratio == base.ratio
+    assert scored.score == 0.0

@@ -26,7 +26,7 @@ class ExporterPlugin(Protocol):
     """Protocol that all report exporters must implement."""
 
     name: str
-    format: str          # file extension e.g. "txt", "json", "pdf"
+    format: str          # file extension e.g. "txt", "json"
     mime_type: str       # MIME type e.g. "text/plain", "application/json"
 
     def export(self, report: "Report", dest: Optional[str] = None) -> str | None:
@@ -38,7 +38,6 @@ class ExporterPlugin(Protocol):
 
         Returns:
             For string formats: the output as a string (even if also written to dest).
-            For non-string formats (Rich console): None (output goes to stdout).
             Raises on failure.
         """
         ...
@@ -68,31 +67,6 @@ def _json_export(report: "Report", dest: Optional[str] = None) -> str:
     return out
 
 
-def _html_export(report: "Report", dest: Optional[str] = None, lang: str = "zh") -> str:
-    dest = dest or "coffee_outlook.html"
-    from reports.exporters.html_to_pdf import build_report_html
-    html = build_report_html(report, lang=lang)
-    with open(dest, "w", encoding="utf-8") as f:
-        f.write(html)
-    return html
-
-
-def _markdown_export(report: "Report", dest: Optional[str] = None, lang: str = "zh") -> str:
-    from reports.exporters.markdown_exporter import export_markdown
-    out = export_markdown(report, lang=lang)
-    if dest:
-        open(dest, "w", encoding="utf-8").write(out)
-    else:
-        print(out)
-    return out
-
-
-def _pdf_export(report: "Report", dest: Optional[str] = None, lang: str = "zh") -> str:
-    from reports.exporters.html_to_pdf import export_pdf
-    pdf_path = export_pdf(report, dest=dest, lang=lang)
-    return pdf_path
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # Exporter registry
 # ─────────────────────────────────────────────────────────────────────────────
@@ -106,9 +80,6 @@ def _register_builtin():
     _FORMATTERS = {
         "text": _InlineExporter("text", "txt", "text/plain", _text_export),
         "json": _InlineExporter("json", "json", "application/json", _json_export),
-        "html": _InlineExporter("html", "html", "text/html", _html_export),
-        "pdf":  _InlineExporter("pdf",  "pdf",  "application/pdf", _pdf_export),
-        "markdown": _InlineExporter("markdown", "md", "text/markdown", _markdown_export),
     }
 
 
@@ -133,7 +104,7 @@ _register_builtin()
 
 
 def get_exporter(name: str) -> ExporterPlugin:
-    """Get an exporter by name (e.g. 'text', 'json', 'html')."""
+    """Get an exporter by name (e.g. 'text', 'json')."""
     if not _FORMATTERS:
         _register_builtin()
     if name not in _FORMATTERS:
@@ -157,11 +128,11 @@ def export_report(
 
     Args:
         report:  Report from reports.pipeline.
-        format:  Exporter name ('text', 'json', 'html', 'pdf').
+        format:  Exporter name ('text', 'json').
         dest:    Output path (optional).
 
     Returns:
-        String output for text/json/html.
+        String output for text/json.
     """
     exporter = get_exporter(format)
     return exporter.export(report, dest)

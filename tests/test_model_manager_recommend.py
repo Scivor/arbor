@@ -1,7 +1,6 @@
 """ModelManager recommend 路径：close→price 与委托 recommend_hedge — 无网络"""
 
 import pandas as pd
-import pytest
 
 from models.hedge_model import HedgeRecommendation
 from models.model_manager import ModelManager, _ensure_price_col

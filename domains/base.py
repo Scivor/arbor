@@ -7,6 +7,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Optional, List, TYPE_CHECKING
 
+from core.events import get_event_bus, resolve_bus
+
 if TYPE_CHECKING:
     from core.types.event import CoffeeEvent
 
@@ -31,7 +33,6 @@ class BaseDomainScanner(ABC):
             bus: EventBus 实例，None 则使用全局默认
             scan_interval: 扫描间隔秒数
         """
-        from core.events import get_event_bus
         self.bus = bus or get_event_bus()
         self.scan_interval = scan_interval
         self._last_scan_time: Optional[datetime] = None
@@ -88,8 +89,14 @@ class BaseMonitor(ABC):
     """
 
     def __init__(self, bus=None):
-        from core.events import get_event_bus
         self.bus = bus or get_event_bus()
+
+    def publish_all(self, events: List["CoffeeEvent"], bus=None) -> List["CoffeeEvent"]:
+        """Publish each event. An omitted bus is the global bus at call time."""
+        target = resolve_bus(bus)
+        for event in events:
+            target.publish(event)
+        return events
 
     @abstractmethod
     def check_and_publish(self) -> List["CoffeeEvent"]:

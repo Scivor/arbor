@@ -5,16 +5,14 @@ ONI (Oceanic Niño Index) 监测器 — thresholds externalized to config/regime
 
 import requests
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from core.events import EventBus
+from core.regime_config import get_regime_loader
 from core.types.enums import EventType, Domain
 from core.types.event import CoffeeEvent
 from domains.base import BaseMonitor
-from core.regime_config import get_regime_loader
-
-if TYPE_CHECKING:
-    pass
+from sources.http_util import retry_get
 
 
 class ONIMonitor(BaseMonitor):
@@ -66,28 +64,22 @@ class ONIMonitor(BaseMonitor):
 
     def fetch_current_oni(self) -> Optional[float]:
         """获取当前 ONI 值（解析 ASCII 文本，取最新一行 ANOM）"""
-        import time
-        for attempt in range(3):
-            try:
-                resp = self.session.get(self.ONI_URL, timeout=(5, 10))
-                resp.raise_for_status()
-                lines = resp.text.strip().split('\n')
-                # 跳过标题行，从末尾找第一个有效数据行
-                for line in reversed(lines):
-                    parts = line.split()
-                    if len(parts) >= 4:
-                        try:
-                            # SEAS YR TOTAL ANOM
-                            anom = float(parts[3])
-                            return anom
-                        except ValueError:
-                            continue
-                return None
-            except Exception as e:
-                if attempt < 2:
-                    time.sleep(2 ** attempt)
-                else:
-                    print(f"[ONI Monitor] Fetch error after 3 retries: {e}")
+        try:
+            resp = retry_get(self.session, self.ONI_URL, timeout=(5, 10))
+        except Exception as e:
+            print(f"[ONI Monitor] Fetch error after 3 retries: {e}")
+            return None
+
+        lines = resp.text.strip().split('\n')
+        # 跳过标题行，从末尾找第一个有效数据行
+        for line in reversed(lines):
+            parts = line.split()
+            if len(parts) >= 4:
+                try:
+                    # SEAS YR TOTAL ANOM
+                    return float(parts[3])
+                except ValueError:
+                    continue
         return None
 
     def check_and_publish(self) -> Optional[CoffeeEvent]:

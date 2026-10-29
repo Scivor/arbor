@@ -8,8 +8,6 @@ import json
 import pytest
 
 from reports.demo_data import demo_report
-from reports.exporters.html_to_pdf import build_report_html
-from reports.exporters.markdown_exporter import export_markdown
 from reports.history import ReportSummary, save_report_summary
 from reports.kelly import (
     compute_kelly_advice,
@@ -17,8 +15,6 @@ from reports.kelly import (
     resolve_base_rate,
     resolve_calibrated_p,
 )
-from web.track_record import build_track_record_html
-
 
 # ── kelly_fraction 锚点 ───────────────────────────────────────────────────────
 
@@ -177,36 +173,15 @@ def test_kelly_rendered_everywhere():
     report = demo_report()
     report.kelly_shadow = _ACTIVE
     assert "凯利视角" in report.to_text() and "85%" in report.to_text()
-    assert "凯利视角" in build_report_html(report, lang="zh")
-    assert "Kelly view" in build_report_html(report, lang="en")
-    assert "凯利视角" in export_markdown(report)
 
 
 def test_kelly_inactive_shows_reason():
     report = demo_report()
     report.kelly_shadow = _INACTIVE
     assert "暂无认知优势，维持基线" in report.to_text()
-    assert "暂无认知优势，维持基线" in export_markdown(report)
 
 
 def test_kelly_none_hidden_everywhere():
     report = demo_report()
     assert report.kelly_shadow is None
     assert "凯利视角" not in report.to_text()
-    assert "凯利视角" not in build_report_html(report, lang="zh")
-    assert "凯利视角" not in export_markdown(report)
-
-
-def test_track_record_kelly_column():
-    record = {"total": 1, "hit_rate": 1.0, "direction_rate": 1.0, "hedge_rate": 1.0,
-              "weeks": [{"report_date": "2026-07-01", "badge": "命中", "direction": "横盘",
-                         "predicted_min": 390.0, "predicted_max": 410.0,
-                         "actual_price": 400.0, "price_change_pct": 0.5,
-                         "brier": None, "kelly": 0.8}],
-              "pending": None,
-              "mean_brier": None, "bss": None, "calibration": [], "resolution": None}
-    html = build_track_record_html(record)
-    assert "<th>凯利</th>" in html and "80%" in html
-    # None → —
-    record["weeks"][0]["kelly"] = None
-    assert "80%" not in build_track_record_html(record)

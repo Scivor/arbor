@@ -19,6 +19,7 @@ from pathlib import Path
 
 import requests
 
+from core.events import publish_to
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import WorldBankCoffeeData
@@ -142,8 +143,5 @@ class WorldBankCoffeeSource:
                             source="World Bank",
                         ))
 
-        if bus:
-            for e in events:
-                bus.publish(e)
-
+        publish_to(bus, events)
         return events

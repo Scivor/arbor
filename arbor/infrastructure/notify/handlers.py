@@ -104,7 +104,7 @@ class HedgeHandler(ABC):
     def on_critical(self, event: CoffeeEvent) -> None:
         """
         危机事件回调 — Sherlock 无直接等价
-        severity >= 4 时额外触发 (Telegram 推送/声音告警等)
+        severity >= 4 时额外触发（默认空实现，可被子类覆盖）
         默认空实现，可被子类覆盖
         """
         pass
@@ -357,75 +357,6 @@ class CSVHandler(HedgeHandler):
 
     def finish(self, message: Optional[str] = None) -> None:
         pass  # CSV 不需要 footer
-
-
-# ============================================================
-# Telegram Handler — Sherlock 无等价 (arbor 创新)
-# ============================================================
-
-class TelegramHandler(HedgeHandler):
-    """
-    Telegram 推送 — Sherlock 无等价
-
-    Sherlock 的 --browse 是打开浏览器，咖啡场景需要推送通知
-    只推送 severity >= 4 的危机事件
-    """
-
-    def __init__(self, token: str = "", chat_id: str = "",
-                 crisis_only: bool = True):
-        self.token = token
-        self.chat_id = chat_id
-        self.crisis_only = crisis_only
-        self._count = 0
-
-    def _send(self, text: str) -> bool:
-        """实际发送 Telegram 消息"""
-        if not self.token or not self.chat_id:
-            return False
-        import requests
-        url = f"https://api.telegram.org/bot{self.token}/sendMessage"
-        try:
-            r = requests.post(url, json={
-                "chat_id": self.chat_id,
-                "text": text,
-                "parse_mode": "HTML",
-                "disable_web_page_preview": True,
-            }, timeout=10)
-            return r.status_code == 200
-        except Exception as e:
-            print(f"[TelegramHandler] 发送失败: {e}")
-            return False
-
-    def start(self, message: Optional[str] = None) -> None:
-        self._count = 0
-        task = message or "arbor"
-        self._send(f"🟢 <b>{task}</b> 扫描开始\n⏰ {datetime.now().strftime('%H:%M:%S')}")
-
-    def on_event(self, event: CoffeeEvent) -> None:
-        if self.crisis_only and event.severity < 4:
-            return
-        self._count += 1
-
-        sev_icons = {5: "🔴", 4: "🟠", 3: "🟡", 2: "🔵", 1: "⚪"}
-        icon = sev_icons.get(event.severity, "⚪")
-
-        text = (
-            f"{icon} <b>[{event.domain.value}]</b> {event.event_type.value}\n"
-            f"📊 严重度: {event.severity}/5\n"
-            f"📝 {event.narrative}\n"
-            f"💰 当前值: {event.value:.3f}\n"
-            f"🕐 {event.timestamp.strftime('%H:%M:%S')}"
-        )
-        self._send(text)
-
-    def on_critical(self, event: CoffeeEvent) -> None:
-        """危机事件额外告警 — severity >= 5"""
-        if event.severity >= 5:
-            self._send(f"🚨🚨🚨 <b>危机事件</b> — {event.narrative}")
-
-    def finish(self, message: Optional[str] = None) -> None:
-        summary = message or f"扫描完成，{self._count} 个{'危机' if self.crisis_only else ''}事件"
-        self._send(f"🏁 {summary}")
 
 
 # ============================================================

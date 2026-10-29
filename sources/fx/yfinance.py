@@ -5,15 +5,20 @@ sources/fx/yfinance.py
 使用 Yahoo Finance chart API，无需 yfinance 包。
 """
 
-import requests
 from datetime import datetime
 from typing import Optional
 
+from core.events import resolve_bus
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
 from core.types.market import FXData
 from core.types.constants import Thresholds
-from sources.http_util import retry_get as _retry_get
+from sources.yahoo_chart import (
+    YAHOO_CHART_BASE,
+    fetch_chart,
+    make_yahoo_session,
+    prior_close,
+)
 
 
 class FXSource:
@@ -27,11 +32,10 @@ class FXSource:
 
     TICKER_USD_CNY = "USDCNY=X"
     TICKER_EUR_USD = "EURUSD=X"
-    BASE_URL = "https://query1.finance.yahoo.com/v8/finance/chart"
+    BASE_URL = YAHOO_CHART_BASE
 
     def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update({'User-Agent': 'Mozilla/5.0'})
+        self.session = make_yahoo_session()
         self._last_rate: Optional[float] = None
         self._bootstrap_last_rate()
 
@@ -46,29 +50,21 @@ class FXSource:
     def _bootstrap_last_rate(self):
         """预加载前一次汇率"""
         try:
-            url = f"{self.BASE_URL}/{self.TICKER_USD_CNY}"
-            params = {'interval': '1d', 'range': '5d'}
-            resp = _retry_get(self.session, url, params=params, timeout=10)
-            data = resp.json()
-            result = data.get('chart', {}).get('result', [])
-            if result:
-                closes = [c for c in result[0]['indicators']['quote'][0].get('close', []) if c]
-                if len(closes) >= 2:
-                    self._last_rate = float(closes[-2])
+            chart = fetch_chart(self.session, self.TICKER_USD_CNY, interval="1d", range_="5d")
+            if chart is not None:
+                prev = prior_close(chart)
+                if prev is not None:
+                    self._last_rate = prev
         except Exception:
             pass
 
     def _fetch_rate(self, ticker: str) -> Optional[float]:
         """获取汇率当前价格（带 3 次重试）"""
         try:
-            url = f"{self.BASE_URL}/{ticker}"
-            params = {'interval': '1d', 'range': '5d'}
-            resp = _retry_get(self.session, url, params=params, timeout=10)
-            data = resp.json()
-            result = data.get('chart', {}).get('result', [])
-            if not result:
+            chart = fetch_chart(self.session, ticker, interval="1d", range_="5d")
+            if chart is None:
                 return None
-            closes = result[0]['indicators']['quote'][0].get('close', [])
+            closes = chart["indicators"]["quote"][0].get("close", [])
             closes = [c for c in closes if c is not None]
             if not closes:
                 return None
@@ -92,9 +88,7 @@ class FXSource:
 
     def check_and_publish(self, bus=None) -> list[CoffeeEvent]:
         """检查汇率并发布事件"""
-        from core.events import get_event_bus
-        if bus is None:
-            bus = get_event_bus()
+        bus = resolve_bus(bus)
 
         events = []
         current = self._fetch_rate(self.TICKER_USD_CNY)

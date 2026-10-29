@@ -4,12 +4,10 @@ tests/test_attribution.py
 """
 
 import json
-from datetime import date, timedelta
 
 import pytest
 
 from reports.demo_data import demo_report
-from reports.exporters.html_to_pdf import _build_review_html
 from reports.history import (
     ReportSummary,
     compute_attribution,
@@ -167,31 +165,3 @@ def test_compute_driver_stats(tmp_path, monkeypatch):
 def test_compute_driver_stats_empty(tmp_path, monkeypatch):
     monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
     assert compute_driver_stats() == []
-
-
-# ── 复盘卡片归因块 ────────────────────────────────────────────────────────────
-
-def _seed_last_week(dir_path, drivers):
-    """写一期 7 天前的 summary（作为 demo 报告的'上期'）"""
-    last_date = (date.today() - timedelta(days=7)).isoformat()
-    _write_summary_drivers(dir_path, last_date, 300.0, drivers)
-    return last_date
-
-
-def test_review_html_attribution_block(tmp_path, monkeypatch):
-    _seed_last_week(tmp_path, THREE_DRIVERS)
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    html = _build_review_html(demo_report(), 306.0, "zh")  # 300 → 306 = +2% up
-    assert "驱动因子归因" in html
-    assert "✓" in html and "✗" in html
-    assert "因子A" in html and "因子B" in html
-    assert "应验 1 / 失效 1 / 中性 1" in html
-
-
-def test_review_html_attribution_empty_drivers(tmp_path, monkeypatch):
-    _seed_last_week(tmp_path, [])
-    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
-
-    html = _build_review_html(demo_report(), 306.0, "zh")
-    assert "上期未记录驱动因子" in html

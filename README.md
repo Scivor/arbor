@@ -1,42 +1,55 @@
-# Arbor / 阿尔博 — 咖啡进口商套期保值智能体
+# Arbor / 阿尔博 — 咖啡价格预测与套保
 
 [![tests](https://github.com/Scivor/arbor/actions/workflows/tests.yml/badge.svg)](https://github.com/Scivor/arbor/actions/workflows/tests.yml)
 
-事件驱动的咖啡进口商套期保值决策系统，支持回测、LLM 智能体、实时数据源与自动化周报。
+只做两件事：预测下一交易周的价格分布，以及用多头期货对冲采购成本里还敞着的那一段。
 
-**架构**: 事件驱动 (Event-Driven) + 三域并行 (Supply / Finance / Policy) + LLM Agent
+实时、周报和回测共用 `arbor/domain/scoring.py` 里的同一个纯函数。比率只取决于事件窗口和调用方传入的时刻。
+
+原理说明（PDF）：[`docs/预测与套保原理.pdf`](docs/预测与套保原理.pdf)
 
 ---
 
-## 核心功能
+## 预测为什么能变准
+
+预测的是下一交易周（5 个交易日）的三个情景，每个情景有区间和概率。准不准用历史复盘打分，打分结果再反过来限制模型还能动多少。
+
+1. **区间跟近期波动走。** 用近 30 日收益的日波动乘以 √5，得到这一周的典型位移。横盘带大约 ±0.67σ，上涨和下跌带落在 0.5σ 到 1.65σ，并贴着 30 日高低。
+2. **概率从基准出发，再被独立证据挪动。** 起点是横盘 50%、上涨 25%、下跌 25%。机器学习置信度、RSI、均线排列各自加减，最后归一化到 1。30 日目标价按 5/21 折回这一周。
+3. **说了多少概率，就按多少记分。** Brier 分是各情景概率与后来真实方向的平方差。三个方向均匀猜的基准是 0.667，低于它才算有技能（BSS > 0）。
+4. **没有技能，就不让历史频率改写本期概率。** 样本至少 8 对、而且 Brier 优于基准时，才做温和收缩：`p' = 0.2·p + 0.8·历史基准`。否则收缩权重是 0。
+5. **错了就减小发言权，对了也不放大。** 满 8 个复盘样本后：机器学习方向准确率低于 45%，它对套保和情景的影响乘 0.9（下限 0.5）；高于 65%，只向 1.0 收回。情景区间命中率低于 30% 就加宽（上限 1.5 倍），高于 70% 就收窄（下限 0.7 倍）。中心不动。
+
+没有历史样本时，系统就是「波动率定宽度 + 规则挪概率」。准确率来自上面这条闭环，不来自单次输出。
+
+## 风险怎么被对冲掉
+
+进口商按月买生豆。套保是多头期货：预先买下采购量的一个比例。价格上涨时，期货盈利抵消更高的现货成本；价格下跌时，期货亏损，便宜的现货也不会全额落到账上。回测里的净成本是采购成本减去期货盈亏。
+
+比率由当前还活着的事件算出来：
 
 ```
-事件驱动套保决策
-    供给域: 产区天气 / ONI / COT / ICE库存
-    金融域: KC=F价格 / USD/CNY / Polymarket概率
-    政策域: 关税 / 贸易战 / LDC地位 / 政策新闻
-         ↓
-  评分引擎 (arbor/domain/scoring.py) → 动态套保比率 (20%~95%)
-    事件按类型半衰期衰减 → 14 个因子簇内递减求和 → tanh 软饱和
-    CLI / 周报 / 回测共用同一个纯函数
-
-周报流水线 (reports/)
-    市场快照 / 情景分析 / ML预测 / 套保建议
-    + 中国进口商视角 (汇率·到库成本·政策事件)
-    + 参考类基础概率 / 凯利仓位影子（只读）
-    + 采购下一步建议（规则五段简报；有 LLM key 时润色）
-    → HTML (双语) / PDF / Markdown / briefing.json
-    主出报: scripts/scheduler.py（周六 03:00 Asia/Shanghai → web/static/reports/）
-
-战绩复盘 (reports/history + web/track_record)
-    Brier 概率校准 / 驱动因子应验率 / 系数自校准 / 凯利影子账本
-
-LLM 智能体 (agent/)
-    CoffeeAnalyst（采购顾问人设）+ 13 个查询工具；追问页 /chat/
-
-回测引擎 (backtest/)
-    事件驱动回测: 无套保 / 静态65% / 事件驱动 三策略对比
+贡献 = 基准 × (严重度 / 3) × 0.5 ^ (年龄 / 半衰期)
+簇分 = 按贡献绝对值排序后，第 i 名再乘 0.5 ^ i
+比率 = 0.65 + 跨度 × tanh(总分 / 0.5)
 ```
+
+正分向上，跨度 0.30，比率趋近 95%。负分向下，跨度 0.45，比率趋近 20%。零分就是 65%。
+
+这样设计是为了让风险随信息衰减，而不是一次新闻永久改仓：
+
+- **半衰期。** 霜冻大约 90 天贡献减半，极端价格大约 30 天，政策可以到一年。过期冲击自动让出仓位。
+- **同一簇递减。** 第二条同类新闻只算一半，相关消息不会线性叠加。
+- **软饱和。** tanh 让极端分数停在 20%–95%。始终留一段不套，也始终留一段已套。
+- **方向。** 霜冻、库存下降、30 日大涨提高比率，多锁即将变贵的采购。30 日大跌降低比率，少锁已经跌下来的价格。主导情景看跌、RSI 超卖同样提高比率。
+
+机器学习方向头的符号是另一层：预测上涨则减小比率，预测下跌则增大比率。它和供给冲击一起进入同一个评分函数，比率是合计结果。
+
+情景倾斜和凯利影子只展示，不改这一个比率。
+
+对冲掉的是套保比例上的 KC 价格变动。汇率、运费、关税、ICO 或广期所相对 KC 的基差，以及比率之外的那一段采购，仍留在现货上。到库成本用最终比率标注这笔敞口。
+
+回测把同一条价格路径放进三种做法里比较净成本：不套保、每月固定 65%、以及用上面这个函数随事件变动的比率。
 
 ---
 
@@ -45,23 +58,18 @@ LLM 智能体 (agent/)
 ```bash
 pip install -e .        # 安装（pyproject.toml 为依赖单一事实源）
 
-# 实时扫描 + 完整报告
+# 扫描信号并打印套保比率
 python coffee.py --demo
 
 # 交互模式 (scan / status / report / events / inventory / policy / start / stop)
 python coffee.py
 
-# Paper Trading 模拟盘
+# 模拟盘：按比率对冲，盯住盈亏
 python coffee.py --paper
 
-# LLM Agent 模式 (需要 API key)
-python coffee.py --agent "分析当前套保策略"
-
-# 手动生成一期周报 (HTML + PDF，写入 web/static/reports/<日期>/)
-python scripts/scheduler.py --now --format both
-
-# 启动周报站 (http://127.0.0.1:8000)
-python -m uvicorn web.app:app --host 127.0.0.1 --port 8000
+# 下一交易周的预测 + 套保建议（文本或 JSON）
+python -m reports.cli --demo
+python -m reports.cli --format json --output forecast.json
 ```
 
 ---
@@ -74,14 +82,14 @@ Clean Architecture 分层（详见 `ARCHITECTURE.md`）：
 arbor/                     # 规范包（依赖只向内）
 ├── domain/                # 纯领域：types / scoring / cost / trading
 ├── application/           # 用例：DecisionEngine / ports / CoffeeSystem
-├── infrastructure/        # 驱动：EventBus / SQLite / YAML / notify / secrets
+├── infrastructure/        # 驱动：EventBus / SQLite / YAML / notify
 └── adapters/              # 适配器归属说明（实体仍在仓库根目录）
 
 # 根目录适配器 + 兼容 shim（旧 from core… 仍可用）
 coffee.py / coffee_system.py
-cli/  web/  agent/  reports/  domains/  sources/  models/  backtest/
+cli/  reports/  domains/  sources/  models/  backtest/
 core/                      # → re-export arbor.*
-config/  scripts/  deploy/  tests/
+config/  tests/
 ```
 
 ---
@@ -115,23 +123,19 @@ config/  scripts/  deploy/  tests/
 
 ---
 
-## Agent 工具 (13 个)
+## 原理落在哪
 
-`agent/tools/system.py`: `query_system_status` / `get_recent_events` / `scan_all_domains`
-
-`agent/tools/market.py`: `fetch_market_price` / `get_ml_advice` / `get_landed_cost` / `get_procurement_briefing`
-
-`agent/tools/analysis.py`: `get_track_record` / `get_driver_stats` / `get_learning_status` / `get_kelly_shadow` / `get_reference_class` / `get_policy_events`
-
----
-
-## 周报与战绩页
-
-- **生产真相源**: `scripts/scheduler.py` 每周六 **03:00 Asia/Shanghai** 写入 `web/static/reports/<日期>/`（HTML 中英 + PDF + Markdown + `briefing.json`；预测即将到来的 Mon–Fri）。站内 `/`、公众号稿、采购顾问都以这里为准。
-- **邮件旁路**（非真相源）: `scripts/weekly_report_daemon.py` 每周一 09:00 Asia/Shanghai 仅用于 SMTP 订阅投递，**不覆盖**站内周报。详见 `docs/publishing.md`。
-- **周报站** (`web/`): FastAPI；`/` 最新周报，`/reports/` 归档，`/track-record/` 战绩，`/chat/` 采购顾问追问。
-- **战绩页** (`/track-record/`): 区间命中/方向/套保三率、平均 Brier 与概率校准桶、驱动因子应验率、系数自校准状态、凯利影子账本。
-- **无人值守**: macOS launchd（`deploy/com.arbor.weekly-report.plist`）或 Linux systemd（`deploy/coffee-*.service`）拉起 **scheduler**；数据源降级/生成失败时 Telegram 告警（验证：`python scripts/scheduler.py --alert-test`）。详见 DEPLOY.md。
+| 原理 | 代码 |
+|------|------|
+| 情景区间与概率 | `reports/pipeline.py` `compute_levels_and_scenarios` |
+| Brier、校准桶、相邻周复盘 | `reports/history.py` |
+| 有技能才收缩概率 | `reports/scenario_scorecard.py` |
+| 机器学习影响与区间宽度 | `reports/learning.py` |
+| 套保比率 | `arbor/domain/scoring.py`，规则在 `config/regimes.yaml` |
+| 情景、RSI 如何进入比率 | `reports/report_events.py` |
+| 只展示、不改比率 | `reports/scenario_tilt.py`，`reports/kelly.py` |
+| 到库成本与敞口标注 | `arbor/domain/cost/landed_cost.py` |
+| 三种做法的净成本 | `backtest/engine.py` |
 
 ---
 
@@ -143,15 +147,14 @@ pip install -e .
 uv pip install -e . --python .venv/bin/python
 ```
 
-主要依赖: `yfinance`, `pandas`, `numpy`, `matplotlib` + `mplfinance`, `apscheduler`, `fastapi` + `uvicorn`, `langchain` + `langgraph`, `scikit-learn`。
-PDF 导出另需 `playwright`（`python -m playwright install chromium`）。
+主要依赖: `pandas`, `numpy`, `requests`, `yfinance`, `akshare`, `pyyaml`。
 
 ---
 
 ## 测试
 
 ```bash
-python -m pytest tests/ -q    # 364 个测试（无网络依赖，合成数据）
+python -m pytest tests/ -q
 ```
 
 ---

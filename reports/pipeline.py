@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date
 from typing import Optional
 
 from reports.formatters import (
@@ -33,6 +33,24 @@ from reports.models import (
     normalize_direction,
 )
 from reports.demo_data import demo_report
+from reports.fetchers import (
+    fetch_china_import_snapshot,
+    fetch_climate_snapshot,
+    fetch_market_snapshot,
+    fetch_ml_snapshot,
+    fetch_related_markets,
+)
+from reports.report_events import (
+    compute_hedge_advice,
+    gather_report_events,
+)
+from reports.report_events import (  # noqa: F401 — 测试与调用方从 reports.pipeline 导入
+    _SCENARIO_DIRECTION_SIGN,
+    _dedupe_events,
+    _scan_live_events,
+    rsi_event,
+    scenario_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,23 +63,11 @@ class PipelineConfig:
     """Configuration for the report generation pipeline."""
     ticker: str = "KC=F"
     use_demo_data: bool = False       # If True, skip live fetches
-    output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
+    output_format: str = "text"      # 'text' | 'json'
     forecast_week_offset: int = 0     # 0=即将到来的 Mon–Fri；1=再推一周（见 reports.forecast_week）
     shrink_w: float = 0.0             # 参考类收缩：<=0 自动（有技能才启用 0.2）；>0 显式但仍要求有技能
     live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data Fetchers — live sources (implementation in reports.fetchers)
-# ─────────────────────────────────────────────────────────────────────────────
-
-from reports.fetchers import (
-    fetch_market_snapshot,
-    fetch_climate_snapshot,
-    fetch_ml_snapshot,
-    fetch_related_markets,
-    fetch_china_import_snapshot,
-)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Analysis Engines
@@ -482,22 +488,6 @@ def compute_drivers(
     return bullish, bearish
 
 
-# ── 报告侧评分因子 / 事件汇集 / 套保建议（implementation in reports.report_events）──
-
-from reports.report_events import (
-    llm_commentary_event,
-    scenario_event,
-    rsi_event,
-    gather_report_events,
-    compute_hedge_advice,
-)
-from reports.report_events import (  # noqa: F401 — re-export for tests / monkeypatch targets
-    _dedupe_events,
-    _scan_live_events,
-    _LLM_DIRECTION_BIAS,
-    _SCENARIO_DIRECTION_SIGN,
-)
-
 def compute_outlook_and_risks(
     market: Optional[MarketSnapshot],
     scenarios: list[Scenario],
@@ -567,13 +557,8 @@ def run(config: PipelineConfig) -> PredictionReport:
 
     if config.use_demo_data:
         logger.info("Using demo data — skipping live fetches")
-        # with_china=True：规则简报可写到库成本；LLM 不可用时仍有五段行动建议
         report = demo_report(with_china=True)
         report.ticker = config.ticker
-        try:
-            _attach_llm_commentary(report)
-        except Exception as e:
-            logger.warning("demo commentary attach failed: %s", e)
         return report
 
     # ── Step 1: Fetch raw data ──────────────────────────────────
@@ -628,7 +613,7 @@ def run(config: PipelineConfig) -> PredictionReport:
     support_levels, resistance_levels, scenarios = compute_levels_and_scenarios(
         market, ml, band_scale=learned["scenario_band_scale"])
     bullish, bearish = compute_drivers(market, climate, ml)
-    report_events = gather_report_events(market, scenarios, llm_direction=None, live_scan=config.live_scan)
+    report_events = gather_report_events(market, scenarios, live_scan=config.live_scan)
     hedge = compute_hedge_advice(market, scenarios, report_events)
     outlook, risk_warnings = compute_outlook_and_risks(market, scenarios, climate)
 
@@ -868,23 +853,6 @@ def run(config: PipelineConfig) -> PredictionReport:
         provenance=prov,
     )
 
-    # ── Step 6: 采购下一步建议（中英双语；失败静默，报告不含此板块）──
-    try:
-        _attach_llm_commentary(report)
-    except Exception as e:
-        logger.warning(f"generate_commentary failed: {e}")
-
-    # LLM 方向此时才可用 —— 并入评分后重算，使点评真正参与定价
-    if report.llm_direction:
-        # 复用 Step 3 已扫描的事件（三域扫描是网络 I/O，一期周报只做一次），
-        # 只把此刻才可用的 LLM 因子并进去重算。
-        llm_ev = llm_commentary_event(report.llm_direction)
-        report.hedge_advice = compute_hedge_advice(
-            report.market,
-            report.scenarios,
-            report_events + ([llm_ev] if llm_ev else []),
-        ) or report.hedge_advice
-
     # ── Step 3b（收尾）: 到库成本必须用最终套保比率算，此时比率才终态化 ──
     # 只重算到库成本本身（纯本地计算，不联网）；汇率/政策事件/ICO/GFEX 沿用
     # 上面早取的那份，不重复调用 fetch_china_import_snapshot。
@@ -927,52 +895,12 @@ def run(config: PipelineConfig) -> PredictionReport:
                  latency="日更", reliability="B",
                  notes=f"广期所咖啡期货 {g.get('contract', '')}")
 
-    if report.llm_commentary:
-        # 有 LLM key 时通常是 DeepSeek；规则兜底时 source 仍标 Arbor（可靠性同级）
-        prov.add("ai_commentary", "采购下一步建议",
-                 "Arbor / DeepSeek", "",
-                 latency="实时生成", reliability="C",
-                 notes="优先 LLM 合成；无 key 时规则拼装，均为行动建议非实时检索")
-
     return report
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Convenience helpers
 # ─────────────────────────────────────────────────────────────────────────────
-
-def _attach_llm_commentary(report: PredictionReport) -> None:
-    """
-    生成中英双语「采购下一步建议」并挂到报告。
-
-    优先 LLM 单轮合成；无 key / 失败时回退规则版（reports.procurement_briefing），
-    保证周报始终有可执行的采购简报。规则版不参与「LLM 评分因子」时可仍带方向。
-    """
-    from reports.llm_commentary import generate_commentary
-    from reports.procurement_briefing import build_procurement_briefing
-
-    commentary = generate_commentary(report, lang="zh")
-    if commentary:
-        report.llm_commentary, report.llm_direction = commentary
-        try:
-            en = generate_commentary(report, lang="en")
-            if en:
-                report.llm_commentary_en = en[0]  # direction 共用中文标记，无需重复存
-        except Exception as e:
-            logger.warning(f"english commentary failed: {e}")
-        return
-
-    # LLM 不可用 → 规则兜底（始终有五段行动建议）
-    try:
-        text, direction = build_procurement_briefing(report, lang="zh")
-        report.llm_commentary = text
-        report.llm_direction = direction
-        en_text, _ = build_procurement_briefing(report, lang="en")
-        report.llm_commentary_en = en_text
-        logger.info("procurement briefing: used rule-based fallback (no LLM)")
-    except Exception as e:
-        logger.warning(f"rule-based procurement briefing failed: {e}")
-
 
 def generate_demo_report() -> PredictionReport:
     """Shorthand: generate a demo report with no configuration."""

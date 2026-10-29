@@ -74,15 +74,23 @@ class ScoreBreakdown:
 
 # 这些簇的贡献大小随事件而变，由 event.value 承载而非规则里的固定值。
 # 规则中的 adjustment 对它们无意义（统一填 1.0）。
-_VALUE_CARRYING_CLUSTERS = frozenset({"ml", "llm", "scenario", "technical"})
+_VALUE_CARRYING_CLUSTERS = frozenset({"ml", "scenario", "technical"})
+
+
+def _age_days(event: CoffeeEvent, now: datetime) -> float:
+    return max(0.0, (now - event.timestamp).total_seconds() / 86400.0)
+
+
+def _scaled_contribution(event: CoffeeEvent, rule: EventRule, age_days: float) -> float:
+    """单事件贡献 = 基准 x severity缩放 x 时间衰减。年龄由调用方算一次。"""
+    base = event.value if rule.cluster in _VALUE_CARRYING_CLUSTERS else rule.adjustment
+    decay = 0.5 ** (age_days / rule.half_life_days)
+    return base * (event.severity / 3.0) * decay
 
 
 def event_contribution(event: CoffeeEvent, rule: EventRule, now: datetime) -> float:
     """单事件贡献 = 基准 x severity缩放 x 时间衰减。"""
-    base = event.value if rule.cluster in _VALUE_CARRYING_CLUSTERS else rule.adjustment
-    age_days = max(0.0, (now - event.timestamp).total_seconds() / 86400.0)
-    decay = 0.5 ** (age_days / rule.half_life_days)
-    return base * (event.severity / 3.0) * decay
+    return _scaled_contribution(event, rule, _age_days(event, now))
 
 
 def score_to_ratio(score: float, cfg: ScoringConfig) -> float:
@@ -113,11 +121,11 @@ def compute_score(
         rule = rules.get(event.event_type)
         if rule is None or event.severity < rule.min_severity:
             continue
-        age_days = max(0.0, (now - event.timestamp).total_seconds() / 86400.0)
+        age_days = _age_days(event, now)
         buckets.setdefault(rule.cluster, []).append(
             Contribution(
                 event_type_name=event.event_type.name,
-                contribution=event_contribution(event, rule, now),
+                contribution=_scaled_contribution(event, rule, age_days),
                 severity=event.severity,
                 age_days=age_days,
             )

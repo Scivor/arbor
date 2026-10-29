@@ -4,6 +4,7 @@ domains/policy/pesticide_monitor.py
 """
 
 import requests
+import socket
 from datetime import datetime
 from typing import Optional, List
 
@@ -54,7 +55,6 @@ class PesticideStandardMonitor(BaseMonitor):
         Returns:
             List of CoffeeEvents if standard change detected, else [].
         """
-        import socket
         socket.setdefaulttimeout(10)
 
         events = []
@@ -124,10 +124,4 @@ class PesticideStandardMonitor(BaseMonitor):
 
     def check_and_publish(self, bus=None) -> List[CoffeeEvent]:
         """Main entry point for BaseMonitor protocol."""
-        events = self.check_updates()
-        if bus is None:
-            from core.events import get_event_bus
-            bus = get_event_bus()
-        for evt in events:
-            bus.publish(evt)
-        return events
+        return self.publish_all(self.check_updates(), bus)

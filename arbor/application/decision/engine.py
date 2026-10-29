@@ -19,6 +19,7 @@ from datetime import datetime
 from typing import Callable, Optional, TYPE_CHECKING
 from collections import Counter, deque
 import logging
+import threading
 
 from arbor.domain.types.enums import Domain, EventType, HedgeSignal
 from arbor.domain.types.event import CoffeeEvent
@@ -183,11 +184,11 @@ class DecisionEngine:
         而不是构造函数里的隐式副作用。
         """
         self.bus = bus or get_event_bus()
-        self._lock = __import__('threading').RLock()
+        self._lock = threading.RLock()
         # 独立于 _lock：串行化整个 update_ml_signal（包括锁外的 publish），
         # 避免两次调用交错成"A清、B清、A发、B发"导致窗口留下重复 ML 事件。
         # 不能复用 _lock 包 publish —— publish 会重入 handler 再抢 _lock，死锁。
-        self._ml_lock = __import__('threading').Lock()
+        self._ml_lock = threading.Lock()
 
         # ── 评分规则：YAML 是单一事实源，但可被显式注入覆盖 ──────────────────
         if rules is not None:
@@ -224,7 +225,7 @@ class DecisionEngine:
         self._ml_bias: float = 0.0
         self._ml_confidence: float = 0.0
 
-        self._state_history: list[HedgeState] = []
+        self._state_history: deque[HedgeState] = deque(maxlen=100)
         self._adjustments: deque[HedgeAdjustment] = deque(maxlen=100)
 
         # Market ports — injected by composition root; never constructed here
@@ -367,27 +368,21 @@ class DecisionEngine:
 
     def _record_state(self, narrative: str):
         """Record current state snapshot."""
-        recent = self.bus.get_recent(hours=24)
-        critical = [e for e in recent if e.severity >= 4]
-
-        # Dominant domain
-        domain_counts = {d: 0 for d in Domain}
-        for e in recent:
-            domain_counts[e.domain] += 1
-        dominant = max(domain_counts, key=domain_counts.get) if recent else Domain.SUPPLY
+        total, critical, domain_counts = self.bus.window_stats(hours=24)
+        dominant = (
+            max(domain_counts, key=domain_counts.get) if total else Domain.SUPPLY
+        )
 
         state = HedgeState(
             hedge_ratio=self._breakdown.ratio,
             signal=signal_from_ratio(self._breakdown.ratio),
             dominant_domain=dominant,
-            event_count_24h=len(recent),
-            critical_count_24h=len(critical),
+            event_count_24h=total,
+            critical_count_24h=critical,
             last_update=datetime.now(),
             narrative=narrative,
         )
         self._state_history.append(state)
-        if len(self._state_history) > 100:
-            self._state_history = self._state_history[-100:]
 
     # ─────────────────────────────────────────────────────────────────────────
     # Public API

@@ -1,15 +1,9 @@
 """
 tests/test_pipeline_china_import_order.py
-回归测试：fetch_china_import_snapshot 必须在 _attach_llm_commentary 之前完成，
-使 AI 点评的 prompt 上下文能读到汇率/到库成本/政策事件，而不是 None。
+回归测试：进口快照只取一次，到库成本用最终套保比率重算。
 
-背景：套保比率因 llm_direction 产生得晚，要算两次；上一轮修复把
-fetch_china_import_snapshot 挪到了第二遍重算之后（为了让到库成本用最终比率），
-结果 _attach_llm_commentary 运行时 report.china_import 恒为 None，
-reports/llm_commentary.py::_build_context 里汇率/到库成本/政策事件三行被
-静默跳过。此测试驱动真实 reports.pipeline.run()（全 mock，无网络），断言
-喂给 LLM 的 prompt 里确实含这些内容，且 fetch_china_import_snapshot 只被
-调用一次（早取一次给 LLM 用，收尾只刷新到库成本，不重复打网络请求）。
+汇率、到库成本和政策事件衡量被对冲的敞口。流水线早取一次快照，
+收尾只按最终 hedge ratio 重算到库成本，不重复打网络请求。
 """
 
 from types import SimpleNamespace
@@ -37,19 +31,6 @@ def _synthetic_market() -> MarketSnapshot:
         vol_ratio_5d=[1.0] * 5,
         close_30d=[],
     )
-
-
-class _CapturingLLM:
-    """假 ChatOpenAI：记录每次 invoke 收到的消息，不联网。"""
-
-    calls: list = []
-
-    def __init__(self, **kwargs):
-        pass
-
-    def invoke(self, messages):
-        type(self).calls.append(messages)
-        return SimpleNamespace(content="[DIRECTION:下跌]\n【核心判断】测试点评，概率 55%")
 
 
 class _RaisingDB:
@@ -109,50 +90,21 @@ def synthetic_pipeline(monkeypatch, tmp_path):
     monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
     monkeypatch.setattr("arbor.infrastructure.persistence.database.DecisionDB", _RaisingDB)
 
-    # LLM —— 假 key + 假 ChatOpenAI，捕获 prompt
-    monkeypatch.setattr("arbor.infrastructure.secrets.load_llm_api_key", lambda: ("sk-fake", "deepseek"))
-    _CapturingLLM.calls = []
-    monkeypatch.setattr("reports.llm_commentary.ChatOpenAI", _CapturingLLM)
-
     return SimpleNamespace(fetch_calls=fetch_calls, china_snapshot=china_snapshot)
-
-
-def test_llm_prompt_contains_china_import_context(synthetic_pipeline):
-    """
-    核心回归断言：AI 点评喂给 LLM 的 prompt 里必须含汇率与政策事件叙述。
-
-    若 fetch_china_import_snapshot 的调用被挪到 _attach_llm_commentary 之后
-    （即本次要修的那个回归），report.china_import 在生成点评时仍是 None，
-    这些内容就不会出现在 prompt 里 —— 这正是本测试要抓的退化。
-    """
-    report = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
-
-    assert report.china_import is not None
-    assert _CapturingLLM.calls, "ChatOpenAI.invoke 应该至少被调用一次（zh 点评）"
-
-    # 每次 invoke 的第二条消息是 ("human", context)
-    for messages in _CapturingLLM.calls:
-        human_prompt = messages[1][1]
-        assert "USD/CNY: 7.2000" in human_prompt
-        assert "政策事件" in human_prompt
-        assert "中国上调咖啡生豆进口关税至 8%" in human_prompt
-
-    # 早取一次给 LLM 用，收尾只刷新到库成本 —— fetch_china_import_snapshot
-    # 不得被重复调用（否则重复打网络请求）
-    assert len(synthetic_pipeline.fetch_calls) == 1
 
 
 def test_landed_cost_refreshed_with_final_hedge_ratio(synthetic_pipeline):
     """
     收尾阶段用最终套保比率只重算到库成本（不重复 fetch）：最终
     report.china_import.landed 必须与「用 report.hedge_advice.ratio 重新计算」
-    的结果一致，而不是早取阶段那份临时值。
+    的结果一致，而不是早取阶段那份临时值。进口快照只取一次。
     """
     report = run(PipelineConfig(ticker="KC=F", use_demo_data=False, live_scan=False))
 
     assert report.hedge_advice is not None
     assert report.china_import is not None
     assert report.china_import.landed is not None
+    assert len(synthetic_pipeline.fetch_calls) == 1
 
     expected = LandedCostCalculator().calculate(
         cyp_price_usd_lb=report.market.current,

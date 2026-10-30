@@ -255,3 +255,14 @@ def test_reduction_conflicts_and_unknown_batch_are_rejected(tmp_path):
         request(e, operation_id='unknown', reduce_to_contracts={'missing':0})
     assert e.snapshot() == before['state']
     e.close()
+
+
+@pytest.mark.parametrize('targets', [False, 0, '', [], [('lot-1', 0), ('lot-1', 1)]])
+def test_reduction_requires_mapping_without_silent_coercion(tmp_path, targets):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    before = request(e, [batch()])
+    with pytest.raises(ValueError, match='must be a mapping'):
+        request(e, operation_id='invalid-shape', reduce_to_contracts=targets)
+    assert e.snapshot() == before['state']
+    assert len(e.history()) == 1
+    e.close()

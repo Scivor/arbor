@@ -4,6 +4,7 @@ One shared cash balance and margin budget. Reductions precede additions;
 addition priority is explicit input order. All open contracts require dated
 quotes for valuation. Existing positions are not automatically liquidated.
 """
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import date
 import hashlib
@@ -81,7 +82,9 @@ class PortfolioPaperEngine:
         """
         if not operation_id.strip():
             raise ValueError('operation_id required')
-        reduce_to_contracts = dict(reduce_to_contracts or {})
+        if reduce_to_contracts is not None and not isinstance(reduce_to_contracts, Mapping):
+            raise ValueError('reduce_to_contracts must be a mapping of batch ids to targets')
+        reduce_to_contracts = dict(reduce_to_contracts) if reduce_to_contracts is not None else {}
         for batch_id, target in reduce_to_contracts.items():
             if not isinstance(batch_id, str) or not batch_id.strip() or type(target) is not int or target < 0:
                 raise ValueError('reduction targets must be nonnegative integer contract counts')

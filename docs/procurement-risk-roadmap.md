@@ -113,3 +113,9 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 ### 远端验收配置
 
 测试工作流现覆盖整改分支推送与 PR，分别运行 Python 3.11/3.12 的全仓 Ruff 和 pytest；保存 JUnit 结果 14 天，限制任务 30 分钟并取消同分支旧任务。开发依赖显式声明 Ruff 与 HTTPX 的 SOCKS/HTTP2 扩展，减少本地额外安装带来的环境差异。配置提交不等于远端测试通过，必须以该提交的 Actions 结果为准。
+
+### 第五交易日标签基础模块
+
+`arbor.domain.forecast_outcome` 提供冻结预测元数据、带来源与可用时间的合约收盘价及 `label_fifth_session`。以显式日历中严格晚于发布时间的第五个收盘时点为目标；发布在收盘前时，当日收盘可算第一个时点。阈值为小数收益率，边界归 flat。缺失目标价或尚未公开时返回 pending，不使用后续周报替代。重复目标行情拒绝，其他合约不得代用。
+
+日历完整性、来源真实性及发布档案不可篡改性仍需独立验证。当前为独立领域模块，尚未接入历史周报记分卡、行情采集或真实预测档案；不会据此将 calibration_validated 设为 true。现有代理记分卡继续明确披露其限制。

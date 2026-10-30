@@ -172,3 +172,39 @@ def test_concurrent_connections_share_budget(tmp_path):
     assert e.snapshot()['cash'] == 1985
     assert len(e.history()) == 2
     e.close()
+
+
+def test_overdue_position_blocks_additions_until_explicit_close(tmp_path):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    request(e, [batch()])
+    later = date(2026, 11, 25)
+    fresh = batch(batch_id='lot-2', pricing_date=date(2026,11,27),
+                  exit_deadline=date(2026,11,28))
+    out = request(e, [fresh], as_of=later, operation_id='blocked')
+    assert out['state']['additions_blocked']
+    assert out['plans'][0]['risk_blocked']
+    assert not out['plans'][0]['cash_limited']
+    assert out['plans'][0]['blocking_batch_ids'] == ['lot-1']
+    assert out['trades'] == []
+    assert request(e, [fresh], as_of=later, operation_id='blocked') == out
+    cleared = request(e, [fresh], as_of=later, operation_id='clear', close_batch_ids=['lot-1'])
+    assert not cleared['state']['additions_blocked']
+    assert [t['action'] for t in cleared['trades']] == ['close', 'open']
+    e.close()
+
+
+def test_deadline_edit_cannot_hide_overdue_position_and_reduction_still_works(tmp_path):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    original = batch(purchase_tonnes=200, priced_tonnes=0, target_ratio=1)
+    first = request(e, [original])
+    later = date(2026,11,25)
+    revised = replace(original, pricing_date=date(2026,11,27), exit_deadline=date(2026,11,28), target_ratio=.5)
+    out = request(e, [revised], as_of=later, operation_id='reduce')
+    assert out['state']['additions_blocked']
+    assert out['state']['positions']['lot-1']['contracts'] < first['state']['positions']['lot-1']['contracts']
+    assert all(t['action'] == 'close' for t in out['trades'])
+    assert out['state']['positions']['lot-1']['batch']['exit_deadline'] == original.exit_deadline.isoformat()
+    increased = request(e, [replace(revised,target_ratio=1)], as_of=later, operation_id='increase')
+    assert increased['plans'][0]['risk_blocked']
+    assert increased['trades'] == []
+    e.close()

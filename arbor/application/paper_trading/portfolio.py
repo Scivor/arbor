@@ -151,13 +151,18 @@ class PortfolioPaperEngine:
             for b in batches:
                 if b.batch_id in positions:
                     reduce(b.batch_id, targets[b.batch_id])
+            # Inspect persisted deadlines after reductions, before caller metadata
+            # can replace them. A date edit must not bypass an overdue position.
+            blocked_batches = sorted(key for key, p in positions.items()
+                if as_of.isoformat() >= p['batch']['exit_deadline']
+                or as_of.isoformat() > p['batch']['pricing_date'])
             plans = []
             for b in batches:
                 existing = positions.get(b.batch_id, {}).get('contracts', 0)
                 wanted = max(0, targets[b.batch_id]-existing)
                 free = max(0., equity()-reserved())
                 affordable = math.floor(free/(margins[b.contract_id]+2*fee))
-                count = min(wanted, affordable)
+                count = 0 if blocked_batches else min(wanted, affordable)
                 price = quotes[b.contract_id].price
                 if count:
                     p = positions.setdefault(b.batch_id, dict(batch_id=b.batch_id, contract_id=b.contract_id,
@@ -172,9 +177,15 @@ class PortfolioPaperEngine:
                 plans.append(dict(batch_id=b.batch_id, contract_id=b.contract_id,
                     target_contracts=targets[b.batch_id], actual_contracts=actual,
                     unpriced_tonnes=remaining, residual_tonnes=max(0., remaining-actual*KC),
-                    cash_limited=actual < targets[b.batch_id]))
+                    cash_limited=wanted > affordable,
+                    risk_blocked=bool(blocked_batches) and wanted > 0,
+                    blocking_batch_ids=blocked_batches if wanted > 0 else []))
                 if b.batch_id in positions:
-                    positions[b.batch_id]['batch'] = json.loads(json.dumps(asdict(b), default=str))
+                    metadata = json.loads(json.dumps(asdict(b), default=str))
+                    if b.batch_id in blocked_batches:
+                        for field in ('pricing_date', 'exit_deadline'):
+                            metadata[field] = positions[b.batch_id]['batch'][field]
+                    positions[b.batch_id]['batch'] = metadata
             state['equity'] = equity()
             state['unrealized_pnl'] = state['equity']-state['cash']
             state['margin_required'] = sum(p['contracts']*margins[p['contract_id']] for p in positions.values())
@@ -187,6 +198,8 @@ class PortfolioPaperEngine:
                 for key, p in positions.items()
                 if as_of.isoformat() >= p['batch']['exit_deadline']
                 or as_of.isoformat() > p['batch']['pricing_date']]
+            state['additions_blocked'] = bool(blocked_batches)
+            state['blocking_batch_ids'] = blocked_batches
             state['as_of'] = as_of.isoformat()
             state['quotes'] = {k: asdict(v) for k,v in quotes.items()}
             state['margins'] = margins

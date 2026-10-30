@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from arbor.domain.forecast_scores import score_labels
+from arbor.domain.forecast_scores import score_labels, grouped_scores
 from arbor.domain.forecast_outcome import FrozenForecast, ObservedClose, label_fifth_session, aware
 
 
@@ -69,6 +69,7 @@ def main():
         if args.probabilities:
             probabilities = json.loads(args.probabilities.read_text(encoding='utf-8'), object_pairs_hook=unique_object)
             result['probability_diagnostics'] = score_labels(result, probabilities)
+            result['grouped_diagnostics'] = grouped_scores(result, probabilities)
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
         parser.error(str(exc))

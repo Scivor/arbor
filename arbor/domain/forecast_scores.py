@@ -6,6 +6,39 @@ CLASSES = {'up', 'flat', 'down'}
 DEFAULT = {'up': .25, 'flat': .5, 'down': .25}
 
 
+def cohort(row):
+    frozen = row['frozen_forecast']
+    return tuple(frozen[k] for k in ('contract_id', 'model_version', 'calendar_version',
+                                    'lower_return', 'upper_return'))
+
+
+def grouped_scores(report, probabilities):
+    """Separate incompatible labels and provide deterministic nonoverlap subsets."""
+    groups = {}
+    for row in report['results']:
+        groups.setdefault(cohort(row), []).append(row)
+    output = []
+    for key, rows in sorted(groups.items()):
+        ordered = sorted(rows, key=lambda r: (datetime.fromisoformat(r['frozen_forecast']['published_at']), r['forecast_id']))
+        selected, excluded = [], []
+        end = None
+        for row in ordered:
+            start = datetime.fromisoformat(row['frozen_forecast']['published_at'])
+            target = datetime.fromisoformat(row['target_close'])
+            if end is None or start >= end:
+                selected.append(row)
+                end = target
+            else:
+                excluded.append(row['forecast_id'])
+        def evaluate(subset):
+            return score_labels({'results':subset}, {r['forecast_id']:probabilities[r['forecast_id']] for r in subset})
+        output.append(dict(contract_id=key[0], model_version=key[1], calendar_version=key[2],
+            lower_return=key[3], upper_return=key[4], all_windows=evaluate(ordered),
+            nonoverlapping=evaluate(selected), selected_ids=[r['forecast_id'] for r in selected],
+            excluded_overlap_ids=excluded))
+    return output
+
+
 def score_labels(report, probabilities):
     rows = report['results']
     ids = {r['forecast_id'] for r in rows}
@@ -24,7 +57,7 @@ def score_labels(report, probabilities):
             continue
         published = datetime.fromisoformat(row['frozen_forecast']['published_at'])
         # Only outcomes actually available at this forecast's publication.
-        known = [r for r in rows if r['status'] == 'labeled'
+        known = [r for r in rows if r['status'] == 'labeled' and cohort(r) == cohort(row)
                  and datetime.fromisoformat(r['available_at']) <= published
                  and datetime.fromisoformat(r['frozen_forecast']['published_at']) < published]
         counts = {k:1+sum(r['actual']==k for r in known) for k in CLASSES}

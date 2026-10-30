@@ -109,3 +109,7 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 - 未完成：业务页面接入、旧账户迁移与核对、实盘接入及部署。
 
 后续验证数据必须区分真实与演示来源；缺少真实数据时保持预测调仓关闭，不宣称策略通过验收。
+
+### 远端验收配置
+
+测试工作流现覆盖整改分支推送与 PR，分别运行 Python 3.11/3.12 的全仓 Ruff 和 pytest；保存 JUnit 结果 14 天，限制任务 30 分钟并取消同分支旧任务。开发依赖显式声明 Ruff 与 HTTPX 的 SOCKS/HTTP2 扩展，减少本地额外安装带来的环境差异。配置提交不等于远端测试通过，必须以该提交的 Actions 结果为准。

@@ -2,17 +2,25 @@ name: tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, fix/procurement-scoring-safeguards]
   pull_request:
   # nightly 金丝雀：依赖为 >= 宽松约束，上游发布破坏性版本时能次日发现
   schedule:
     - cron: "17 2 * * *"   # 每天 02:17 UTC
   workflow_dispatch:        # 允许手动触发
 
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pytest:
     name: pytest (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -29,9 +37,16 @@ jobs:
         run: pip install -e ".[dev]"
 
       - name: Ruff lint (gate)
-        run: |
-          pip install ruff
-          ruff check .
+        run: ruff check .
 
       - name: Run tests
-        run: pytest tests/ -q
+        run: pytest tests/ -q --junitxml=test-results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-py${{ matrix.python-version }}
+          path: test-results.xml
+          if-no-files-found: warn
+          retention-days: 14

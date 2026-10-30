@@ -1,0 +1,34 @@
+{
+  "forecasts": [
+    {
+      "forecast_id": "f1",
+      "contract_id": "KC-2026-12",
+      "published_at": "2026-10-30T20:00:00+00:00",
+      "data_cutoff": "2026-10-30T20:00:00+00:00",
+      "reference_price": 200,
+      "lower_return": -0.01,
+      "upper_return": 0.01,
+      "model_version": "v1",
+      "calendar_version": "calendar-1"
+    }
+  ],
+  "calendars": {
+    "calendar-1": [
+      "2026-11-02T20:00:00+00:00",
+      "2026-11-03T20:00:00+00:00",
+      "2026-11-04T20:00:00+00:00",
+      "2026-11-05T20:00:00+00:00",
+      "2026-11-06T20:00:00+00:00",
+      "2026-11-09T20:00:00+00:00"
+    ]
+  },
+  "observations": [
+    {
+      "contract_id": "KC-2026-12",
+      "session_close": "2026-11-06T20:00:00+00:00",
+      "available_at": "2026-11-06T20:00:00+00:00",
+      "price": 203,
+      "source": "synthetic-test"
+    }
+  ]
+}

@@ -119,3 +119,9 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 `arbor.domain.forecast_outcome` 提供冻结预测元数据、带来源与可用时间的合约收盘价及 `label_fifth_session`。以显式日历中严格晚于发布时间的第五个收盘时点为目标；发布在收盘前时，当日收盘可算第一个时点。阈值为小数收益率，边界归 flat。缺失目标价或尚未公开时返回 pending，不使用后续周报替代。重复目标行情拒绝，其他合约不得代用。
 
 日历完整性、来源真实性及发布档案不可篡改性仍需独立验证。当前为独立领域模块，尚未接入历史周报记分卡、行情采集或真实预测档案；不会据此将 calibration_validated 设为 true。现有代理记分卡继续明确披露其限制。
+
+### 离线标签档案入口
+
+运行 `python -m cli.forecast_labels docs/examples/forecast-labels.json --evaluated-at 2026-11-09T20:00:00+00:00` 可输出 JSON 标签结果。示例全部为合成测试数据。输入包含 forecasts、按版本标识映射的 calendars、observations 三项；时间必须带时区，字段对应 FrozenForecast 与 ObservedClose。
+
+输出包含原始预测参数、档案内容 SHA256、评估时刻、已标记数量与 pending 原因。重复预测 ID 或重复 JSON 字段拒绝；数据错误使整次请求失败，不输出部分成功结果。命令不修改源文件、不联网、不启用调仓。哈希仅用于内容追溯，不证明档案在发布时已冻结或来源可信。尚未接入线上报告及历史概率评分。

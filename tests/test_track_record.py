@@ -91,11 +91,11 @@ def test_compute_track_record(tmp_path, monkeypatch):
     assert rec["total"] == 2
     assert rec["pending"] == "2026-07-17"
 
-    # 期1: 305 ∈ [290,310] 命中, 横盘预测遇上涨方向错误, 0.65 中性套保恒正确
-    # 期2: 300 ∉ [320,340] 偏离, 预测上涨实际下跌, 低套保遇下跌 → 错误
+    # 期1: 305 ∈ [290,310] 命中, 横盘预测遇上涨方向错误, 套保效果缺乏成交和现金流证据
+    # 期2: 300 ∉ [320,340] 偏离, 预测上涨实际下跌, 套保效果不作推断
     assert rec["hit_rate"] == 0.5
     assert rec["direction_rate"] == 0.0
-    assert rec["hedge_rate"] == 0.5
+    assert rec["hedge_rate"] is None
 
     assert len(rec["weeks"]) == 2
     w1, w2 = rec["weeks"]

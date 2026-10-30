@@ -1,34 +1,19 @@
+"""Synthetic monthly procurement backtest with separate cash ledgers.
+
+Each observed calendar month is one unpriced purchase batch. Futures open
+at the first observed bar and are closed when the batch is priced at the last
+observed bar. This is a same-series benchmark, not a basis/expiry simulator.
+Events must precede execution bars. A supplied margin budget limits positions;
+without it, results are explicitly unconstrained research diagnostics.
 """
-backtest/engine.py
-事件驱动回测引擎 — Arbor
-
-三种策略对比:
-1. 无套保: 0% 始终持有现货敞口
-2. 静态套保: 65% 固定，每月滚动（平旧仓开当月新仓）
-3. 事件驱动: 基于评分纯函数动态调整比率，每月滚动
-
-新增方法 (V3.0):
-- run_event_driven_with_engine(price_df, events_df):
-    使用 core.state.scoring 的评分纯函数替代手动硬编码事件检测。
-    遍历 price_df 每一行，累积该时刻之前的 CoffeeEvent，
-    以该 bar 的时间戳调 compute_hedge_from_events() 得到当前比率
-    —— 与实盘同一条路径，衰减基准随回测时间推进。
-- run(events_df): 必填，委托给 run_event_driven_with_engine()
-
-核心指标: 净成本/吨 = (累计采购成本 - 期货盈亏) / 总采购量
-节省% = (无套保净成本 - 策略净成本) / 无套保净成本
-"""
-
 from __future__ import annotations
 from dataclasses import dataclass
-import socket
+import math
 import pandas as pd
-
 from backtest.models import HedgeAction, ExitReason, HedgeRecord
 from core.types.enums import Domain, EventType
 from core.types.event import CoffeeEvent
-from core.types.constants import HedgeDefaults
-
+from arbor.domain.procurement import plan_procurement, futures_pnl, LB_PER_TONNE, nonnegative
 
 @dataclass
 class BacktestConfig:
@@ -36,11 +21,12 @@ class BacktestConfig:
     end_date: str
     initial_equity: float        # 保证金账户 (USD)
     coffee_tons_per_month: float # 每月采购吨数
-    contract_size: float        # 每张合约吨数 (37.5)
+    contract_size: float        # 每手吨数；KC 为约 17.0097 吨
     commission_per_contract: float
     initial_hedge_ratio: float
     max_hedge_ratio: float
     min_hedge_ratio: float
+    margin_per_contract: float | None = None
 
 
 @dataclass
@@ -56,354 +42,151 @@ class BacktestStats:
     win_rate: float
     equity_min: float
     equity_final: float
+    total_tonnes: float = 0.0
+    peak_margin: float = 0.0
+    max_margin_shortfall: float = 0.0
+    margin_constrained: bool = False
 
 
 class CoffeeBacktestEngine:
     def __init__(self, config: BacktestConfig, price_df: pd.DataFrame):
         self.cfg = config
         self._df = price_df.copy()
-
-        # 三种策略成本追踪
-        self._no_hedge_cost = 0.0    # 无套保
-        self._static_cost = 0.0      # 静态套保采购成本
-        self._static_pnl = 0.0       # 静态期货盈亏
-        self._event_cost = 0.0       # 事件驱动采购成本
-        self._event_pnl = 0.0        # 事件驱动期货盈亏
-
-        # 每月状态
-        self._last_month = None
-
-        # 交易记录
-        self._static_trades: list[HedgeRecord] = []
-        self._event_trades: list[HedgeRecord] = []
-
-        # 权益曲线
-        self._equity = config.initial_equity
         self._static_equity_curve = []
         self._event_equity_curve = []
+        self._static_trades = []
+        self._event_trades = []
 
-    def run(self, events_df=None) -> dict[str, BacktestStats]:
-        """
-        Run backtest with three strategies.
-
-        Args:
-            events_df: DataFrame or list of dicts with columns
-                       [timestamp, event_type, severity, value]. Required —
-                       the event-driven strategy is computed by
-                       run_event_driven_with_engine() via the same scoring
-                       pure function used in live trading. Obtain real
-                       events from DecisionDB.get_events() or a domain
-                       scanner's output.
-        """
+    def run(self, events_df=None):
         if events_df is None:
-            raise ValueError(
-                "run() requires events_df — the synthetic hardcoded-event "
-                "path has been removed. Pass a DataFrame/list of dicts with "
-                "columns [timestamp, event_type, severity, value], e.g. from "
-                "DecisionDB.get_events() or a domain scanner's output."
-            )
+            raise ValueError("run() requires events_df")
         return self.run_event_driven_with_engine(self._df, events_df)
 
-    def _compute_stats(self) -> dict[str, BacktestStats]:
+    def get_equity_curve(self):
+        return {"static": pd.DataFrame(self._static_equity_curve),
+                "event": pd.DataFrame(self._event_equity_curve)}
+
+    def get_trades(self):
+        return {"static": self._static_trades, "event": self._event_trades}
+
+    def run_event_driven_with_engine(self, price_df, events_df):
+        from core.state.engine import compute_hedge_from_events
         cfg = self.cfg
-        n_months = 24  # 2024-2025 约24个月
-        total_tons = cfg.coffee_tons_per_month * n_months
-
-        no_hedge_net = self._no_hedge_cost
-        static_net = self._static_cost - self._static_pnl
-
-        def make_stats(name, cost, pnl, trades_list) -> BacktestStats:
-            net = cost - pnl
-            wins = [t for t in trades_list if t.pnl > 0]
-
-            eq_arr = [r['equity'] for r in (
-                self._static_equity_curve if name != 'Event-Driven' else self._event_equity_curve
-            )]
-            equity_min_v = min(eq_arr) if eq_arr else cfg.initial_equity
-            equity_final_v = eq_arr[-1] if eq_arr else cfg.initial_equity
-
-            return BacktestStats(
-                strategy_name=name,
-                total_cost=cost,
-                hedge_pnl=pnl,
-                net_cost=net,
-                net_cost_per_ton=net / total_tons,
-                cost_vs_no_hedge_pct=(no_hedge_net - net) / no_hedge_net if no_hedge_net else 0,
-                cost_vs_static_pct=(static_net - net) / static_net if static_net else 0,
-                total_trades=len(trades_list),
-                win_rate=len(wins) / len(trades_list) if trades_list else 0,
-                equity_min=equity_min_v,
-                equity_final=equity_final_v,
-            )
-
-        return {
-            'no_hedge': make_stats('No Hedge', self._no_hedge_cost, 0.0, []),
-            'static_hedge': make_stats(
-                'Static 65%', self._static_cost, self._static_pnl, self._static_trades
-            ),
-            'event_hedge': make_stats(
-                'Event-Driven', self._event_cost, self._event_pnl, self._event_trades
-            ),
-        }
-
-    def get_equity_curve(self) -> pd.DataFrame:
-        df_s = pd.DataFrame(self._static_equity_curve)
-        df_e = pd.DataFrame(self._event_equity_curve)
-        return {
-            'static': df_s,
-            'event': df_e,
-        }
-
-    def get_trades(self) -> dict[str, list[HedgeRecord]]:
-        return {
-            'static': self._static_trades,
-            'event': self._event_trades,
-        }
-
-    # ─────────────────────────────────────────────────────────────────────────
-    # V3.0: DecisionEngine-backed event-driven backtest
-    # ─────────────────────────────────────────────────────────────────────────
-
-    def run_event_driven_with_engine(
-        self,
-        price_df: pd.DataFrame,
-        events_df: pd.DataFrame | list[dict],
-    ) -> dict[str, BacktestStats]:
-        """
-        Event-driven backtest —— 每根 bar 调与实盘同一个评分纯函数
-        compute_hedge_from_events(accumulated, now=bar_ts)，而非硬编码逻辑。
-
-        Sherlock analogy:
-          Sherlock QueryStatus.errorCode → 事件严重度
-          回测中的每个历史事件 = Sherlock 检测到的 site error
-
-        Args:
-            price_df: DataFrame with index=timestamp, columns=['price', optional 'oni'/'phase']
-            events_df: DataFrame or list of dicts, each containing:
-                       timestamp, event_type (str), severity (int), value (float)
-                       event_type strings map to EventType enum names (case-insensitive).
-
-        Returns:
-            dict[str, BacktestStats] — same structure as run()
-        """
-        # Prevent any network I/O during backtest
-        old_timeout = socket.getdefaulttimeout()
-        socket.setdefaulttimeout(5)
-
-        try:
-            # Build a lookup: ts → list of event dicts
-            if isinstance(events_df, list):
-                raw_events = events_df
-            else:
-                raw_events = events_df.to_dict('records')
-
-            # Index events by timestamp for O(1) lookup
-            events_by_ts: dict[pd.Timestamp, list[dict]] = {}
-            for ev in raw_events:
-                ts = pd.Timestamp(ev['timestamp'])
-                events_by_ts.setdefault(ts, []).append(ev)
-
-            # ── 事件驱动策略：按 bar 调用与实盘同一个评分纯函数 ──────────────
-            # 无状态评分不需要跨 bar 持有引擎实例，因此也不存在
-            # 旧实现里 bus.publish 触发 handler 的线程死锁问题。
-            # compute_hedge_from_events 内部走 get_regime_loader()：本地
-            # config/regimes.yaml 存在时 local_only=True，不触发远程拉取，
-            # 因此子进程里不会因网络 I/O 挂起。
-            from core.state.engine import compute_hedge_from_events
-
-            accumulated: list[CoffeeEvent] = []
-            event_ratio = HedgeDefaults.DEFAULT_HEDGE_RATIO
-
-            cfg = self.cfg
-            prices = price_df
-
-            static_entry = 0.0
-            static_contracts = 0
-            event_entry = 0.0
-            event_contracts = 0
-            # Reset per-run state on self so _compute_stats works
-            self._no_hedge_cost = 0.0
-            self._static_cost = 0.0
-            self._static_pnl = 0.0
-            self._event_cost = 0.0
-            self._event_pnl = 0.0
-            self._static_trades: list[HedgeRecord] = []
-            self._event_trades: list[HedgeRecord] = []
-            self._static_equity_curve = []
-            self._event_equity_curve = []
-            self._last_month = None
-
-            for i, (ts, row) in enumerate(prices.iterrows(), 1):
-                if i % 20 == 0:
-                    print(f'    [回测进度: {i}/{len(prices)} 行]', flush=True)
-                price = row['price']
-                month = ts.month
-                is_month_start = (month != self._last_month)
-
-                # ── Publish any events at this timestamp to DecisionEngine ──
-                ts_events = events_by_ts.get(ts, [])
-                for ev in ts_events:
-                    event_type_str = str(ev.get('event_type', '')).strip().upper()
-                    try:
-                        et = EventType[event_type_str]
-                    except KeyError:
-                        # Unknown event type — skip
-                        continue
-
-                    severity = int(ev.get('severity', 3))
-                    value = float(ev.get('value', 0.0))
-                    narrative = str(ev.get('narrative', et.value))
-
-                    # Derive domain from event type
-                    domain = _domain_for_event_type(et)
-
-                    coffee_event = CoffeeEvent(
-                        event_type=et,
-                        domain=domain,
-                        timestamp=ts,
-                        severity=severity,
-                        value=value,
-                        narrative=narrative,
-                        source='backtest',
-                    )
-                    accumulated.append(coffee_event)
-
-                # 每根 bar 用该 bar 的时间戳重算 —— 衰减随回测时间推进
-                event_ratio = compute_hedge_from_events(
-                    accumulated, now=ts.to_pydatetime()
-                )
-                event_ratio = max(cfg.min_hedge_ratio, min(cfg.max_hedge_ratio, event_ratio))
-
-                # ─── 月初: 采购 + 套保 ───
-                if is_month_start:
-                    tons = cfg.coffee_tons_per_month
-                    cost_per_ton = price * 2204.62 / 100
-                    monthly_cost = tons * cost_per_ton
-
-                    # 1. 无套保
-                    self._no_hedge_cost += monthly_cost
-
-                    # 2. 静态套保 (65%)
-                    self._static_cost += monthly_cost
-                    new_static_contracts = int(tons * cfg.initial_hedge_ratio / cfg.contract_size)
-                    if new_static_contracts > 0:
-                        if static_contracts > 0 and static_entry > 0:
-                            pnl = (price - static_entry) * static_contracts * 2204.62 / 10000
-                            self._static_pnl += pnl
-                            self._static_trades.append(HedgeRecord(
-                                entry_time=ts, exit_time=ts,
-                                entry_price=static_entry, exit_price=price,
-                                size=static_contracts * cfg.contract_size,
-                                hedge_ratio=cfg.initial_hedge_ratio,
-                                action=HedgeAction.CLOSE_HEDGE,
-                                pnl=pnl, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                                holding_days=0, commission=0,
-                                narrative='Monthly roll - close',
-                            ))
-                        static_entry = price
-                        static_contracts = new_static_contracts
-                        self._static_trades.append(HedgeRecord(
-                            entry_time=ts, exit_time=ts,
-                            entry_price=price, exit_price=price,
-                            size=static_contracts * cfg.contract_size,
-                            hedge_ratio=cfg.initial_hedge_ratio,
-                            action=HedgeAction.BUY_HEDGE,
-                            pnl=0, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                            holding_days=0,
-                            commission=new_static_contracts * cfg.commission_per_contract,
-                            narrative=f'Monthly roll - open {new_static_contracts} contracts',
-                        ))
-                        self._equity -= new_static_contracts * cfg.commission_per_contract
-
-                    # 3. 事件驱动 (DecisionEngine)
-                    self._event_cost += monthly_cost
-                    new_event_contracts = int(tons * event_ratio / cfg.contract_size)
-                    if new_event_contracts > 0:
-                        if event_contracts > 0 and event_entry > 0:
-                            pnl = (price - event_entry) * event_contracts * 2204.62 / 10000
-                            self._event_pnl += pnl
-                            self._event_trades.append(HedgeRecord(
-                                entry_time=ts, exit_time=ts,
-                                entry_price=event_entry, exit_price=price,
-                                size=event_contracts * cfg.contract_size,
-                                hedge_ratio=event_ratio,
-                                action=HedgeAction.CLOSE_HEDGE,
-                                pnl=pnl, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                                holding_days=0, commission=0,
-                                narrative='Monthly roll - close',
-                            ))
-                        event_entry = price
-                        event_contracts = new_event_contracts
-                        self._event_trades.append(HedgeRecord(
-                            entry_time=ts, exit_time=ts,
-                            entry_price=price, exit_price=price,
-                            size=event_contracts * cfg.contract_size,
-                            hedge_ratio=event_ratio,
-                            action=HedgeAction.BUY_HEDGE,
-                            pnl=0, pnl_pct=0, exit_reason=ExitReason.SIGNAL_CLOSE,
-                            holding_days=0,
-                            commission=new_event_contracts * cfg.commission_per_contract,
-                            narrative=(
-                                f'Monthly roll - open {new_event_contracts} contracts '
-                                f'@ {price:.2f} (ratio={event_ratio:.0%})'
-                            ),
-                        ))
-                        self._equity -= new_event_contracts * cfg.commission_per_contract
-
-                    self._last_month = month
-
-                # ─── 每日盯市 ───
-                if static_contracts > 0 and static_entry > 0:
-                    self._static_pnl = (price - static_entry) * static_contracts * 2204.62 / 10000
-
-                if event_contracts > 0 and event_entry > 0:
-                    self._event_pnl = (price - event_entry) * event_contracts * 2204.62 / 10000
-
-                # ─── 权益记录 ───
-                self._static_equity_curve.append({
-                    'timestamp': ts, 'price': price,
-                    'equity': self._equity + self._static_pnl,
-                    'hedge_pnl': self._static_pnl,
-                })
-                self._event_equity_curve.append({
-                    'timestamp': ts, 'price': price,
-                    'equity': self._equity + self._event_pnl,
-                    'hedge_ratio': event_ratio,
-                    'hedge_pnl': self._event_pnl,
-                })
-
-            # ─── 回测结束平仓 ───
-            final_price = prices.iloc[-1]['price']
-            final_ts = prices.index[-1]
-
-            if static_contracts > 0:
-                pnl = (final_price - static_entry) * static_contracts * 2204.62 / 10000
-                self._static_pnl += pnl
-                self._static_trades.append(HedgeRecord(
-                    entry_time=final_ts, exit_time=final_ts,
-                    entry_price=static_entry, exit_price=final_price,
-                    size=static_contracts * cfg.contract_size,
-                    hedge_ratio=0.0, action=HedgeAction.CLOSE_HEDGE,
-                    pnl=pnl, pnl_pct=0, exit_reason=ExitReason.END_OF_BACKTEST,
-                    holding_days=0, commission=0, narrative='Backtest end',
-                ))
-
-            if event_contracts > 0:
-                pnl = (final_price - event_entry) * event_contracts * 2204.62 / 10000
-                self._event_pnl += pnl
-                self._event_trades.append(HedgeRecord(
-                    entry_time=final_ts, exit_time=final_ts,
-                    entry_price=event_entry, exit_price=final_price,
-                    size=event_contracts * cfg.contract_size,
-                    hedge_ratio=0.0, action=HedgeAction.CLOSE_HEDGE,
-                    pnl=pnl, pnl_pct=0, exit_reason=ExitReason.END_OF_BACKTEST,
-                    holding_days=0, commission=0, narrative='Backtest end',
-                ))
-
-            return self._compute_stats()
-
-        finally:
-            socket.setdefaulttimeout(old_timeout)
+        nonnegative("initial_equity", cfg.initial_equity)
+        prices = price_df.loc[cfg.start_date:cfg.end_date].copy()
+        if prices.empty or not isinstance(prices.index, pd.DatetimeIndex):
+            raise ValueError("nonempty dated price series required")
+        if not prices.index.is_monotonic_increasing or prices.index.has_duplicates:
+            raise ValueError("prices must have unique ascending timestamps")
+        if not all(math.isfinite(p) and p > 0 for p in prices["price"]):
+            raise ValueError("prices must be finite and positive")
+        if not 0 <= cfg.min_hedge_ratio <= cfg.max_hedge_ratio <= 1:
+            raise ValueError("invalid ratio bounds")
+        plan_procurement(purchase_tonnes=cfg.coffee_tons_per_month, priced_tonnes=0,
+                         target_ratio=cfg.initial_hedge_ratio, contract_tonnes=cfg.contract_size,
+                         equity=cfg.initial_equity, margin_per_contract=cfg.margin_per_contract,
+                         commission_per_contract=cfg.commission_per_contract)
+        raw = events_df if isinstance(events_df, list) else events_df.to_dict("records")
+        events = []
+        for ev in raw:
+            name = str(ev.get("event_type", "")).strip().upper()
+            if name not in EventType.__members__:
+                continue
+            et = EventType[name]
+            events.append(CoffeeEvent(et, _domain_for_event_type(et), pd.Timestamp(ev["timestamp"]),
+                                      int(ev.get("severity", 3)), float(ev.get("value", 0)),
+                                      str(ev.get("narrative", "")), "backtest"))
+        events.sort(key=lambda e: e.timestamp)
+        states = {key: {"contracts": 0, "entry": 0., "entry_time": None, "pnl": 0.,
+                        "curve": [], "trades": [], "peak_margin": 0., "shortfall": 0.}
+                  for key in ("static", "event")}
+        self._static_equity_curve = states["static"]["curve"]
+        self._event_equity_curve = states["event"]["curve"]
+        self._static_trades = states["static"]["trades"]
+        self._event_trades = states["event"]["trades"]
+        accumulated, pointer = [], 0
+        cost = total_tonnes = 0.
+        previous_price = None
+        index = prices.index
+        for i, (ts, row) in enumerate(prices.iterrows()):
+            price = float(row["price"])
+            # Off-bar events are not lost; same-bar news waits until next execution.
+            while pointer < len(events) and events[pointer].timestamp < ts:
+                accumulated.append(events[pointer])
+                pointer += 1
+            ratio = compute_hedge_from_events(accumulated, now=ts.to_pydatetime())
+            ratio = min(cfg.max_hedge_ratio, max(cfg.min_hedge_ratio, ratio))
+            last = i == len(prices) - 1 or (index[i+1].year, index[i+1].month) != (ts.year, ts.month)
+            if last:
+                total_tonnes += cfg.coffee_tons_per_month
+                cost += price * LB_PER_TONNE / 100 * cfg.coffee_tons_per_month
+            for key, state in states.items():
+                if previous_price is not None:
+                    state["pnl"] += futures_pnl(previous_price, price, state["contracts"] * cfg.contract_size)
+                equity = cfg.initial_equity + state["pnl"]
+                margin = (cfg.margin_per_contract or 0) * state["contracts"]
+                state["peak_margin"] = max(state["peak_margin"], margin)
+                state["shortfall"] = max(state["shortfall"], margin - equity, 0)
+                suggested = cfg.initial_hedge_ratio if key == "static" else ratio
+                # Preserve the settlement drawdown before any position reduction.
+                before_equity = equity
+                plan = plan_procurement(purchase_tonnes=cfg.coffee_tons_per_month,
+                                        priced_tonnes=0, target_ratio=suggested,
+                                        contract_tonnes=cfg.contract_size, equity=equity,
+                                        margin_per_contract=cfg.margin_per_contract,
+                                        commission_per_contract=cfg.commission_per_contract)
+                target = 0 if last else plan.target_contracts
+                delta = target - state["contracts"]
+                if delta:
+                    fees = abs(delta) * cfg.commission_per_contract
+                    state["pnl"] -= fees
+                    closing = delta < 0
+                    realized = futures_pnl(state["entry"], price, -delta * cfg.contract_size) if closing else 0.
+                    state["trades"].append(HedgeRecord(
+                        entry_time=state["entry_time"] if closing else ts, exit_time=ts,
+                        entry_price=state["entry"] if closing else price, exit_price=price,
+                        size=abs(delta)*cfg.contract_size, hedge_ratio=suggested,
+                        action=HedgeAction.CLOSE_HEDGE if closing else HedgeAction.BUY_HEDGE,
+                        pnl=realized-fees, pnl_pct=0.,
+                        exit_reason=ExitReason.END_OF_BACKTEST if last else ExitReason.RATIO_CHANGED,
+                        holding_days=(ts-state["entry_time"]).days if closing else 0,
+                        commission=fees, narrative="Monthly pricing" if last else "Target rebalance"))
+                    if delta > 0:
+                        state["entry"] = (state["entry"]*state["contracts"] + price*delta)/target
+                        if not state["contracts"]:
+                            state["entry_time"] = ts
+                    state["contracts"] = target
+                    if not target:
+                        state["entry"] = 0.
+                        state["entry_time"] = None
+                equity = cfg.initial_equity + state["pnl"]
+                margin = (cfg.margin_per_contract or 0)*target
+                state["peak_margin"] = max(state["peak_margin"], margin)
+                state["shortfall"] = max(state["shortfall"], margin-equity, 0.)
+                state["curve"].append({"timestamp": ts, "price": price, "equity": equity,
+                    "pre_trade_equity": before_equity, "hedge_pnl": state["pnl"],
+                    "hedge_ratio": suggested, "contracts": target,
+                    "actual_hedge_ratio": target*cfg.contract_size/cfg.coffee_tons_per_month if cfg.coffee_tons_per_month else 0.,
+                    "margin_required": margin, "margin_shortfall": max(0., margin-equity)})
+            previous_price = price
+        static_net = cost - states["static"]["pnl"]
+        def stats(name, state=None):
+            pnl = state["pnl"] if state else 0.
+            trades = state["trades"] if state else []
+            closed = [t for t in trades if t.action == HedgeAction.CLOSE_HEDGE]
+            equities = [cfg.initial_equity]
+            if state:
+                equities += [v for r in state["curve"] for v in (r["equity"], r["pre_trade_equity"])]
+            net = cost-pnl
+            return BacktestStats(name, cost, pnl, net, net/total_tonnes if total_tonnes else 0.,
+                (cost-net)/cost if cost else 0., (static_net-net)/static_net if static_net else 0.,
+                len(trades), sum(t.pnl > 0 for t in closed)/len(closed) if closed else 0.,
+                min(equities), cfg.initial_equity+pnl, total_tonnes,
+                state["peak_margin"] if state else 0., state["shortfall"] if state else 0.,
+                cfg.margin_per_contract is not None)
+        return {"no_hedge": stats("No Hedge"),
+                "static_hedge": stats(f"Static {cfg.initial_hedge_ratio:.0%}", states["static"]),
+                "event_hedge": stats("Event-Driven", states["event"])}
 
 
 def _domain_for_event_type(et: EventType) -> Domain:

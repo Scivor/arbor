@@ -3,6 +3,7 @@ cli/coffee_cli.py
 Arbor 交互式 CLI 入口
 """
 
+import math
 import sys
 
 
@@ -34,6 +35,8 @@ def _do_paper_trading(args: list):
     print("  PAPER TRADING MODE")
     print("  (Simulated — no real orders)")
     print("=" * 55)
+    priced_tons = 0.0
+    print("Set margin <USD/contract>, tons <purchase tonnes>, priced <already priced tonnes> before sizing.")
     print("Commands: ratio <0–0.95> | status | mtm <price> | close | quit")
     print("Initial equity: $100,000  Monthly tons: 375t")
     print()
@@ -52,16 +55,29 @@ def _do_paper_trading(args: list):
     if args:
         current_price = get_price(None)
         if current_price <= 0:
-            print("Warning: Could not fetch live price, using 0 — position may be mispriced")
+            print("Warning: Could not fetch live price, set price <cents/lb> before trading")
         else:
             print(f"Current KC=F price: {current_price:.2f} cents/lb")
 
         i = 0
         while i < len(args):
             cmd = args[i]
-            if cmd == 'ratio' and i + 1 < len(args):
+            if cmd in ('margin', 'tons', 'priced', 'price') and i + 1 < len(args):
+                value = float(args[i + 1])
+                if not math.isfinite(value) or value < 0 or (cmd in ('margin', 'price') and value == 0):
+                    raise ValueError(f"Invalid {cmd}")
+                if cmd == 'margin':
+                    engine.margin_per_contract = value
+                elif cmd == 'tons':
+                    engine.monthly_tons = value
+                elif cmd == 'priced':
+                    priced_tons = value
+                else:
+                    current_price = value
+                i += 2
+            elif cmd == 'ratio' and i + 1 < len(args):
                 ratio = float(args[i + 1])
-                result = engine.sync_to_ratio(ratio, current_price, 375.0)
+                result = engine.sync_to_ratio(ratio, current_price, engine.monthly_tons, priced_tons=priced_tons)
                 print(f"[ratio {ratio:.0%}] {result}")
                 i += 2
             elif cmd == 'mtm' and i + 1 < len(args):
@@ -107,9 +123,20 @@ def _do_paper_trading(args: list):
             parts = line.split()
             cmd = parts[0]
 
-            if cmd == 'ratio' and len(parts) == 2:
+            if cmd in ('margin', 'tons', 'priced') and len(parts) == 2:
+                value = float(parts[1])
+                if not math.isfinite(value) or value < 0 or (cmd == 'margin' and value == 0):
+                    raise ValueError(f"Invalid {cmd}")
+                if cmd == 'margin':
+                    engine.margin_per_contract = value
+                elif cmd == 'tons':
+                    engine.monthly_tons = value
+                else:
+                    priced_tons = value
+                print(f"  {cmd}: {value}")
+            elif cmd == 'ratio' and len(parts) == 2:
                 ratio = float(parts[1])
-                result = engine.sync_to_ratio(ratio, current_price, 375.0)
+                result = engine.sync_to_ratio(ratio, current_price, engine.monthly_tons, priced_tons=priced_tons)
                 print(f"  {result}")
 
             elif cmd == 'status':

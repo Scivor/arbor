@@ -175,7 +175,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
   <div class="tr-metrics">
     <div class="tr-metric"><div class="tr-metric-val">{record["hit_rate"]:.0%}</div><div class="tr-metric-label">区间命中率</div></div>
     <div class="tr-metric"><div class="tr-metric-val">{record["direction_rate"]:.0%}</div><div class="tr-metric-label">方向正确率</div></div>
-    <div class="tr-metric"><div class="tr-metric-val">{record["hedge_rate"]:.0%}</div><div class="tr-metric-label">套保有效率</div></div>
+    <div class="tr-metric"><div class="tr-metric-val">—</div><div class="tr-metric-label">套保效果待核验</div></div>
     <div class="tr-metric"><div class="tr-metric-val">{total}</div><div class="tr-metric-label">已复盘期数</div></div>
     <div class="tr-metric"><div class="tr-metric-val">{brier_val}</div><div class="tr-metric-label">平均 Brier · 基准 0.667</div>{bss_html}</div>
   </div>

@@ -9,7 +9,7 @@ Unlike the backtest engine (which replays history), this engine runs LIVE:
 - Persists all paper trades to hedge_trades table (is_paper=1)
 
 Usage:
-    engine = PaperTradingEngine(db_path='~/.arbor/decisions.db')
+    engine = PaperTradingEngine(db_path='~/.arbor/decisions.db', margin_per_contract=5000)  # illustrative budget
     engine.open_position(price=215.5, tons=375, hedge_ratio=0.80)
     engine.mark_to_market(current_price=218.0)
     engine.close_position(exit_price=220.0, reason='ratio_reduced')
@@ -27,8 +27,10 @@ from collections import deque
 from arbor.infrastructure.persistence.database import DecisionDB
 from arbor.domain.trading import HedgeRecord, HedgeAction, ExitReason
 
+from arbor.domain.procurement import KC_CONTRACT_TONNES, LB_PER_TONNE, plan_procurement, nonnegative
+
 # Contract spec (KC futures)
-CONTRACT_SIZE_TONS = 37.5      # tons per contract
+CONTRACT_SIZE_TONS = KC_CONTRACT_TONNES      # 37,500 lb per contract, converted to metric tonnes
 COMMISSION_PER_CONTRACT = 15.0  # USD/contract (one-way)
 
 
@@ -77,11 +79,16 @@ class PaperTradingEngine:
         initial_equity: float = 100_000.0,
         monthly_tons: float = 375.0,
         contract_size: float = CONTRACT_SIZE_TONS,
+        margin_per_contract: float | None = None,
     ):
+        nonnegative("initial_equity", initial_equity)
+        nonnegative("monthly_tons", monthly_tons)
         self.db = DecisionDB(str(db_path))
         self.initial_equity = initial_equity
         self.monthly_tons = monthly_tons
         self.contract_size = contract_size
+        self.margin_per_contract = margin_per_contract
+        self.last_plan = None
 
         # Live equity (MTM)
         self._equity = initial_equity
@@ -108,14 +115,30 @@ class PaperTradingEngine:
 
         Args:
             price: entry price in cents/lb
-            tons: total coffee tons to hedge
+            tons: target hedge tonnes (ratio already applied)
             hedge_ratio: hedge ratio at open
             narrative: description of why position was opened
 
         Returns:
             The opened PaperPosition
         """
-        contracts = max(1, int(tons / self.contract_size))
+        nonnegative("hedge_ratio", hedge_ratio)
+        if hedge_ratio > 1:
+            raise ValueError("hedge_ratio must not exceed 1")
+        if self._position is not None:
+            raise ValueError("close existing position before opening another")
+        nonnegative("price", price)
+        if price == 0:
+            raise ValueError("price must be positive")
+        plan = plan_procurement(purchase_tonnes=tons, priced_tonnes=0, target_ratio=1,
+                                contract_tonnes=self.contract_size, equity=self._equity,
+                                margin_per_contract=self.margin_per_contract,
+                                commission_per_contract=COMMISSION_PER_CONTRACT)
+        if not plan.executable:
+            raise ValueError("margin_per_contract is required before opening a paper position")
+        contracts = plan.target_contracts
+        if contracts == 0:
+            raise ValueError("quantity or cash budget is insufficient for one contract")
         actual_tons = contracts * self.contract_size
 
         now = datetime.now(timezone.utc)
@@ -174,15 +197,16 @@ class PaperTradingEngine:
         if pos is None:
             return 0.0, 0.0
 
-        if isinstance(reason, str):
-            reason = ExitReason(reason)
+        nonnegative("exit_price", exit_price)
+        if exit_price == 0:
+            raise ValueError("exit_price must be positive")
 
         now = datetime.now(timezone.utc)
         holding_days = max(1, (now - pos.entry_time).days)
 
         # PnL in USD:
         # (exit_price - entry_price) * contracts * 2204.62 (lbs/ton) / 100 (cents/lb → $/lb)
-        pnl = (exit_price - pos.entry_price) * pos.contracts * 2204.62 / 100.0
+        pnl = (exit_price - pos.entry_price) * pos.size_tons * LB_PER_TONNE / 100.0
 
         commission = pos.contracts * COMMISSION_PER_CONTRACT
         net_pnl = pnl - commission
@@ -198,11 +222,11 @@ class PaperTradingEngine:
             hedge_ratio=pos.hedge_ratio,
             action=HedgeAction.CLOSE_HEDGE,
             pnl=net_pnl,
-            pnl_pct=net_pnl / (pos.entry_price * pos.contracts * 2204.62 / 100.0) if pos.entry_price else 0,
+            pnl_pct=net_pnl / (pos.entry_price * pos.size_tons * LB_PER_TONNE / 100.0) if pos.entry_price else 0,
             exit_reason=reason,
             holding_days=holding_days,
             commission=commission,
-            narrative=narrative or f'Paper close: {reason.value}',
+            narrative=narrative or f'Paper close: {reason}',
             is_paper=True,
         )
 
@@ -225,43 +249,16 @@ class PaperTradingEngine:
         - If new_tons < current_tons → partial close
         - If new_tons == 0 → full close
         """
-        if self._position is None:
-            if new_tons <= 0:
-                return False
-            self.open_position(
-                price=current_price,
-                tons=new_tons,
-                hedge_ratio=0.0,
-                narrative=narrative or f'Paper new position: {new_tons:.0f}t',
-            )
-            return True
-
-        current_tons = self._position.size_tons
-        delta = new_tons - current_tons
-
-        if abs(delta) < self.contract_size:
-            return False  # too small to adjust
-
-        if new_tons <= 0:
-            self.close_position(
-                exit_price=current_price,
-                reason=ExitReason.RATIO_CHANGED,
-                narrative=narrative or 'Paper close: hedge ratio → 0',
-            )
-            return True
-
-        # Scale: close current, reopen with new size
-        close_pnl, _ = self.close_position(
-            exit_price=current_price,
-            reason=ExitReason.RATIO_CHANGED,
-            narrative=narrative or f'Paper resize: {current_tons:.0f}t → {new_tons:.0f}t',
-        )
-        self.open_position(
-            price=current_price,
-            tons=new_tons,
-            hedge_ratio=self._position.hedge_ratio if self._position else 0.0,
-            narrative=narrative or f'Paper reopen after resize: {new_tons:.0f}t',
-        )
+        nonnegative("new_tons", new_tons)
+        target = int(new_tons / self.contract_size)
+        current = self._position.contracts if self._position else 0
+        if target == current:
+            return False
+        ratio = self._position.hedge_ratio if self._position else 0.0
+        if self._position:
+            self.close_position(current_price, ExitReason.RATIO_CHANGED, narrative)
+        if target:
+            self.open_position(current_price, new_tons, ratio, narrative)
         return True
 
     # ─── Mark-to-market ──────────────────────────────────────────────────────
@@ -271,14 +268,17 @@ class PaperTradingEngine:
         Update unrealized PnL at current market price.
         Does NOT close the position; only updates equity.
         """
+        nonnegative("price", price)
+        if price == 0:
+            raise ValueError("price must be positive")
         self._current_price = price
         if self._position is None:
             return 0.0
 
         unrealized = (
             (price - self._position.entry_price)
-            * self._position.contracts
-            * 2204.62
+            * self._position.size_tons
+            * LB_PER_TONNE
             / 100.0
         )
         self._equity_curve.append(PaperSnapshot(
@@ -296,6 +296,7 @@ class PaperTradingEngine:
         target_ratio: float,
         current_price: float,
         tons: float,
+        priced_tons: float = 0.0,
     ) -> str:
         """
         Sync paper position to target hedge ratio.
@@ -305,45 +306,38 @@ class PaperTradingEngine:
         Args:
             target_ratio: new target hedge ratio (0.0–1.0)
             current_price: current KC=F price (cents/lb)
-            tons: total coffee tons for the period (e.g., 375)
+            tons: total purchase tonnes for the period
+            priced_tons: portion already price-fixed; excluded from hedge exposure
 
         Returns:
             Description of what was done
         """
-        target_tons = tons * target_ratio
-
-        if self._position is None and target_ratio <= 0.0:
-            return 'FLAT — no position, ratio=0'
-
-        if self._position is None and target_ratio > 0.0:
-            self.open_position(
-                price=current_price,
-                tons=target_tons,
-                hedge_ratio=target_ratio,
-                narrative=f'Paper open: ratio={target_ratio:.0%}, tons={target_tons:.0f}',
-            )
-            return f'OPENED {self._position.contracts} contracts @ {current_price:.2f} (ratio={target_ratio:.0%})'
-
-        current_tons = self._position.size_tons
-
-        if abs(target_tons - current_tons) < self.contract_size:
-            return f'HOLD {self._position.contracts} contracts @ {self._position.entry_price:.2f} (ratio unchanged)'
-
-        if target_tons <= 0:
-            pnl, _ = self.close_position(
-                exit_price=current_price,
-                reason=ExitReason.RATIO_CHANGED,
-                narrative=f'Paper close: ratio → {target_ratio:.0%}',
-            )
-            return f'CLOSED (ratio → 0), PnL={pnl:+.2f}'
-
-        # Adjust
-        self.adjust_position(
-            new_tons=target_tons,
-            current_price=current_price,
-            narrative=f'Sync: ratio {self._position.hedge_ratio:.0%} → {target_ratio:.0%}',
-        )
-        return f'ADJUSTED to {self._position.contracts} contracts @ {self._position.entry_price:.2f}'
+        unrealized = self.mark_to_market(current_price)
+        # Opening quantity applies only to the remaining unpriced purchase.
+        plan = plan_procurement(purchase_tonnes=tons, priced_tonnes=priced_tons,
+                                target_ratio=target_ratio, contract_tonnes=self.contract_size,
+                                equity=self._equity + unrealized,
+                                margin_per_contract=self.margin_per_contract,
+                                commission_per_contract=COMMISSION_PER_CONTRACT)
+        self.last_plan = plan
+        if plan.target_contracts == 0:
+            if self._position:
+                self.close_position(current_price, ExitReason.RATIO_CHANGED)
+                return "CLOSED — zero remaining target or insufficient cash"
+            return "FLAT — no executable whole-contract target"
+        if not plan.executable:
+            return "BLOCKED — margin_per_contract is required"
+        current = self._position.contracts if self._position else 0
+        if current == plan.target_contracts:
+            return f"HOLD {current} contracts"
+        # Reserve the cost of closing the existing position before sizing a replacement.
+        if self._position:
+            self.close_position(current_price, ExitReason.RATIO_CHANGED)
+        try:
+            self.open_position(current_price, plan.actual_tonnes, plan.actual_ratio)
+        except ValueError:
+            return "FLAT — replacement cannot meet cash or whole-contract constraints"
+        return f"ADJUSTED to {self._position.contracts} contracts"
 
     # ─── Persistence ────────────────────────────────────────────────────────
 
@@ -407,8 +401,8 @@ class PaperTradingEngine:
         if self._position:
             unrealized = (
                 (self._current_price - self._position.entry_price)
-                * self._position.contracts
-                * 2204.62
+                * self._position.size_tons
+                * LB_PER_TONNE
                 / 100.0
             )
             total_equity = equity + unrealized
@@ -418,6 +412,10 @@ class PaperTradingEngine:
 
         return {
             'mode': 'PAPER',
+            'margin_per_contract': self.margin_per_contract,
+            'margin_required': self._position.contracts * self.margin_per_contract if self._position and self.margin_per_contract is not None else 0.0,
+            'margin_shortfall': max(0.0, self._position.contracts * self.margin_per_contract - total_equity) if self._position and self.margin_per_contract is not None else None,
+            'procurement_plan': self.last_plan.__dict__ if self.last_plan else None,
             'initial_equity': self.initial_equity,
             'current_equity': total_equity,
             'realized_pnl': equity - self.initial_equity,

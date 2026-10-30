@@ -192,7 +192,7 @@ class PredictionReview:
 
     prediction_hit: bool          # Did price land inside predicted range?
     direction_correct: bool       # Did predicted direction match actual?
-    hedge_advice_correct: bool    # Was hedge advice directionally right?
+    hedge_advice_correct: Optional[bool]  # None without matched cash/futures records
 
     review_text: str
     review_badge: str  # '命中' | '部分命中' | '偏离'
@@ -223,19 +223,8 @@ def compute_prediction_review(
     prediction_hit = last.dominant_scenario_min <= current_price <= last.dominant_scenario_max
     direction_correct = predicted_direction == direction_actual
 
-    # Hedge advice correctness
-    # If hedge was tight (high ratio) and price went down → correct
-    # If hedge was loose (low ratio) and price went up → correct
-    hedge_tight = last.hedge_ratio >= 0.70
-    hedge_loose = last.hedge_ratio <= 0.50
-    if hedge_tight and direction_actual == "down":
-        hedge_advice_correct = True
-    elif hedge_loose and direction_actual == "up":
-        hedge_advice_correct = True
-    elif not hedge_tight and not hedge_loose:
-        hedge_advice_correct = True  # neutral is always "safe"
-    else:
-        hedge_advice_correct = False
+    # A price direction alone cannot establish hedge effectiveness.
+    hedge_advice_correct = None
 
     # Build review text
     parts = []
@@ -249,12 +238,9 @@ def compute_prediction_review(
     else:
         parts.append(f"方向判断偏差：预测{pred_dir}，实际{'上涨' if direction_actual=='up' else '下跌' if direction_actual=='down' else '横盘'} {abs(price_change_pct):.1f}%")
 
-    if hedge_advice_correct:
-        parts.append(f"套保建议有效：上周建议{last.hedge_signal}({last.hedge_ratio:.0%})，本周价格变动 {price_change_pct:+.1f}%")
-    else:
-        parts.append(f"套保建议偏保守：上周建议{last.hedge_signal}({last.hedge_ratio:.0%})，但本周价格变动 {price_change_pct:+.1f}%")
+    parts.append("套保效果待核验：缺少对应采购、期货成交及资金流水，不能由价格方向判定")
 
-    if prediction_hit and direction_correct and hedge_advice_correct:
+    if prediction_hit and direction_correct:
         badge = "命中"
     elif prediction_hit or direction_correct:
         badge = "部分命中"
@@ -376,7 +362,7 @@ def compute_track_record(summaries: list[ReportSummary] | None = None) -> dict:
         summaries = load_summaries()
 
     weeks: list[dict] = []
-    hits = dirs = hedges = 0
+    hits = dirs = 0
     briers: list[float] = []
     calib_preds: list[tuple[float, bool]] = []  # (情景概率, 该类别是否实际发生)
     resolutions: list[float] = []
@@ -388,7 +374,6 @@ def compute_track_record(summaries: list[ReportSummary] | None = None) -> dict:
             continue
         hits += review.prediction_hit
         dirs += review.direction_correct
-        hedges += review.hedge_advice_correct
 
         # ── Brier 记分（scenarios 为空 → 该周跳过，不计入聚合）──
         brier = None
@@ -424,7 +409,8 @@ def compute_track_record(summaries: list[ReportSummary] | None = None) -> dict:
         "total": total,
         "hit_rate": hits / total if total else 0.0,
         "direction_rate": dirs / total if total else 0.0,
-        "hedge_rate": hedges / total if total else 0.0,
+        "hedge_rate": None,
+        "hedge_evaluation_status": "requires_matched_procurement_and_cashflows",
         "weeks": weeks,
         "pending": summaries[-1].report_date if summaries else None,
         "mean_brier": mean_brier,

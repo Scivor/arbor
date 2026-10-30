@@ -351,3 +351,29 @@ def test_compute_hedge_advice_raises_on_empty_rules(monkeypatch):
     market = type("M", (), {"rsi_14": 30.0, "current": 300.0})()
     with pytest.raises(RuntimeError, match="规则表加载失败"):
         compute_hedge_advice(market, [_Scenario("下跌", 0.6)], [], now=NOW)
+
+
+def test_report_factors_use_supplied_as_of_time():
+    from reports.report_events import llm_commentary_event
+    for event in [scenario_event(_Scenario("上涨", 0.6), now=NOW),
+                  rsi_event(30, now=NOW), llm_commentary_event("上涨", now=NOW)]:
+        assert event.timestamp == NOW
+
+
+def test_live_scan_kept_but_future_event_cannot_replace_available_event(monkeypatch):
+    from datetime import timedelta
+    from unittest.mock import patch
+    from reports import report_events as module
+    old = CoffeeEvent(EventType.FROST_WARNING, Domain.SUPPLY, NOW, 3, 0, "old", "test")
+    future = CoffeeEvent(EventType.FROST_WARNING, Domain.SUPPLY, NOW + timedelta(minutes=1), 4, 0, "future", "test")
+    class Clock:
+        calls = 0
+        @classmethod
+        def now(cls):
+            cls.calls += 1
+            return NOW if cls.calls == 1 else NOW + timedelta(minutes=2)
+    monkeypatch.setattr(module, "datetime", Clock)
+    monkeypatch.setattr(module, "_scan_live_events", lambda: [old, future])
+    with patch("arbor.infrastructure.persistence.database.DecisionDB", side_effect=RuntimeError("offline")):
+        assert module.gather_report_events(None, [], None, now=NOW) == [old]
+        assert module.gather_report_events(None, [], None) == [future]

@@ -293,7 +293,7 @@ class DecisionEngine:
                     return
 
                 weight = 1.0 if confidence >= 0.6 else 0.5
-                self._ml_bias = bias * weight
+                self._ml_bias = bias * weight if self._cfg.prediction_adjustments_enabled else 0.0
 
             # 注意：publish 必须在锁外，否则 handler 重入会死锁
             self.bus.publish(CoffeeEvent(

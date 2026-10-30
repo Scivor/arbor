@@ -150,3 +150,11 @@ def test_real_config_cluster_names_are_known():
     loader.load()
     for name, rule in loader.adjustment_rules.items():
         assert rule.cluster in KNOWN, f"{name} 的簇名未知: {rule.cluster}"
+
+
+def test_prediction_adjustments_require_explicit_boolean_true(tmp_path):
+    for value, expected in [('true', True), ('false', False), ('"true"', False)]:
+        path = _write(tmp_path, f"scoring:\n  prediction_adjustments_enabled: {value}\n")
+        loader = RegimeConfigLoader(str(path))
+        loader.load()
+        assert loader.scoring.prediction_adjustments_enabled is expected

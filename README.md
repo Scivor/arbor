@@ -4,6 +4,8 @@
 
 事件驱动的咖啡进口商套期保值决策系统，支持回测、LLM 智能体、实时数据源与自动化周报。
 
+**运行边界（采购风险改造第一阶段）**：ML、LLM、情景与 RSI 默认仅用于观察，不改变套保比率。`scoring.prediction_adjustments_enabled: true` 仅供显式研究对照；尚未完成样本外验证，不代表获准实盘。评分排除评分时刻之后的事件。现有 65% 基准仍是历史配置，不代表企业风险政策，建议比率不能直接当成订单。详见 `docs/procurement-risk-roadmap.md`。
+
 **架构**: 事件驱动 (Event-Driven) + 三域并行 (Supply / Finance / Policy) + LLM Agent
 
 ---

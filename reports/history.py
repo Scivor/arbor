@@ -221,7 +221,7 @@ def compute_prediction_review(
 
     # Hit tests
     prediction_hit = last.dominant_scenario_min <= current_price <= last.dominant_scenario_max
-    direction_correct = (predicted_direction == direction_actual) or (predicted_direction == "flat")
+    direction_correct = predicted_direction == direction_actual
 
     # Hedge advice correctness
     # If hedge was tight (high ratio) and price went down → correct
@@ -295,7 +295,7 @@ def load_summaries() -> list[ReportSummary]:
 
 
 def adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, ReportSummary]]:
-    """相邻周配对（间隔 ≤8 天）；跨期样本（如缺一周）不计入周度复盘统计。"""
+    """相邻快照配对（间隔 1–8 天）；跨期样本（如缺一周）不计入周度复盘统计。"""
     pairs = []
     for cur, nxt in zip(summaries, summaries[1:]):
         try:
@@ -303,7 +303,7 @@ def adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, 
         except ValueError:
             logger.warning("Skip pair with bad dates: %s -> %s", cur.report_date, nxt.report_date)
             continue
-        if gap > 8:
+        if not 0 < gap <= 8:
             logger.info("Skip cross-gap pair: %s -> %s (%d days)", cur.report_date, nxt.report_date, gap)
             continue
         pairs.append((cur, nxt))
@@ -315,7 +315,7 @@ def adjacent_pairs(summaries: list[ReportSummary]) -> list[tuple[ReportSummary, 
 # ─────────────────────────────────────────────────────────────────────────────
 
 # 三分类均匀预测的 Brier 基准: 3 × (1/3)² × ... = 2/3 ≈ 0.667
-_BRIER_BASELINE = 0.6667
+_BRIER_BASELINE = 2 / 3
 
 
 def compute_brier(scenarios: list[dict], actual: str) -> float:

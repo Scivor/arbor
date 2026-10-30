@@ -449,6 +449,10 @@ def _build_scorecard_html(report, lang: str) -> str:
               cov=f"{sc.get('interval_coverage', 0):.0%}",
               dir=f"{sc.get('strict_direction_rate', 0):.0%}",
               brier=brier_s, skill=skill)
+    from reports.scenario_scorecard import scorecard_diagnostic_note
+    note = scorecard_diagnostic_note(sc, lang)
+    if note:
+        text += " · " + note
     return f"""
   <div class="rc-note">{text}</div>"""
 

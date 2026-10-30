@@ -345,6 +345,10 @@ class PredictionReport:
                 f"严格方向 {sc.get('strict_direction_rate', 0):.0%} "
                 f"Brier {brier_s}（{skill}）"
             )
+            from reports.scenario_scorecard import scorecard_diagnostic_note
+            note = scorecard_diagnostic_note(sc)
+            if note:
+                lines.append(note)
             lines.append("")
 
         # ─── 事件倾斜影子 ───────────────────────────────────────────

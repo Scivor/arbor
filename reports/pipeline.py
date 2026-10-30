@@ -47,7 +47,7 @@ class PipelineConfig:
     use_demo_data: bool = False       # If True, skip live fetches
     output_format: str = "text"      # 'text' | 'json' | 'rich' | 'pdf'
     forecast_week_offset: int = 0     # 0=即将到来的 Mon–Fri；1=再推一周（见 reports.forecast_week）
-    shrink_w: float = 0.0             # 参考类收缩：<=0 自动（有技能才启用 0.2）；>0 显式但仍要求有技能
+    shrink_w: float = 0.0             # 原预测保留权重；0关闭，显式设置也须独立校准验证
     live_scan: bool = True            # 出报时三域全量扫描（联网）；测试/离线场景关闭
 
 
@@ -281,7 +281,9 @@ def apply_shrink(scenarios: list[Scenario], reference_class: dict, w: float) -> 
     w ≤ 0 → 不动作（默认关闭）；未知方向类别的 p_base 取均匀 1/3。
     原地修改 scenarios 并返回。
     """
-    if w <= 0 or not reference_class:
+    if not math.isfinite(w) or not 0 <= w <= 1:
+        raise ValueError("shrink weight must be finite and between 0 and 1")
+    if w == 0 or not reference_class:
         return scenarios
     for s in scenarios:
         base = reference_class.get(normalize_direction(s.direction), 1 / 3)
@@ -651,12 +653,12 @@ def run(config: PipelineConfig) -> PredictionReport:
     except Exception as e:
         logger.warning(f"compute_base_rates failed: {e}")
 
-    # 条件化收缩：无技能则强制 0；有技能且 shrink_w<=0 时自动启用温和权重
+    # 仅独立校准验证后允许显式收缩；历史快照评分不构成授权
     try:
         from reports.scenario_scorecard import resolve_shrink_w
         effective_shrink = resolve_shrink_w(config.shrink_w, scenario_scorecard)
     except Exception:
-        effective_shrink = config.shrink_w if config.shrink_w > 0 else 0.0
+        effective_shrink = 0.0  # 验证异常不得绕过门槛
     if effective_shrink > 0 and reference_class:
         scenarios = apply_shrink(scenarios, reference_class, effective_shrink)
 

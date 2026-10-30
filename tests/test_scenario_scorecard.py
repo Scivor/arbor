@@ -60,8 +60,9 @@ def test_scorecard_interval_and_direction(tmp_path, monkeypatch):
 
 def test_resolve_shrink_requires_skill():
     assert resolve_shrink_w(0.3, {"has_skill": False}) == 0.0
-    assert resolve_shrink_w(0.3, {"has_skill": True}) == 0.3
-    assert resolve_shrink_w(0.0, {"has_skill": True}) == 0.20
+    assert resolve_shrink_w(0.3, {"has_skill": True}) == 0.0
+    assert resolve_shrink_w(0.3, {"calibration_validated": True}) == 0.3
+    assert resolve_shrink_w(0.0, {"has_skill": True}) == 0.0
     assert resolve_shrink_w(0.0, {"has_skill": False}) == 0.0
     assert resolve_shrink_w(0.0, None) == 0.0
 
@@ -208,3 +209,76 @@ def test_vol_based_scenarios_use_close_30d():
     calm_width = s_calm[0].price_max - s_calm[0].price_min
     wild_width = s_wild[0].price_max - s_wild[0].price_min
     assert wild_width > calm_width
+
+
+def test_flat_is_not_a_universal_direction_hit(tmp_path, monkeypatch):
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    _write_summary(tmp_path, "2026-07-01", 300)
+    _write_summary(tmp_path, "2026-07-08", 330)
+    card = compute_scenario_scorecard()
+    assert card["direction_hit_rate"] == 0
+    assert card["weeks"][0]["historical_probabilities"] == {"up": 1/3, "flat": 1/3, "down": 1/3}
+    assert card["default_mean_brier"] == pytest.approx(0.875)
+    assert card["has_skill"] is False
+
+def test_history_baseline_uses_only_preceding_outcomes(tmp_path, monkeypatch):
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    for day, price in [(1, 300), (8, 330), (15, 360)]:
+        _write_summary(tmp_path, f"2026-07-{day:02}", price)
+    card = compute_scenario_scorecard()
+    assert card["weeks"][1]["historical_probabilities"] == {"up": .5, "flat": .25, "down": .25}
+    assert card["n_scored"] == 2
+    assert not card["calibration_validated"]
+
+@pytest.mark.parametrize("w", [-.1, 1.1, float("nan"), float("inf")])
+def test_invalid_calibration_weight_rejected(w):
+    with pytest.raises(ValueError):
+        resolve_shrink_w(w, {"calibration_validated": True})
+
+def test_invalid_probabilities_not_counted_as_scored(tmp_path, monkeypatch):
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    _write_summary(tmp_path, "2026-07-01", 300, scenarios=[{"direction": "横盘", "probability": 2}])
+    _write_summary(tmp_path, "2026-07-08", 300)
+    card = compute_scenario_scorecard()
+    assert card["n"] == 1
+    assert card["n_scored"] == 0
+    assert card["mean_brier"] is None
+    assert card["default_mean_brier"] is None
+
+def test_dense_or_duplicate_reports_do_not_inflate_weekly_samples(tmp_path, monkeypatch):
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    for day in [1, 2, 3]:
+        _write_summary(tmp_path, f"2026-07-{day:02}", 300)
+    from reports.history import load_summaries
+    summaries = load_summaries()
+    assert compute_scenario_scorecard(summaries)["n"] == 0
+    card = compute_scenario_scorecard([summaries[0], summaries[0]])
+    assert card["duplicate_date_samples"] == 2
+    assert card["n"] == 0
+
+
+def test_default_forecast_has_zero_skill_against_itself(tmp_path, monkeypatch):
+    monkeypatch.setattr("reports.history._HISTORY_DIR", tmp_path)
+    scenarios = [{"direction": "上涨", "probability": .25},
+                 {"direction": "横盘", "probability": .5},
+                 {"direction": "下跌", "probability": .25}]
+    _write_summary(tmp_path, "2026-07-01", 300, scenarios=scenarios)
+    _write_summary(tmp_path, "2026-07-08", 300)
+    card = compute_scenario_scorecard()
+    assert card["bss"] > 0
+    assert card["bss_vs_default"] == 0
+    assert card["has_skill"] is False
+
+def test_diagnostic_limits_visible_in_both_report_languages():
+    from reports.demo_data import demo_report
+    from reports.exporters.html_to_pdf import build_report_html
+    from reports.exporters.markdown_exporter import export_markdown
+    report = demo_report()
+    report.scenario_scorecard = {"n": 9, "n_scored": 2, "validation_status": "snapshot_proxy_only",
+        "default_mean_brier": .625, "historical_mean_brier": .5, "mean_brier": .6}
+    for lang, label in [("zh", "仅为周报快照诊断"), ("en", "Snapshot proxy only")]:
+        for output in [build_report_html(report, lang=lang), export_markdown(report, lang=lang)]:
+            assert label in output
+            assert "n=2" in output
+            assert "0.625" in output
+    assert "仅为周报快照诊断" in report.to_text()

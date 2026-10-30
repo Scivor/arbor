@@ -219,6 +219,10 @@ def _md_scenarios(report: "Report", lang: str) -> list[str]:
                         cov=f"{sc.get('interval_coverage', 0):.0%}",
                         dir=f"{sc.get('strict_direction_rate', 0):.0%}",
                         brier=brier_s, skill=skill))
+        from reports.scenario_scorecard import scorecard_diagnostic_note
+        note = scorecard_diagnostic_note(sc, lang)
+        if note:
+            lines.append(note)
         lines.append("")
 
     tilt = getattr(report, "scenario_event_tilt", None)

@@ -43,6 +43,8 @@ class PaperPosition:
     hedge_ratio: float
     contracts: int
     narrative: str = ''
+    batch_id: str | None = None
+    contract_id: str | None = None
 
 
 @dataclass
@@ -226,7 +228,7 @@ class PaperTradingEngine:
             exit_reason=reason,
             holding_days=holding_days,
             commission=commission,
-            narrative=narrative or f'Paper close: {reason}',
+            narrative=narrative or f'Paper close: {reason}; batch={pos.batch_id}; contract={pos.contract_id}',
             is_paper=True,
         )
 
@@ -249,6 +251,8 @@ class PaperTradingEngine:
         - If new_tons < current_tons → partial close
         - If new_tons == 0 → full close
         """
+        if self._position and self._position.batch_id:
+            raise ValueError("use sync_batch for an assigned batch position")
         nonnegative("new_tons", new_tons)
         target = int(new_tons / self.contract_size)
         current = self._position.contracts if self._position else 0
@@ -297,6 +301,7 @@ class PaperTradingEngine:
         current_price: float,
         tons: float,
         priced_tons: float = 0.0,
+        *, _batch_id: str | None = None, _contract_id: str | None = None,
     ) -> str:
         """
         Sync paper position to target hedge ratio.
@@ -312,6 +317,8 @@ class PaperTradingEngine:
         Returns:
             Description of what was done
         """
+        if self._position and self._position.batch_id and self._position.batch_id != _batch_id:
+            raise ValueError("use sync_batch for an assigned batch position")
         unrealized = self.mark_to_market(current_price)
         # Opening quantity applies only to the remaining unpriced purchase.
         plan = plan_procurement(purchase_tonnes=tons, priced_tonnes=priced_tons,
@@ -334,10 +341,34 @@ class PaperTradingEngine:
         if self._position:
             self.close_position(current_price, ExitReason.RATIO_CHANGED)
         try:
-            self.open_position(current_price, plan.actual_tonnes, plan.actual_ratio)
+            self.open_position(current_price, plan.actual_tonnes, plan.actual_ratio,
+                               narrative=f"Batch {_batch_id}, contract {_contract_id}" if _batch_id else "")
         except ValueError:
             return "FLAT — replacement cannot meet cash or whole-contract constraints"
         return f"ADJUSTED to {self._position.contracts} contracts"
+
+    def sync_batch(self, batch, *, as_of, quote_contract_id: str, current_price: float):
+        """Single-batch paper adapter; prevents reusing another batch/contract's quote."""
+        from arbor.domain.purchase_batch import batch_plan
+        from math import isclose
+        batch.validate(as_of)
+        if not isclose(self.contract_size, KC_CONTRACT_TONNES, rel_tol=1e-12):
+            raise ValueError("KC batch requires KC contract size")
+        if quote_contract_id != batch.contract_id:
+            raise ValueError("quote contract does not match batch contract")
+        if not isclose(current_price, batch.kc_price_cents_lb, rel_tol=1e-12):
+            raise ValueError("quote price does not match batch snapshot")
+        if self._position and (self._position.batch_id != batch.batch_id or
+                               self._position.contract_id != batch.contract_id):
+            raise ValueError("existing position belongs to another batch or is unassigned; close explicitly")
+        batch_plan(batch, as_of=as_of, equity=self.get_summary()['current_equity'],
+                   margin_per_contract=self.margin_per_contract)
+        result = self.sync_to_ratio(batch.target_ratio, current_price, batch.purchase_tonnes,
+                                    priced_tons=batch.priced_tonnes, _batch_id=batch.batch_id, _contract_id=batch.contract_id)
+        if self._position:
+            self._position.batch_id = batch.batch_id
+            self._position.contract_id = batch.contract_id
+        return result
 
     # ─── Persistence ────────────────────────────────────────────────────────
 
@@ -422,6 +453,8 @@ class PaperTradingEngine:
             'unrealized_pnl': unrealized,
             'total_pnl': total_equity - self.initial_equity,
             'open_position': {
+                'batch_id': self._position.batch_id if self._position else None,
+                'contract_id': self._position.contract_id if self._position else None,
                 'entry_price': self._position.entry_price if self._position else None,
                 'size_tons': self._position.size_tons if self._position else None,
                 'contracts': self._position.contracts if self._position else None,

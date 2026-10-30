@@ -44,7 +44,12 @@ def plan_procurement(*, purchase_tonnes, priced_tonnes, target_ratio,
     if not math.isfinite(equity) or not math.isfinite(contract_tonnes) or contract_tonnes <= 0:
         raise ValueError("invalid equity or contract size")
     remaining = purchase_tonnes - priced_tonnes
-    desired = math.floor(remaining * target_ratio / contract_tonnes)
+    quotient = remaining * target_ratio / contract_tonnes
+    nearest = round(quotient)
+    # Avoid losing one whole contract to subtraction roundoff at an exact boundary.
+    if math.isclose(quotient, nearest, rel_tol=0.0, abs_tol=1e-12):
+        quotient = float(nearest)
+    desired = math.floor(quotient)
     contracts = desired
     if margin_per_contract is not None:
         if not math.isfinite(margin_per_contract) or margin_per_contract <= 0:
@@ -52,7 +57,7 @@ def plan_procurement(*, purchase_tonnes, priced_tonnes, target_ratio,
         affordable = math.floor(max(0, equity) / (margin_per_contract + 2 * commission_per_contract))
         contracts = min(desired, affordable)
     actual = contracts * contract_tonnes
-    return ProcurementPlan(remaining, contracts, actual, remaining - actual,
-                           actual / remaining if remaining else 0.0,
+    return ProcurementPlan(remaining, contracts, actual, max(0.0, remaining - actual),
+                           min(1.0, actual / remaining) if remaining else 0.0,
                            contracts * margin_per_contract if margin_per_contract is not None else None,
                            contracts < desired, margin_per_contract is not None)

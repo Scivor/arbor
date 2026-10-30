@@ -1,0 +1,27 @@
+{
+  "batch": {
+    "batch_id": "DEMO-LOT-001",
+    "purchase_tonnes": 100,
+    "priced_tonnes": 40,
+    "pricing_date": "2026-11-20",
+    "contract_month": "2026-12",
+    "exit_deadline": "2026-11-25",
+    "policy_reference": "DEMO-ONLY-NOT-APPROVED",
+    "target_ratio": 0.65,
+    "kc_price_cents_lb": 200,
+    "basis_cents_lb": 10,
+    "basis_fixed": false,
+    "usd_cny": 7,
+    "priced_unit_cents_lb": 205,
+    "price_basis": "KC",
+    "coffee_type": "arabica"
+  },
+  "equity_usd": 100000,
+  "margin_per_contract_usd": 5000,
+  "shocks": [
+    {"kc_change_cents_lb": 20},
+    {"basis_change_cents_lb": 10},
+    {"fx_change_pct": 0.05},
+    {"kc_change_cents_lb": 20, "basis_change_cents_lb": 10, "fx_change_pct": 0.05}
+  ]
+}

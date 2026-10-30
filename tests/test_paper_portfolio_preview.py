@@ -78,3 +78,19 @@ def test_cli_dry_run_does_not_create_database_or_account(tmp_path):
     assert e.snapshot()['version'] == 0
     assert e.history() == []
     e.close()
+
+
+def test_version_guard_rejects_stale_preview_but_allows_exact_retry(tmp_path):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    preview = e.preview_batches([batch()], **inputs())
+    request(e, operation_id='other')
+    before = e.snapshot()
+    with pytest.raises(ValueError, match='version changed'):
+        request(e, [batch()], operation_id='execute', expected_version=preview['base_version'])
+    assert e.snapshot() == before
+    assert len(e.history()) == 1
+    result = request(e, [batch()], operation_id='execute', expected_version=1)
+    request(e, operation_id='later')
+    assert request(e, [batch()], operation_id='execute', expected_version=1) == result
+    assert len(e.history()) == 3
+    e.close()

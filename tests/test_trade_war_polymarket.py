@@ -1,6 +1,5 @@
 """TradeWarMonitor Polymarket Layer 1 — 无网络"""
 
-from datetime import datetime
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 

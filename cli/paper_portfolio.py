@@ -34,7 +34,7 @@ def load_request(text):
     if not isinstance(data, dict):
         raise ValueError('request must be a JSON object')
     allowed = {'initial_equity_usd', 'commission_usd', 'batches', 'quotes',
-               'margins_usd', 'close_batch_ids', 'reduce_to_contracts'}
+               'margins_usd', 'close_batch_ids', 'reduce_to_contracts', 'expected_version'}
     unknown = set(data)-allowed
     if unknown:
         raise ValueError(f'unknown request fields: {", ".join(sorted(unknown))}')
@@ -78,7 +78,8 @@ def main():
             quotes={k: ContractQuote(v['price'], date.fromisoformat(v['as_of'])) for k,v in data['quotes'].items()},
             margins=data['margins_usd'], as_of=args.as_of, **operation,
             close_batch_ids=data.get('close_batch_ids', []),
-            reduce_to_contracts=data.get('reduce_to_contracts', {}))
+            reduce_to_contracts=data.get('reduce_to_contracts', {}),
+            expected_version=data.get('expected_version'))
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     except (ValueError, TypeError, KeyError, OSError, sqlite3.Error) as exc:
         parser.error(str(exc))

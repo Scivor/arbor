@@ -9,7 +9,7 @@ import json
 import logging
 import textwrap
 from dataclasses import dataclass, field, asdict
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:

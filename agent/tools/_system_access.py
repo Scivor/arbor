@@ -7,7 +7,6 @@ on every tool call — the EventBus is already a process singleton.
 
 from __future__ import annotations
 
-from typing import Optional
 
 _system = None
 

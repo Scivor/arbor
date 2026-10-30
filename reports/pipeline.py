@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, replace
-from datetime import date, datetime, timedelta
+from datetime import date
 from typing import Optional
 
 from reports.formatters import (
@@ -33,6 +33,26 @@ from reports.models import (
     normalize_direction,
 )
 from reports.demo_data import demo_report
+from reports.report_events import rsi_event as rsi_event, scenario_event as scenario_event
+
+from reports.fetchers import (
+    fetch_market_snapshot,
+    fetch_climate_snapshot,
+    fetch_ml_snapshot,
+    fetch_related_markets,
+    fetch_china_import_snapshot,
+)
+from reports.report_events import (
+    llm_commentary_event,
+    gather_report_events,
+    compute_hedge_advice,
+)
+from reports.report_events import (  # noqa: F401 — re-export for tests / monkeypatch targets
+    _dedupe_events,
+    _scan_live_events,
+    _LLM_DIRECTION_BIAS,
+    _SCENARIO_DIRECTION_SIGN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +75,7 @@ class PipelineConfig:
 # Data Fetchers — live sources (implementation in reports.fetchers)
 # ─────────────────────────────────────────────────────────────────────────────
 
-from reports.fetchers import (
-    fetch_market_snapshot,
-    fetch_climate_snapshot,
-    fetch_ml_snapshot,
-    fetch_related_markets,
-    fetch_china_import_snapshot,
-)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Analysis Engines
@@ -486,19 +500,8 @@ def compute_drivers(
 
 # ── 报告侧评分因子 / 事件汇集 / 套保建议（implementation in reports.report_events）──
 
-from reports.report_events import (
-    llm_commentary_event,
-    scenario_event,
-    rsi_event,
-    gather_report_events,
-    compute_hedge_advice,
-)
-from reports.report_events import (  # noqa: F401 — re-export for tests / monkeypatch targets
-    _dedupe_events,
-    _scan_live_events,
-    _LLM_DIRECTION_BIAS,
-    _SCENARIO_DIRECTION_SIGN,
-)
+
+
 
 def compute_outlook_and_risks(
     market: Optional[MarketSnapshot],

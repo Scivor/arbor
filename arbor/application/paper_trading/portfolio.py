@@ -98,7 +98,7 @@ class PortfolioPaperEngine:
         return self._sync_batches(batches, operation_id=None, _preview=True, **kwargs)
 
     def _sync_batches(self, batches, *, quotes, margins, as_of, operation_id,
-                      close_batch_ids=(), reduce_to_contracts=None, _preview=False):
+                      close_batch_ids=(), reduce_to_contracts=None, expected_version=None, _preview=False):
         """Atomically revalue, close/reduce, allocate and save a paper account.
 
         Retry the SAME operation_id and payload to retrieve its original result
@@ -107,6 +107,8 @@ class PortfolioPaperEngine:
         """
         if not _preview and (not isinstance(operation_id, str) or not operation_id.strip()):
             raise ValueError('operation_id required')
+        if expected_version is not None and (type(expected_version) is not int or expected_version < 0):
+            raise ValueError('expected_version must be a nonnegative integer')
         if reduce_to_contracts is not None and not isinstance(reduce_to_contracts, Mapping):
             raise ValueError('reduce_to_contracts must be a mapping of batch ids to targets')
         reduce_to_contracts = dict(reduce_to_contracts) if reduce_to_contracts is not None else {}
@@ -137,6 +139,10 @@ class PortfolioPaperEngine:
             content = json.loads(payload)
             content['reduce_to_contracts'] = reduce_to_contracts
             payload = json.dumps(content, sort_keys=True, allow_nan=False)
+        if expected_version is not None:
+            content = json.loads(payload)
+            content['expected_version'] = expected_version
+            payload = json.dumps(content, sort_keys=True, allow_nan=False)
         digest = hashlib.sha256(payload.encode()).hexdigest()
         self.conn.execute('BEGIN' if _preview else 'BEGIN IMMEDIATE')
         try:
@@ -149,6 +155,8 @@ class PortfolioPaperEngine:
                 self.conn.execute('COMMIT')
                 return result
             state = self.snapshot()
+            if expected_version is not None and state['version'] != expected_version:
+                raise ValueError('account version changed; preview again before execution')
             if state['as_of'] and as_of.isoformat() < state['as_of']:
                 raise ValueError('cannot backdate an account operation')
             positions = state['positions']

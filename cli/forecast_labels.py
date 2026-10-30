@@ -5,6 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
+from arbor.domain.forecast_scores import score_labels
 from arbor.domain.forecast_outcome import FrozenForecast, ObservedClose, label_fifth_session, aware
 
 
@@ -61,9 +62,13 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('input', type=Path)
     parser.add_argument('--evaluated-at', required=True, type=datetime.fromisoformat)
+    parser.add_argument('--probabilities', type=Path, help='Optional forecast-id to up/flat/down probability JSON')
     args = parser.parse_args()
     try:
         result = evaluate_archive(args.input.read_text(encoding='utf-8'), evaluated_at=args.evaluated_at)
+        if args.probabilities:
+            probabilities = json.loads(args.probabilities.read_text(encoding='utf-8'), object_pairs_hook=unique_object)
+            result['probability_diagnostics'] = score_labels(result, probabilities)
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     except (ValueError, TypeError, KeyError, AttributeError, OSError) as exc:
         parser.error(str(exc))

@@ -125,3 +125,9 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 运行 `python -m cli.forecast_labels docs/examples/forecast-labels.json --evaluated-at 2026-11-09T20:00:00+00:00` 可输出 JSON 标签结果。示例全部为合成测试数据。输入包含 forecasts、按版本标识映射的 calendars、observations 三项；时间必须带时区，字段对应 FrozenForecast 与 ObservedClose。
 
 输出包含原始预测参数、档案内容 SHA256、评估时刻、已标记数量与 pending 原因。重复预测 ID 或重复 JSON 字段拒绝；数据错误使整次请求失败，不输出部分成功结果。命令不修改源文件、不联网、不启用调仓。哈希仅用于内容追溯，不证明档案在发布时已冻结或来源可信。尚未接入线上报告及历史概率评分。
+
+### 离线概率诊断
+
+标签命令可追加 `--probabilities probabilities.json`；文件格式为预测ID映射到 up/flat/down 三类概率，必须完整覆盖档案ID，概率有限且和为1。对同一组已标记样本输出模型、固定25/50/25、均匀及历史频率 Brier。历史频率只使用该预测发布前已发布且结果在当时已可获取的预测，每类加一个伪计数；不因档案排序或后补结果泄漏未来。
+
+当前保留重叠预测窗口，仅作描述性诊断，不证明独立样本显著性。概率文件尚无发布时冻结的可信证据，因此 has_skill 与 calibration_validated 保持 false；不能据此启用交易。模型与市场分组评估、非重叠窗口分析及滚动样本外校准仍待完成。

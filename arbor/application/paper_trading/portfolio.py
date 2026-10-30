@@ -61,6 +61,23 @@ class PortfolioPaperEngine:
             self.conn.close()
             raise
 
+    @classmethod
+    def open_readonly(cls, db_path, *, account_id='default'):
+        """Open an existing account without schema changes or account creation."""
+        engine = cls.__new__(cls)
+        path = Path(db_path).expanduser().resolve()
+        engine.conn = sqlite3.connect(path.as_uri()+'?mode=ro', uri=True,
+                                      timeout=10, isolation_level=None)
+        engine.account_id = account_id
+        try:
+            if engine.conn.execute('SELECT 1 FROM paper_portfolio_accounts WHERE account_id=?',
+                                   (account_id,)).fetchone() is None:
+                raise ValueError('existing account required for preview')
+        except Exception:
+            engine.close()
+            raise
+        return engine
+
     def snapshot(self):
         """Last persisted valuation, NOT a fresh market quote."""
         row = self.conn.execute('SELECT state FROM paper_portfolio_accounts WHERE account_id=?', (self.account_id,)).fetchone()
@@ -73,14 +90,22 @@ class PortfolioPaperEngine:
     def close(self):
         self.conn.close()
 
-    def sync_batches(self, batches, *, quotes, margins, as_of, operation_id, close_batch_ids=(), reduce_to_contracts=None):
+    def sync_batches(self, batches, **kwargs):
+        return self._sync_batches(batches, **kwargs)
+
+    def preview_batches(self, batches, **kwargs):
+        """Calculate from a consistent snapshot without saving or reserving funds."""
+        return self._sync_batches(batches, operation_id=None, _preview=True, **kwargs)
+
+    def _sync_batches(self, batches, *, quotes, margins, as_of, operation_id,
+                      close_batch_ids=(), reduce_to_contracts=None, _preview=False):
         """Atomically revalue, close/reduce, allocate and save a paper account.
 
         Retry the SAME operation_id and payload to retrieve its original result
         without trading twice. Another payload under that id is rejected.
         Unmentioned batches remain open, with their margin reserved.
         """
-        if not operation_id.strip():
+        if not _preview and (not isinstance(operation_id, str) or not operation_id.strip()):
             raise ValueError('operation_id required')
         if reduce_to_contracts is not None and not isinstance(reduce_to_contracts, Mapping):
             raise ValueError('reduce_to_contracts must be a mapping of batch ids to targets')
@@ -113,11 +138,11 @@ class PortfolioPaperEngine:
             content['reduce_to_contracts'] = reduce_to_contracts
             payload = json.dumps(content, sort_keys=True, allow_nan=False)
         digest = hashlib.sha256(payload.encode()).hexdigest()
-        self.conn.execute('BEGIN IMMEDIATE')
+        self.conn.execute('BEGIN' if _preview else 'BEGIN IMMEDIATE')
         try:
             saved = self.conn.execute('SELECT request_hash,result FROM paper_portfolio_operations WHERE account_id=? AND operation_id=?',
                                       (self.account_id, operation_id)).fetchone()
-            if saved:
+            if saved and not _preview:
                 if saved[0] != digest:
                     raise ValueError('operation_id already used with different inputs')
                 result = json.loads(saved[1])
@@ -226,6 +251,13 @@ class PortfolioPaperEngine:
             state['margins'] = margins
             state['version'] += 1
             result = dict(state=state, plans=plans, trades=trades, allocation_order=ids)
+            if _preview:
+                result = dict(mode='PREVIEW_NO_ORDER', base_version=state['version']-1,
+                              projected_state=state, plans=plans, proposed_trades=trades,
+                              allocation_order=ids)
+                serialized = json.dumps(result, default=str, allow_nan=False)
+                self.conn.execute('ROLLBACK')
+                return json.loads(serialized)
             serialized = json.dumps(result, default=str, allow_nan=False)
             self.conn.execute('UPDATE paper_portfolio_accounts SET state=? WHERE account_id=?',
                               (json.dumps(state, default=str, allow_nan=False), self.account_id))

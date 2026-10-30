@@ -54,17 +54,29 @@ def main():
     parser.add_argument('input', type=Path)
     parser.add_argument('--db', required=True)
     parser.add_argument('--account', default='default')
-    parser.add_argument('--operation-id', required=True)
+    parser.add_argument('--operation-id')
+    parser.add_argument('--dry-run', action='store_true', help='Preview an existing account without saving')
     parser.add_argument('--as-of', required=True, type=date.fromisoformat)
     args = parser.parse_args()
+    if not args.dry_run and not args.operation_id:
+        parser.error('--operation-id is required unless --dry-run is used')
     engine = None
     try:
         data = load_request(args.input.read_text(encoding='utf-8'))
-        engine = PortfolioPaperEngine(args.db, account_id=args.account,
-            initial_equity=data.get('initial_equity_usd'), commission=data.get('commission_usd', 15.))
-        result = engine.sync_batches([batch_from_dict(b) for b in data.get('batches', [])],
+        if args.dry_run:
+            engine = PortfolioPaperEngine.open_readonly(args.db, account_id=args.account)
+            state = engine.snapshot()
+            for field, stored in (('initial_equity_usd', 'initial_equity'), ('commission_usd', 'commission')):
+                if field in data and data[field] != state[stored]:
+                    raise ValueError(f'{field} differs from existing account')
+        else:
+            engine = PortfolioPaperEngine(args.db, account_id=args.account,
+                initial_equity=data.get('initial_equity_usd'), commission=data.get('commission_usd', 15.))
+        action = engine.preview_batches if args.dry_run else engine.sync_batches
+        operation = {} if args.dry_run else {'operation_id': args.operation_id}
+        result = action([batch_from_dict(b) for b in data.get('batches', [])],
             quotes={k: ContractQuote(v['price'], date.fromisoformat(v['as_of'])) for k,v in data['quotes'].items()},
-            margins=data['margins_usd'], as_of=args.as_of, operation_id=args.operation_id,
+            margins=data['margins_usd'], as_of=args.as_of, **operation,
             close_batch_ids=data.get('close_batch_ids', []),
             reduce_to_contracts=data.get('reduce_to_contracts', {}))
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))

@@ -86,3 +86,15 @@
 ### 模拟账户请求的严格解析
 
 多批次 CLI 在打开数据库前拒绝重复 JSON 字段（包括嵌套批次键）、NaN/Infinity/溢出浮点数、未知顶层字段，以及错误的集合类型。字段拼写错误不会再被静默忽略。`reduce_to_contracts` 必须是 JSON 对象；Python API 接受映射或默认的 None，不再将 False、空列表或键值对列表自动转换为减仓请求。拒绝此类请求不会产生交易或审计记录；新账户也不会因 CLI 解析错误而创建。
+
+### 多批次模拟交易预览
+
+已有账户可使用 `PortfolioPaperEngine.preview_batches`，或在原 `cli.paper_portfolio` 命令后加 `--dry-run`。预览无需 `--operation-id`，即使传入也不会消耗该编号；数据库和账户必须已存在。CLI 通过 SQLite 只读连接打开数据库，不创建账户或修改表结构。
+
+返回 `mode: PREVIEW_NO_ORDER`、`base_version`、`projected_state`、`proposed_trades` 及计划与拦截原因；不保存持仓、现金、估值或审计记录。预览与执行共用计算及风控流程，从一致的数据库快照计算。它不预留资金，也不是交易授权或可锁定的成交报价；后续执行按最新账户状态重新检查，结果可能变化。预览中的 projected_state.version 是假设执行后的版本，不代表已写入。
+
+```sh
+python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
+  --db ~/.arbor/portfolio-demo.db --account demo \
+  --as-of 2026-10-30 --dry-run
+```

@@ -72,7 +72,7 @@ class PortfolioPaperEngine:
     def close(self):
         self.conn.close()
 
-    def sync_batches(self, batches, *, quotes, margins, as_of, operation_id, close_batch_ids=()):
+    def sync_batches(self, batches, *, quotes, margins, as_of, operation_id, close_batch_ids=(), reduce_to_contracts=None):
         """Atomically revalue, close/reduce, allocate and save a paper account.
 
         Retry the SAME operation_id and payload to retrieve its original result
@@ -81,6 +81,10 @@ class PortfolioPaperEngine:
         """
         if not operation_id.strip():
             raise ValueError('operation_id required')
+        reduce_to_contracts = dict(reduce_to_contracts or {})
+        for batch_id, target in reduce_to_contracts.items():
+            if not isinstance(batch_id, str) or not batch_id.strip() or type(target) is not int or target < 0:
+                raise ValueError('reduction targets must be nonnegative integer contract counts')
         batches = list(batches)
         close_batch_ids = list(close_batch_ids)
         ids = [b.batch_id for b in batches]
@@ -88,6 +92,8 @@ class PortfolioPaperEngine:
             raise ValueError('duplicate batch ids')
         if set(ids) & set(close_batch_ids):
             raise ValueError('cannot both close and resize a batch')
+        if set(reduce_to_contracts) & (set(ids) | set(close_batch_ids)):
+            raise ValueError('cannot combine reduction with close or resize for the same batch')
         for b in batches:
             b.validate(as_of)
             if b.contract_id not in quotes or not math.isclose(quotes[b.contract_id].price, b.kc_price_cents_lb, rel_tol=1e-12):
@@ -98,6 +104,11 @@ class PortfolioPaperEngine:
         payload = json.dumps(dict(batches=[asdict(b) for b in batches],
             quotes={k: asdict(q) for k,q in quotes.items()}, margins=margins,
             as_of=as_of, close_batch_ids=close_batch_ids), default=str, sort_keys=True, allow_nan=False)
+        # Preserve hashes of legacy requests that predate explicit reductions.
+        if reduce_to_contracts:
+            content = json.loads(payload)
+            content['reduce_to_contracts'] = reduce_to_contracts
+            payload = json.dumps(content, sort_keys=True, allow_nan=False)
         digest = hashlib.sha256(payload.encode()).hexdigest()
         self.conn.execute('BEGIN IMMEDIATE')
         try:
@@ -125,6 +136,11 @@ class PortfolioPaperEngine:
             for batch_id in close_batch_ids:
                 if batch_id not in positions:
                     raise ValueError(f'cannot close unknown batch: {batch_id}')
+            for batch_id, target in reduce_to_contracts.items():
+                if batch_id not in positions:
+                    raise ValueError(f'cannot reduce unknown batch: {batch_id}')
+                if target > positions[batch_id]['contracts']:
+                    raise ValueError('reduction target cannot increase an existing position')
             fee = state['commission']
             trades = []
             def equity():
@@ -148,6 +164,8 @@ class PortfolioPaperEngine:
                 priced_tonnes=b.priced_tonnes, target_ratio=b.target_ratio).target_contracts for b in batches}
             for batch_id in close_batch_ids:
                 reduce(batch_id, 0)
+            for batch_id, target in reduce_to_contracts.items():
+                reduce(batch_id, target)
             for b in batches:
                 if b.batch_id in positions:
                     reduce(b.batch_id, targets[b.batch_id])

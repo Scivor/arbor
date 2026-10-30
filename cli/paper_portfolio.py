@@ -25,7 +25,8 @@ def main():
         result = engine.sync_batches([batch_from_dict(b) for b in data.get('batches', [])],
             quotes={k: ContractQuote(v['price'], date.fromisoformat(v['as_of'])) for k,v in data['quotes'].items()},
             margins=data['margins_usd'], as_of=args.as_of, operation_id=args.operation_id,
-            close_batch_ids=data.get('close_batch_ids', []))
+            close_batch_ids=data.get('close_batch_ids', []),
+            reduce_to_contracts=data.get('reduce_to_contracts', {}))
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))
     except (ValueError, TypeError, KeyError, OSError, sqlite3.Error) as exc:
         parser.error(str(exc))

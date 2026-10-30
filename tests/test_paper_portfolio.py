@@ -208,3 +208,50 @@ def test_deadline_edit_cannot_hide_overdue_position_and_reduction_still_works(tm
     assert increased['plans'][0]['risk_blocked']
     assert increased['trades'] == []
     e.close()
+
+
+def test_overdue_partial_reduction_preserves_deadlines_and_accounts_pnl(tmp_path):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    original = batch(target_ratio=1)
+    first = request(e, [original])
+    assert first['state']['positions']['lot-1']['contracts'] == 2
+    out = request(e, as_of=date(2026,11,25), price=210, operation_id='partial',
+                  reduce_to_contracts={'lot-1':1})
+    assert out['state']['positions']['lot-1']['contracts'] == 1
+    assert out['state']['positions']['lot-1']['batch'] == first['state']['positions']['lot-1']['batch']
+    assert out['state']['cash'] == pytest.approx(100000-30+3750-15)
+    assert out['state']['unrealized_pnl'] == pytest.approx(3750)
+    assert out['state']['additions_blocked']
+    assert request(e, as_of=date(2026,11,25), price=210, operation_id='partial',
+                   reduce_to_contracts={'lot-1':1}) == out
+    with pytest.raises(ValueError, match='different inputs'):
+        request(e, as_of=date(2026,11,25), price=210, operation_id='partial',
+                reduce_to_contracts={'lot-1':0})
+    closed = request(e, as_of=date(2026,11,25), price=210, operation_id='zero',
+                     reduce_to_contracts={'lot-1':0})
+    assert not closed['state']['positions']
+    assert not closed['state']['additions_blocked']
+    e.close()
+
+
+@pytest.mark.parametrize('target', [-1, 1.5, True, '1', 3])
+def test_invalid_reduction_cannot_change_account(tmp_path, target):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    before = request(e, [batch(target_ratio=1)])
+    with pytest.raises(ValueError):
+        request(e, operation_id='invalid', reduce_to_contracts={'lot-1':target})
+    assert e.snapshot() == before['state']
+    assert len(e.history()) == 1
+    e.close()
+
+
+def test_reduction_conflicts_and_unknown_batch_are_rejected(tmp_path):
+    e = PortfolioPaperEngine(tmp_path/'account.db', initial_equity=100000)
+    before = request(e, [batch()])
+    for kwargs in ({'batches':[batch()]}, {'close_batch_ids':['lot-1']}):
+        with pytest.raises(ValueError, match='cannot combine'):
+            request(e, operation_id='conflict', reduce_to_contracts={'lot-1':0}, **kwargs)
+    with pytest.raises(ValueError, match='unknown batch'):
+        request(e, operation_id='unknown', reduce_to_contracts={'missing':0})
+    assert e.snapshot() == before['state']
+    e.close()

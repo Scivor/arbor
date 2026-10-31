@@ -15,6 +15,7 @@
       <img class="site-brand-logo" src="/static/img/arbor-wordmark-nav.png" alt="Scivor Arbor" width="120" height="34" />
     </a>
     <div class="site-links">
+      <a href="/workbench/">{% if lang == "en" %}Workbench{% else %}采购工作台{% endif %}</a>
       {% if lang == 'en' %}
       <a href="/?lang=en" {% if request.url.path == '/' %}class="active"{% endif %}>Latest Report</a>
       <a href="/reports/?lang=en" {% if request.url.path.startswith('/reports/') %}class="active"{% endif %}>Archive</a>

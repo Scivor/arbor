@@ -327,6 +327,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 
+@app.get("/workbench/", response_class=HTMLResponse)
+async def procurement_workbench(request: Request):
+    """Explicit synthetic demo; never reads or mutates a trading account."""
+    return templates.TemplateResponse(request, "workbench.html", {})
+
+
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):
     """Root path shows the latest report directly — no nav bar."""

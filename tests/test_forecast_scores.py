@@ -46,3 +46,23 @@ def test_grouping_and_nonoverlap_are_order_independent():
     assert result[0]['selected_ids'] == ['a','c']
     assert result[0]['excluded_overlap_ids'] == ['b']
     assert result[1]['all_windows']['rows'][0]['historical_samples'] == 0
+
+
+@pytest.mark.parametrize('bad', ['sideways', None, ''])
+def test_invalid_actual_direction_cannot_be_scored(bad):
+    r = row('a','2026-01-01T00:00:00+00:00','2026-01-10T00:00:00+00:00',bad)
+    with pytest.raises(ValueError,match='actual direction'):
+        score_labels({'results':[r]},{'a':{'up':.25,'flat':.5,'down':.25}})
+
+
+def test_duplicate_and_unknown_status_rejected_in_both_entrypoints():
+    from arbor.domain.forecast_scores import grouped_scores
+    r = row('a','2026-01-01T00:00:00+00:00','2026-01-10T00:00:00+00:00')
+    probs = {'a':{'up':.25,'flat':.5,'down':.25}}
+    for function in (score_labels,grouped_scores):
+        with pytest.raises(ValueError,match='duplicate'):
+            function({'results':[r,r]},probs)
+        with pytest.raises(ValueError,match='object'):
+            function({'results':[r]},['a'])
+        with pytest.raises(ValueError,match='status'):
+            function({'results':[{**r,'status':'failed'}]},probs)

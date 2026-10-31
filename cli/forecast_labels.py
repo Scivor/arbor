@@ -67,7 +67,9 @@ def main():
     try:
         result = evaluate_archive(args.input.read_text(encoding='utf-8'), evaluated_at=args.evaluated_at)
         if args.probabilities:
-            probabilities = json.loads(args.probabilities.read_text(encoding='utf-8'), object_pairs_hook=unique_object)
+            probability_raw = args.probabilities.read_text(encoding='utf-8')
+            probabilities = json.loads(probability_raw, object_pairs_hook=unique_object)
+            result['probabilities_sha256'] = hashlib.sha256(probability_raw.encode()).hexdigest()
             result['probability_diagnostics'] = score_labels(result, probabilities)
             result['grouped_diagnostics'] = grouped_scores(result, probabilities)
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))

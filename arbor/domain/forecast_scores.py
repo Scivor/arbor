@@ -14,6 +14,7 @@ def cohort(row):
 
 def grouped_scores(report, probabilities):
     """Separate incompatible labels and provide deterministic nonoverlap subsets."""
+    score_labels(report, probabilities)  # validate the complete input before grouping
     groups = {}
     for row in report['results']:
         groups.setdefault(cohort(row), []).append(row)
@@ -42,6 +43,15 @@ def grouped_scores(report, probabilities):
 def score_labels(report, probabilities):
     rows = report['results']
     ids = {r['forecast_id'] for r in rows}
+    if len(ids) != len(rows):
+        raise ValueError('duplicate forecast ids in score input')
+    if not isinstance(probabilities, dict):
+        raise ValueError('probabilities must be an object')
+    for row in rows:
+        if row['status'] not in ('pending', 'labeled'):
+            raise ValueError('unknown label status')
+        if row['status'] == 'labeled' and row.get('actual') not in CLASSES:
+            raise ValueError('invalid actual direction')
     if set(probabilities) != ids:
         raise ValueError('probabilities must cover exactly the archive forecast ids')
     for values in probabilities.values():

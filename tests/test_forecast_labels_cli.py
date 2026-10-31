@@ -36,3 +36,18 @@ def test_missing_data_stays_pending_and_duplicate_forecasts_rejected():
     data['forecasts'] *= 2
     with pytest.raises(ValueError,match='duplicate forecast'):
         evaluate_archive(json.dumps(data,default=lambda x:x.isoformat()),evaluated_at=SESSIONS[-1])
+
+
+def test_cli_fingerprints_probability_input(tmp_path):
+    import hashlib
+    source = tmp_path/'archive.json'
+    source.write_text(json.dumps(archive(),default=lambda x:x.isoformat()))
+    probability = tmp_path/'probabilities.json'
+    raw = json.dumps({F.forecast_id:{'up':.25,'flat':.5,'down':.25}})
+    probability.write_text(raw)
+    result = subprocess.run([sys.executable,'-m','cli.forecast_labels',str(source),
+        '--evaluated-at',SESSIONS[-1].isoformat(),'--probabilities',str(probability)],
+        capture_output=True,text=True,check=True)
+    out = json.loads(result.stdout)
+    assert out['probabilities_sha256'] == hashlib.sha256(raw.encode()).hexdigest()
+    assert out['grouped_diagnostics'][0]['all_windows']['n_scored'] == 1

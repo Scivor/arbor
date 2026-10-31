@@ -66,3 +66,13 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 - 业务页面、旧账户迁移、部署与实盘接口。
 
 PR 保持草稿直至对应工程和业务验收完成；不因合成示例通过而启用预测调仓。
+
+## 自动回归入口
+
+上述随仓库提供的 JSON 示例由 `tests/test_acceptance_examples.py` 直接通过命令行执行，包含标签及待补齐状态、分组评分、账户重复提交、只读预览和过期版本执行拒绝。测试使用临时数据库，运行结束自动清理。可单独运行：
+
+```sh
+python -m pytest tests/test_acceptance_examples.py -q
+```
+
+该文件已纳入现有全量 pytest 命令；不需要另加 CI 工作流。自动回归依然只验证合成样例行为。

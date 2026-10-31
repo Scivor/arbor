@@ -135,3 +135,47 @@ def test_event_metadata_contains_link_and_keyword(mock_response):
     assert "link" in event.metadata
     assert "matched_keyword" in event.metadata
     assert event.source == "Google News RSS"
+
+
+@pytest.mark.parametrize('published', ['', 'not-a-date'])
+def test_invalid_publication_time_is_not_replaced_with_now(published):
+    src = GoogleNewsRSSSource()
+    assert src._parse_pub_date(published) is None
+    xml = f'<rss><channel><item><title>tariff coffee</title><link>https://example.com</link><pubDate>{published}</pubDate></item></channel></rss>'
+    assert src._parse_rss(xml) == []
+
+
+def test_recent_filter_excludes_future_and_stale_news():
+    src = GoogleNewsRSSSource()
+    fixed = datetime(2030,1,1,12,tzinfo=timezone.utc)
+    articles = src._parse_rss(_sample_rss(fixed))
+    articles[0].pub_date = fixed + timedelta(seconds=1)
+    articles[1].pub_date = fixed - timedelta(hours=49)
+    with patch('sources.policy.google_news_rss.datetime') as clock:
+        clock.now.return_value = fixed
+        recent = src._filter_recent(articles, hours=48)
+    assert [a.link for a in recent] == ['https://example.com/3','https://example.com/4']
+
+
+
+def test_failed_publish_does_not_consume_dedup_or_cooldown(mock_response):
+    src = GoogleNewsRSSSource()
+    bus = MagicMock()
+    bus.publish.side_effect = RuntimeError('unavailable')
+    with patch.object(src._session, 'get', return_value=mock_response):
+        with pytest.raises(RuntimeError, match='unavailable'):
+            src.check_and_publish(bus)
+        assert src._seen_links == set()
+        assert src._last_event_time == {}
+        bus.publish.side_effect = None
+        events = src.check_and_publish(bus)
+    assert any(e.event_type == EventType.CHINA_TARIFF_CHANGE for e in events)
+
+
+def test_cached_articles_are_rechecked_against_time_window():
+    src = GoogleNewsRSSSource()
+    fixed = datetime(2030,1,1,12,tzinfo=timezone.utc)
+    src._cache = src._parse_rss(_sample_rss(fixed-timedelta(days=8)))
+    with patch.object(src, '_is_stale', return_value=False), patch('sources.policy.google_news_rss.datetime') as clock:
+        clock.now.return_value = fixed
+        assert src.fetch() == []

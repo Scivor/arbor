@@ -88,11 +88,12 @@ def test_half_life_decay_exact():
 
 
 def test_decay_never_negative_age():
-    """未来时间戳的事件不得放大贡献（age 截断到 0）。"""
+    """未来事件在其可用时间之前不贡献评分。"""
     rule = RULES[EventType.FROST_WARNING]
     future = event_contribution(mk(EventType.FROST_WARNING, 3, -10.0), rule, NOW)
     fresh = event_contribution(mk(EventType.FROST_WARNING, 3, 0.0), rule, NOW)
-    assert future == pytest.approx(fresh)
+    assert future == 0.0
+    assert fresh > 0
 
 
 def test_severity_scale_is_continuous():
@@ -212,3 +213,23 @@ def test_breakdown_exposes_cluster_attribution():
     brazil = next(c for c in b.clusters if c.cluster == "brazil_supply")
     assert brazil.contributions[0].event_type_name == "FROST_CONFIRMED"
     assert brazil.contributions[0].severity == 3
+
+
+@pytest.mark.parametrize("kind,cluster", [(EventType.ML_MODEL_UPDATE, "ml"),
+    (EventType.LLM_COMMENTARY, "llm"), (EventType.SCENARIO_DOMINANT, "scenario"),
+    (EventType.RSI_EXTREME, "technical")])
+def test_predictions_are_observation_only_by_default(kind, cluster):
+    from dataclasses import replace
+    rules = {**RULES, kind: EventRule(1.0, cluster, 7, 1)}
+    physical = mk(EventType.FROST_WARNING)
+    prediction = mk(kind, value=-0.15)
+    expected = compute_score([physical], rules, NOW, CFG)
+    assert compute_score([physical, prediction], rules, NOW, CFG) == expected
+    research = replace(CFG, prediction_adjustments_enabled=True)
+    assert compute_score([physical, prediction], rules, NOW, research).ratio < expected.ratio
+
+def test_future_events_do_not_affect_cluster_ranking():
+    past = mk(EventType.FROST_WARNING, days_ago=1)
+    future = mk(EventType.FROST_CONFIRMED, days_ago=-1)
+    assert compute_score([past, future], RULES, NOW, CFG) == compute_score([past], RULES, NOW, CFG)
+    assert compute_score([future], RULES, future.timestamp, CFG).score > 0

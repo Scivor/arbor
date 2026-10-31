@@ -449,6 +449,10 @@ def _build_scorecard_html(report, lang: str) -> str:
               cov=f"{sc.get('interval_coverage', 0):.0%}",
               dir=f"{sc.get('strict_direction_rate', 0):.0%}",
               brier=brier_s, skill=skill)
+    from reports.scenario_scorecard import scorecard_diagnostic_note
+    note = scorecard_diagnostic_note(sc, lang)
+    if note:
+        text += " · " + note
     return f"""
   <div class="rc-note">{text}</div>"""
 
@@ -658,6 +662,8 @@ def _build_review_html(report, current_price: float | None, lang: str) -> str:
 
     direction_result = _t("review_dir_correct", lang) if review.direction_correct else _t("review_dir_miss", lang)
     hedge_result = _t("review_hedge_ok", lang) if review.hedge_advice_correct else _t("review_hedge_conservative", lang)
+    if review.hedge_advice_correct is None:
+        hedge_result = "效果待核验（缺少采购与资金流水）" if lang == "zh" else "Unverified (procurement and cash flows required)"
     attribution_html = _build_attribution_html(last, review.current_price, lang)
 
     return f"""
@@ -672,7 +678,7 @@ def _build_review_html(report, current_price: float | None, lang: str) -> str:
                 <ul>
                   <li>{"✓" if review.prediction_hit else "✗"} {_t("review_hit", lang)}</li>
                   <li>{"✓" if review.direction_correct else "✗"} {direction_result}</li>
-                  <li>{"✓" if review.hedge_advice_correct else "✗"} {_t("review_hedge", lang)}{hedge_result}</li>
+                  <li>{"—" if review.hedge_advice_correct is None else ("✓" if review.hedge_advice_correct else "✗")} {_t("review_hedge", lang)}{hedge_result}</li>
                 </ul>
                 {attribution_html}
                 <p class="review-note">{review.review_text}</p>

@@ -41,6 +41,7 @@ class ScoringConfig:
     span_down: float = 0.45    # 向下跨度 → 0.20
     tanh_k: float = 0.5        # tanh 陡度
     rank_decay: float = 0.5    # 簇内第 i 名的权重 = rank_decay ** i
+    prediction_adjustments_enabled: bool = False  # 未验证预测默认仅展示
 
 
 # ── 结果类型 ────────────────────────────────────────────────────────────────
@@ -79,6 +80,8 @@ _VALUE_CARRYING_CLUSTERS = frozenset({"ml", "llm", "scenario", "technical"})
 
 def event_contribution(event: CoffeeEvent, rule: EventRule, now: datetime) -> float:
     """单事件贡献 = 基准 x severity缩放 x 时间衰减。"""
+    if event.timestamp > now:
+        return 0.0
     base = event.value if rule.cluster in _VALUE_CARRYING_CLUSTERS else rule.adjustment
     age_days = max(0.0, (now - event.timestamp).total_seconds() / 86400.0)
     decay = 0.5 ** (age_days / rule.half_life_days)
@@ -111,7 +114,14 @@ def compute_score(
 
     for event in events:
         rule = rules.get(event.event_type)
+        if event.timestamp > now:
+            continue
         if rule is None or event.severity < rule.min_severity:
+            continue
+        if (not cfg.prediction_adjustments_enabled
+                and event.event_type in {EventType.ML_MODEL_UPDATE,
+                    EventType.LLM_COMMENTARY, EventType.SCENARIO_DOMINANT,
+                    EventType.RSI_EXTREME}):
             continue
         age_days = max(0.0, (now - event.timestamp).total_seconds() / 86400.0)
         buckets.setdefault(rule.cluster, []).append(

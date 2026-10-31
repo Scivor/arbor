@@ -96,7 +96,7 @@ def test_track_record_brier_aggregation(tmp_path, monkeypatch):
     assert rec["weeks"][0]["brier"] == pytest.approx(0.26)
     assert rec["weeks"][1]["brier"] == pytest.approx(0.38)
     assert rec["mean_brier"] == pytest.approx(0.32)
-    assert rec["bss"] == pytest.approx(1 - 0.32 / 0.6667)
+    assert rec["bss"] == pytest.approx(1 - 0.32 / (2 / 3))
 
     # 校准桶: [0,0.3) 2 样本 obs 0; [0.3,0.5) 2 样本 obs 0; [0.5,0.7) 2 样本全中; [0.7,1.0] 空
     cal = rec["calibration"]
@@ -125,7 +125,7 @@ def test_track_record_brier_backward_compatible(tmp_path, monkeypatch):
     assert rec["weeks"][0]["brier"] == pytest.approx(0.26)
     assert rec["weeks"][1]["brier"] is None
     assert rec["mean_brier"] == pytest.approx(0.26)  # 仅聚合有值周
-    assert rec["bss"] == pytest.approx(1 - 0.26 / 0.6667)
+    assert rec["bss"] == pytest.approx(1 - 0.26 / (2 / 3))
 
 
 def test_track_record_brier_no_scenarios_at_all(tmp_path, monkeypatch):

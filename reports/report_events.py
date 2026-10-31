@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 _LLM_DIRECTION_BIAS = {"下跌": 0.08, "上涨": -0.08}
 
 
-def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
+def llm_commentary_event(direction: str, now: Optional[datetime] = None) -> Optional[CoffeeEvent]:
     """
     采购建议方向 → LLM_COMMENTARY 事件。中性方向不产生事件。
     看跌 → 正贡献（增套保）；看涨 → 负贡献。
@@ -38,7 +38,7 @@ def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
     return CoffeeEvent(
         event_type=EventType.LLM_COMMENTARY,
         domain=Domain.FINANCE,
-        timestamp=datetime.now(),
+        timestamp=now or datetime.now(),
         severity=3,
         value=bias,
         narrative=f"采购建议方向: {direction}",
@@ -49,7 +49,7 @@ def llm_commentary_event(direction: str) -> Optional[CoffeeEvent]:
 _SCENARIO_DIRECTION_SIGN = {"下跌": 1.0, "上涨": -1.0, "横盘": 0.0}
 
 
-def scenario_event(dominant) -> CoffeeEvent:
+def scenario_event(dominant, now: Optional[datetime] = None) -> CoffeeEvent:
     """
     主导情景 → SCENARIO_DOMINANT 事件。
     下跌 → 正贡献（增套保），上涨 → 负，横盘 → 0。幅度随概率线性缩放。
@@ -58,7 +58,7 @@ def scenario_event(dominant) -> CoffeeEvent:
     return CoffeeEvent(
         event_type=EventType.SCENARIO_DOMINANT,
         domain=Domain.FINANCE,
-        timestamp=datetime.now(),
+        timestamp=now or datetime.now(),
         severity=3,
         value=sign * 0.20 * dominant.probability,
         narrative=f"主导情景 {dominant.direction} (概率 {dominant.probability:.0%})",
@@ -66,7 +66,7 @@ def scenario_event(dominant) -> CoffeeEvent:
     )
 
 
-def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
+def rsi_event(rsi: float, now: Optional[datetime] = None) -> Optional[CoffeeEvent]:
     """
     RSI 极值 → RSI_EXTREME 事件。35–65 之间不产生事件。
     超卖 → 正贡献（提升套保锁定成本），超热 → 负贡献（保留敞口）。
@@ -80,7 +80,7 @@ def rsi_event(rsi: float) -> Optional[CoffeeEvent]:
     return CoffeeEvent(
         event_type=EventType.RSI_EXTREME,
         domain=Domain.FINANCE,
-        timestamp=datetime.now(),
+        timestamp=now or datetime.now(),
         severity=3,
         value=value,
         narrative=f"RSI={_fmt_rsi(rsi)} {label}",
@@ -168,24 +168,27 @@ def gather_report_events(
 
     live_scan=False 关闭网络 I/O（测试与离线场景）。
     """
+    explicit_as_of = now is not None
     now = now or datetime.now()
     events: list[CoffeeEvent] = []
 
     # 报告侧因子
     if scenarios:
-        events.append(scenario_event(max(scenarios, key=lambda s: s.probability)))
+        events.append(scenario_event(max(scenarios, key=lambda s: s.probability), now=now))
     if market and market.rsi_14 is not None:
-        ev = rsi_event(market.rsi_14)
+        ev = rsi_event(market.rsi_14, now=now)
         if ev:
             events.append(ev)
     if llm_direction:
-        ev = llm_commentary_event(llm_direction)
+        ev = llm_commentary_event(llm_direction, now=now)
         if ev:
             events.append(ev)
 
     # 出报时的新鲜事件 —— 三域全量扫描
     if live_scan:
         events.extend(_scan_live_events())
+        if not explicit_as_of:
+            now = datetime.now()  # 默认实时调用的截止时刻在扫描完成后
 
     # 历史衰减尾巴 —— DB 失败时静默降级为「只用报告侧因子」
     try:
@@ -226,7 +229,7 @@ def gather_report_events(
         logger.warning("去重规则表加载失败，去重窗口回退默认 1 小时: %s", e)
         rules = None
 
-    return _dedupe_events(events, rules)
+    return _dedupe_events([e for e in events if e.timestamp <= now], rules)
 
 
 def compute_hedge_advice(
@@ -269,10 +272,13 @@ def compute_hedge_advice(
     top = max(breakdown.clusters, key=lambda c: abs(c.score), default=None)
     driver = f"主导因子: {top.cluster} ({top.score:+.2f})" if top else "无活跃因子"
 
+    if not loader.scoring.prediction_adjustments_enabled:
+        driver += " | 预测信号仅观察，不参与仓位计算"
+
     return HedgeAdvice(
         ratio=round(ratio, 2),
         signal=action,
-        narrative=f"[{action}] {driver} | 合约: KC=F (Sep 26)",
+        narrative=f"[{action}] {driver} | 合约月份待按采购定价期限确认",
         trigger_above=None,
         trigger_below=None,
     )

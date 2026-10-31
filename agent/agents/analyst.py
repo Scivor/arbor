@@ -9,7 +9,6 @@ CoffeeAnalyst — Arbor 采购顾问智能体
 from __future__ import annotations
 import logging
 import os
-from pathlib import Path
 from typing import Optional
 
 from langchain_openai import ChatOpenAI

@@ -460,6 +460,7 @@ class RegimeConfigLoader:
         sc = raw.get("scoring", {}) or {}
         default = ScoringConfig()
         self._scoring = ScoringConfig(
+            prediction_adjustments_enabled=(sc.get("prediction_adjustments_enabled") is True),
             baseline=float(sc.get("baseline", default.baseline)),
             span_up=float(sc.get("span_up", default.span_up)),
             span_down=float(sc.get("span_down", default.span_down)),

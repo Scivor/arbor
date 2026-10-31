@@ -91,16 +91,16 @@ def test_compute_track_record(tmp_path, monkeypatch):
     assert rec["total"] == 2
     assert rec["pending"] == "2026-07-17"
 
-    # 期1: 305 ∈ [290,310] 命中, 横盘方向恒正确, 0.65 中性套保恒正确
-    # 期2: 300 ∉ [320,340] 偏离, 预测上涨实际下跌, 低套保遇下跌 → 错误
+    # 期1: 305 ∈ [290,310] 命中, 横盘预测遇上涨方向错误, 套保效果缺乏成交和现金流证据
+    # 期2: 300 ∉ [320,340] 偏离, 预测上涨实际下跌, 套保效果不作推断
     assert rec["hit_rate"] == 0.5
-    assert rec["direction_rate"] == 0.5
-    assert rec["hedge_rate"] == 0.5
+    assert rec["direction_rate"] == 0.0
+    assert rec["hedge_rate"] is None
 
     assert len(rec["weeks"]) == 2
     w1, w2 = rec["weeks"]
     assert w1["report_date"] == "2026-07-03"
-    assert w1["badge"] == "命中"
+    assert w1["badge"] == "部分命中"
     assert w1["direction"] == "横盘"
     assert w1["predicted_min"] == 290.0 and w1["predicted_max"] == 310.0
     assert w1["actual_price"] == 305.0
@@ -129,7 +129,7 @@ def test_track_record_page_render(tmp_path, monkeypatch):
 
     html = build_track_record_html(compute_track_record())
     assert "区间命中率" in html
-    assert "50%" in html                     # hit/direction/hedge 均为 0.5
+    assert "50%" in html                     # 区间命中率为 0.5，方向正确率为 0
     assert "已复盘期数" in html
     assert "2026-07-03" in html              # 明细行
     assert "偏离" in html                    # 期 2 badge

@@ -85,7 +85,8 @@ def test_ml_signal(engine):
     from models.ml_advisor import MLSignal
     engine.update_ml_signal(MLSignal.BEARISH, confidence=0.8, bias=0.10)
     state = engine.get_state()
-    assert state.hedge_ratio > 0.65
+    assert state.hedge_ratio == 0.65
+    assert state.ml_bias == 0.0
     assert state.ml_signal == MLSignal.BEARISH
 
 
@@ -212,6 +213,8 @@ def test_low_confidence_ml_retracts_previous_signal(engine):
     """I4 回归：低置信度信号必须撤销先前的高置信度 bias，而非只把展示字段置零。"""
     from models.ml_advisor import MLSignal
 
+    from dataclasses import replace
+    engine._cfg = replace(engine._cfg, prediction_adjustments_enabled=True)
     clean = engine.get_state().hedge_ratio
     engine.update_ml_signal(MLSignal.BEARISH, confidence=0.8, bias=0.10)
     assert engine.get_state().hedge_ratio > clean

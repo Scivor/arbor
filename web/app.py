@@ -45,7 +45,7 @@ WEB_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = WEB_DIR / "static" / "reports"
 TEMPLATES_DIR = WEB_DIR / "templates"
 
-app = FastAPI(title="Arbor", version="3.0")
+app = FastAPI(title="Scivor Arbor", version="3.0")
 
 app.mount("/static", StaticFiles(directory=WEB_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=TEMPLATES_DIR)
@@ -326,6 +326,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # ── Routes ───────────────────────────────────────────────────────────────────
+
+@app.get("/workbench/", response_class=HTMLResponse)
+async def procurement_workbench(request: Request):
+    """Explicit synthetic demo; never reads or mutates a trading account."""
+    return templates.TemplateResponse(request, "workbench.html", {})
+
 
 @app.get("/", response_class=HTMLResponse)
 async def latest_report(request: Request):

@@ -724,6 +724,7 @@ adjustment_rules:
 # ============================================================
 
 scoring:
+  prediction_adjustments_enabled: false  # 预测仅展示；通过样本外验证后才可显式启用
   baseline: 0.65      # score=0 时的比率
   span_up: 0.30       # 向上跨度 → 渐近 0.95
   span_down: 0.45     # 向下跨度 → 渐近 0.20

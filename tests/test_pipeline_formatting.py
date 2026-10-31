@@ -82,7 +82,9 @@ def test_compute_hedge_advice_formats_rsi_with_single_decimal():
     hedge = compute_hedge_advice(market, scenarios, events)
 
     assert hedge is not None
-    assert "主导因子:" in hedge.narrative
+    assert "无活跃因子" in hedge.narrative
+    assert "预测信号仅观察" in hedge.narrative
+    assert "Sep 26" not in hedge.narrative
 
 
 @pytest.mark.unit

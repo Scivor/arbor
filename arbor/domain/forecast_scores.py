@@ -2,6 +2,8 @@
 from datetime import datetime
 import math
 
+from arbor.domain.forecast_outcome import aware
+
 CLASSES = {'up', 'flat', 'down'}
 DEFAULT = {'up': .25, 'flat': .5, 'down': .25}
 
@@ -32,7 +34,7 @@ def grouped_scores(report, probabilities):
             else:
                 excluded.append(row['forecast_id'])
         def evaluate(subset):
-            return score_labels({'results':subset}, {r['forecast_id']:probabilities[r['forecast_id']] for r in subset})
+            return score_labels({'results':subset, 'evaluated_at': report['evaluated_at']}, {r['forecast_id']:probabilities[r['forecast_id']] for r in subset})
         output.append(dict(contract_id=key[0], model_version=key[1], calendar_version=key[2],
             lower_return=key[3], upper_return=key[4], all_windows=evaluate(ordered),
             nonoverlapping=evaluate(selected), selected_ids=[r['forecast_id'] for r in selected],
@@ -41,6 +43,8 @@ def grouped_scores(report, probabilities):
 
 
 def score_labels(report, probabilities):
+    evaluated = datetime.fromisoformat(report['evaluated_at'])
+    aware(evaluated)
     rows = report['results']
     ids = {r['forecast_id'] for r in rows}
     if len(ids) != len(rows):
@@ -52,6 +56,14 @@ def score_labels(report, probabilities):
             raise ValueError('unknown label status')
         if row['status'] == 'labeled' and row.get('actual') not in CLASSES:
             raise ValueError('invalid actual direction')
+        if row['status'] == 'labeled':
+            published = datetime.fromisoformat(row['frozen_forecast']['published_at'])
+            target = datetime.fromisoformat(row['target_close'])
+            available = datetime.fromisoformat(row['available_at'])
+            for timestamp in (published, target, available):
+                aware(timestamp)
+            if not published < target <= available <= evaluated:
+                raise ValueError('invalid label chronology or future outcome')
     if set(probabilities) != ids:
         raise ValueError('probabilities must cover exactly the archive forecast ids')
     for values in probabilities.values():

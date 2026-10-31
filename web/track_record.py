@@ -199,7 +199,7 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>预测战绩 · Arbor</title>
+<title>预测验证 · Scivor Arbor</title>
 <style>
 {comfortaa_font_face_css()}
   body {{
@@ -427,8 +427,8 @@ def build_track_record_html(record: dict, driver_stats: list[dict] | None = None
 <div class="tr-wrap">
   <div class="tr-hdr">
     <div class="tr-brand">
-      <img class="tr-logo" src="/static/img/arbor-wordmark-nav.png" alt="Arbor" width="120" height="34" />
-      <span class="tr-title">预测战绩</span>
+      <img class="tr-logo" src="/static/img/arbor-wordmark-nav.png" alt="Scivor Arbor" width="120" height="34" />
+      <span class="tr-title">预测验证</span>
     </div>
     <a class="tr-back" href="/">← 返回最新周报</a>
   </div>

@@ -1,8 +1,8 @@
-# Arbor / 阿尔博 — 咖啡进口商套期保值智能体
+# Scivor Arbor — 咖啡采购风险管理
 
 [![tests](https://github.com/Scivor/arbor/actions/workflows/tests.yml/badge.svg)](https://github.com/Scivor/arbor/actions/workflows/tests.yml)
 
-事件驱动的咖啡进口商套期保值决策系统，支持回测、LLM 智能体、实时数据源与自动化周报。
+面向咖啡采购负责人的采购风险工作台，支持市场报告、采购敞口规划、多批次模拟账户与离线预测验证。当前仍为研究和模拟工具，尚未完成真实策略效果及实盘验收。
 
 **运行边界（采购风险改造第一阶段）**：ML、LLM、情景与 RSI 默认仅用于观察，不改变套保比率。`scoring.prediction_adjustments_enabled: true` 仅供显式研究对照；尚未完成样本外验证，不代表获准实盘。评分排除评分时刻之后的事件。现有 65% 基准仍是历史配置，不代表企业风险政策，建议比率不能直接当成订单。详见 `docs/procurement-risk-roadmap.md`。
 

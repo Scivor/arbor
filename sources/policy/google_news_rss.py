@@ -236,7 +236,7 @@ class GoogleNewsRSSSource:
     def fetch(self) -> list[PolicyNewsArticle]:
         """抓取并解析新闻，带缓存"""
         if not self._is_stale():
-            return self._cache or []
+            return self._filter_recent(self._cache or [], hours=24 * 7)
 
         url = self._build_url()
         try:
@@ -286,9 +286,6 @@ class GoogleNewsRSSSource:
                 if elapsed < self._event_cooldown_seconds:
                     continue
 
-            self._seen_links.add(matched.link)
-            self._last_event_time[matched.matched_event] = now
-
             event = CoffeeEvent(
                 event_type=matched.matched_event,
                 domain=Domain.POLICY,
@@ -307,7 +304,9 @@ class GoogleNewsRSSSource:
                     "query": self.query,
                 },
             )
-            events.append(event)
             bus.publish(event)
+            self._seen_links.add(matched.link)
+            self._last_event_time[matched.matched_event] = now
+            events.append(event)
 
         return events

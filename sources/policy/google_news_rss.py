@@ -178,6 +178,8 @@ class GoogleNewsRSSSource:
                 continue
 
             pub_date = self._parse_pub_date(pub_date_str)
+            if pub_date is None:
+                continue
             articles.append(PolicyNewsArticle(
                 title=title,
                 link=link,
@@ -188,10 +190,10 @@ class GoogleNewsRSSSource:
         return articles
 
     @staticmethod
-    def _parse_pub_date(text: str) -> datetime:
-        """解析 RSS pubDate，失败则返回当前时间"""
+    def _parse_pub_date(text: str) -> Optional[datetime]:
+        """解析 RSS pubDate；无效日期不冒充当前新闻"""
         if not text:
-            return datetime.now(timezone.utc)
+            return None
 
         # 常见格式: Mon, 15 Jul 2026 12:00:00 GMT
         formats = [
@@ -207,7 +209,7 @@ class GoogleNewsRSSSource:
             except ValueError:
                 continue
 
-        return datetime.now(timezone.utc)
+        return None
 
     def _match_policy(self, article: PolicyNewsArticle) -> Optional[PolicyNewsArticle]:
         """根据标题匹配政策事件类型"""
@@ -227,8 +229,9 @@ class GoogleNewsRSSSource:
         hours: int = 48,
     ) -> list[PolicyNewsArticle]:
         """只保留最近 N 小时的新闻"""
-        cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-        return [a for a in articles if a.pub_date >= cutoff]
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=hours)
+        return [a for a in articles if cutoff <= a.pub_date <= now]
 
     def fetch(self) -> list[PolicyNewsArticle]:
         """抓取并解析新闻，带缓存"""

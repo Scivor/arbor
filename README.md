@@ -193,3 +193,5 @@ python -m cli.paper_portfolio docs/examples/paper-portfolio.json \
 关闭程序后重新打开同一个数据库和账户，会恢复持仓、现金、费用、最后报价快照及操作历史；恢复的报价不是实时行情。旧单批次模拟账户不自动迁移至新组合账户。预算不足会阻止新增，保证金缺口或退出期限到期会提示复核，不擅自强平。
 
 多批次模拟账户支持执行前预览：在 `cli.paper_portfolio` 命令中加入 `--dry-run`，可省略 `--operation-id`。仅支持已有账户，以只读方式返回拟成交、预计资金状态和风控拦截原因；不保存交易或预留资金。详见 `docs/procurement-risk-roadmap.md`。
+
+完整的工程检查、离线评分与模拟账户验收步骤见 [整改验收操作手册](docs/acceptance-runbook.md)。该手册明确区分合成示例通过与真实业务验证。
